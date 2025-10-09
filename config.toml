@@ -1,0 +1,87 @@
+# Phi-Backend 配置文件
+
+[server]
+# 服务器监听地址
+host = "0.0.0.0"
+# 服务器监听端口
+port = 3939
+
+[api]
+# API 路由前缀
+prefix = "/api/v1"
+
+[resources]
+# 资源文件夹路径（相对于项目根目录）
+base_path = "./resources"
+# Phigros 曲绘仓库 URL
+illustration_repo = "https://github.com/Catrong/phi-plugin-ill"
+# 曲绘文件夹名
+illustration_folder = "ill"
+# info 数据目录（包含 difficulty.csv）
+info_path = "./info"
+
+[logging]
+# 日志级别: trace, debug, info, warn, error
+level = "info"
+# 日志输出格式: full, compact, pretty, json
+format = "full"
+
+[branding]
+# 右下角自定义文字（留空则不显示）
+footer_text = ""
+
+[stats]
+# 是否启用统计
+enabled = true
+# 存储类型
+storage = "sqlite"
+# SQLite 路径
+sqlite_path = "./resources/usage_stats.db"
+# 启用 WAL
+sqlite_wal = true
+# 批量大小
+batch_size = 100
+# 刷新间隔（毫秒）
+flush_interval_ms = 1000
+# 热数据保留天数
+retention_hot_days = 180
+# 每日聚合/归档时间（本地时区）
+daily_aggregate_time = "03:00"
+[stats.archive]
+parquet = true
+dir = "./resources/stats/v1/events"
+compress = "zstd"
+
+[watermark]
+# 显式水印：在卡片上展示 U 标记
+explicit_badge = true
+# 隐式水印：PNG 首像素写入可追踪标记
+implicit_pixel = true
+# 静态解除口令（留空表示关闭）
+unlock_static = ""
+# 是否启用动态口令（打印当前窗口口令在日志中）
+unlock_dynamic = true
+# 动态口令盐值
+dynamic_salt = "phi"
+# 动态口令有效期（秒）
+dynamic_ttl_secs = 10
+# 动态口令可选密钥（与盐值共同参与hash）
+dynamic_secret = ""
+# 动态口令长度（从SHA-256十六进制哈希前缀截取）
+dynamic_length = 32
+
+[shutdown]
+# 优雅退出超时时间（秒）
+timeout_secs = 30
+# 是否启用强制退出
+force_quit = true
+# 强制退出前的等待时间（秒）
+force_delay_secs = 10
+
+[shutdown.watchdog]
+# 是否启用systemd看门狗（仅在Linux下生效）
+enabled = false
+# 看门狗超时时间（秒）
+timeout_secs = 60
+# 心跳间隔时间（秒）
+interval_secs = 10

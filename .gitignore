@@ -1,0 +1,56 @@
+# Rust构建目录
+/target/
+
+# IDE和编辑器
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 日志文件
+*.log
+logs/
+
+# 数据库文件
+*.db
+*.db-shm
+*.db-wal
+resources/usage_stats.db*
+
+# 统计数据
+resources/stats/
+
+# 配置覆盖（敏感信息）
+.env
+.env.local
+.env.production
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.temp
+
+# 缓存
+.cache/
+cargo_cache/
+
+# 测试输出
+/tests/output/
+/tests/temp/
+
+# 备份文件
+*.bak
+*.backup
+
+# 压缩文件
+*.zip
+*.tar.gz
+*.rar
+
+# 系统文件
+*.pid
+*.lock

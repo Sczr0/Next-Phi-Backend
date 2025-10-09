@@ -1,0 +1,11 @@
+{
+  "theme": "black",
+  "nickname": "Test Player",
+  "scores": [
+    { "song": "Apocalypse", "difficulty": "IN", "acc": 99.84467315673828, "score": 998602 },
+    { "song": "AfterDawn.S9ryne", "difficulty": "IN", "acc": 99.01025390625, "score": 944528 },
+    { "song": "Ark.kanoryo", "difficulty": "IN", "acc": 98.22313690185547, "score": 979876 },
+    { "song": "AphroditesChildshortver.RUQOA", "difficulty": "IN", "acc": 98.64241790771484, "score": 924725 },
+    { "song": "AnotherMe.NeutralMoon", "difficulty": "IN", "acc": 99.81382751464844, "score": 998325 }
+  ]
+}
