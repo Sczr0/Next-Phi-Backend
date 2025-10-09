@@ -100,7 +100,7 @@ pub fn decrypt_zip_entry(
             let ct = &encrypted_data[1..ct_end];
             let tag = &encrypted_data[ct_end..];
             let aead = Aes128Gcm::new_from_slice(&DEFAULT_KEY[..16])
-                .map_err(|e| SaveProviderError::Decrypt(format!("GCM 初始化失败: {}", e)))?;
+                .map_err(|e| SaveProviderError::Decrypt(format!("GCM 初始化失败: {e}")))?;
             let mut buf = ct.to_vec();
             buf.extend_from_slice(tag);
             let pt = aead
@@ -134,7 +134,7 @@ fn decrypt_aes256_cbc(
     let mut buffer = ciphertext.to_vec();
     let decrypted = dec
         .decrypt_padded_mut::<Pkcs7>(&mut buffer)
-        .map_err(|e| SaveProviderError::Decrypt(format!("AES 解密失败: {:?}", e)))?;
+        .map_err(|e| SaveProviderError::Decrypt(format!("AES 解密失败: {e:?}")))?;
     Ok(decrypted.to_vec())
 }
 
@@ -150,7 +150,7 @@ pub fn verify_integrity(
                 .ok_or_else(|| SaveProviderError::Integrity("HMAC 标签缺失".to_string()))?;
             type H = Hmac<Sha1>;
             let mut mac = <H as Mac>::new_from_slice(key)
-                .map_err(|e| SaveProviderError::Integrity(format!("HMAC 初始化失败: {}", e)))?;
+                .map_err(|e| SaveProviderError::Integrity(format!("HMAC 初始化失败: {e}")))?;
             mac.update(data);
             mac.verify_slice(tag)
                 .map_err(|_| SaveProviderError::Integrity("HMAC-SHA1 验证失败".to_string()))
@@ -160,7 +160,7 @@ pub fn verify_integrity(
                 .ok_or_else(|| SaveProviderError::Integrity("HMAC 标签缺失".to_string()))?;
             type H = Hmac<Sha256>;
             let mut mac = <H as Mac>::new_from_slice(key)
-                .map_err(|e| SaveProviderError::Integrity(format!("HMAC 初始化失败: {}", e)))?;
+                .map_err(|e| SaveProviderError::Integrity(format!("HMAC 初始化失败: {e}")))?;
             mac.update(data);
             mac.verify_slice(tag)
                 .map_err(|_| SaveProviderError::Integrity("HMAC-SHA256 验证失败".to_string()))

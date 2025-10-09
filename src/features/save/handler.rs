@@ -13,7 +13,7 @@ use crate::features::rks::engine::{PlayerRksResult, calculate_player_rks};
 use crate::state::AppState;
 
 use super::{
-    models::{SaveResponse, UnifiedSaveRequest},
+    models::UnifiedSaveRequest,
     provider::{self, SaveSource},
 };
 
@@ -57,7 +57,7 @@ pub async fn get_save_data(
 
     if !calc_rks {
         let value = serde_json::to_value(&parsed)
-            .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {e}")))?;
         let body = serde_json::json!({ "data": value });
         return Ok((StatusCode::OK, Json(body)));
     }
@@ -65,13 +65,13 @@ pub async fn get_save_data(
     // 计算 RKS 并返回复合响应
     let rks = calculate_player_rks(&parsed.game_record, &state.chart_constants);
     let save_value = serde_json::to_value(&parsed)
-        .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {e}")))?;
     let resp = SaveAndRksResponse {
         save: save_value,
         rks,
     };
     let body = serde_json::to_value(&resp)
-        .map_err(|e| AppError::Internal(format!("序列化 SaveAndRksResponse 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("序列化 SaveAndRksResponse 失败: {e}")))?;
     Ok((StatusCode::OK, Json(body)))
 }
 

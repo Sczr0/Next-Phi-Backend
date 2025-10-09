@@ -15,13 +15,12 @@ use crate::{
     features::{
         image::renderer::{self, PlayerStats, RenderRecord, SongDifficultyScore, SongRenderData},
         save::{models::Difficulty, provider::{self, SaveSource}},
-        song::models::SongInfo,
     },
     state::AppState,
 };
 use crate::config::AppConfig;
 
-use super::types::{RenderBnRequest, RenderSongRequest, RenderUserBnRequest, UserScoreItem};
+use super::types::{RenderBnRequest, RenderSongRequest, RenderUserBnRequest};
 
 #[utoipa::path(
     post,
@@ -131,7 +130,7 @@ pub async fn render_bn(
         .game_progress
         .get("money")
         .and_then(|v| v.as_array())
-        .map(|arr| {
+        .and_then(|arr| {
             let units = ["KB", "MB", "GB", "TB"];
             let mut parts: Vec<String> = arr
                 .iter()
@@ -140,8 +139,7 @@ pub async fn render_bn(
                 .collect();
             parts.reverse();
             if parts.is_empty() { None } else { Some(format!("Data: {}", parts.join(", "))) }
-        })
-        .flatten();
+        });
 
     let update_time: DateTime<Utc> = parsed
         .updated_at
@@ -212,7 +210,7 @@ pub async fn render_song(
     let song = state
         .song_catalog
         .search_unique(&req.song)
-        .map_err(|e| AppError::Search(e))?;
+        .map_err(AppError::Search)?;
 
     // 构建所有引擎记录用于推分
     let mut engine_all: Vec<crate::features::rks::engine::RksRecord> = Vec::new();
@@ -336,7 +334,7 @@ fn to_engine_record(r: &RenderRecord) -> Option<crate::features::rks::engine::Rk
 }
 
 fn to_save_source(req: &crate::features::save::models::UnifiedSaveRequest) -> Result<SaveSource, AppError> {
-    use crate::features::save::client::ExternalApiCredentials;
+    
     match (&req.session_token, &req.external_credentials) {
         (Some(token), None) => Ok(SaveSource::official(token.clone())),
         (None, Some(creds)) => Ok(SaveSource::external(creds.clone())),
@@ -395,7 +393,7 @@ pub async fn render_bn_user(
         let info = state
             .song_catalog
             .search_unique(&item.song)
-            .map_err(|e| AppError::Search(e))?;
+            .map_err(AppError::Search)?;
         // 定数
         let dv_opt = match item.difficulty.as_str() {
             "EZ"|"ez" => info.chart_constants.ez,

@@ -91,7 +91,7 @@ impl<'a> Reader<'a> {
 pub fn parse_summary_base64(b64: &str) -> Result<SummaryParsed, SaveProviderError> {
     let bytes = general_purpose::STANDARD
         .decode(b64)
-        .map_err(|e| SaveProviderError::Metadata(format!("base64 decode failed: {}", e)))?;
+        .map_err(|e| SaveProviderError::Metadata(format!("base64 decode failed: {e}")))?;
     let mut r = Reader::new(&bytes);
 
     let save_version = r.read_u8()?;

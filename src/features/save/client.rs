@@ -107,7 +107,7 @@ pub async fn fetch_from_official(
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
 
-    let url = format!("{}/classes/_GameSave?limit=1", LEANCLOUD_BASE_URL);
+    let url = format!("{LEANCLOUD_BASE_URL}/classes/_GameSave?limit=1");
 
     let response = client
         .get(&url)

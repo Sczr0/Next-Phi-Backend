@@ -96,7 +96,7 @@ pub fn calculate_player_rks(
     const TOP_PHI: usize = 3;
 
     // 取前 27 个总体成绩
-    let mut picked: Vec<ChartRankingScore> = all_scores.iter().cloned().take(TOP_GENERAL).collect();
+    let mut picked: Vec<ChartRankingScore> = all_scores.iter().take(TOP_GENERAL).cloned().collect();
 
     // 从 φ 列表取前 3 个，避免与已选重复
     let mut picked_keys = picked

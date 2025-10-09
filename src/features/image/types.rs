@@ -5,18 +5,15 @@ use crate::features::save::models::UnifiedSaveRequest;
 /// 渲染主题
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum Theme {
     #[serde(alias = "white", alias = "WHITE")]
     White,
     #[serde(alias = "black", alias = "BLACK")]
+    #[default]
     Black,
 }
 
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Black
-    }
-}
 
 /// BN 渲染请求体
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]

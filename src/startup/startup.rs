@@ -31,7 +31,7 @@ fn ensure_resources_folder(config: &AppConfig) -> Result<(), AppError> {
     if !resources_path.exists() {
         tracing::warn!("📁 未找到 resources 文件夹，正在创建: {:?}", resources_path);
         fs::create_dir_all(&resources_path)
-            .map_err(|e| AppError::Internal(format!("创建 resources 文件夹失败: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("创建 resources 文件夹失败: {e}")))?;
         tracing::info!("✅ resources 文件夹创建成功");
     } else {
         tracing::info!("✅ resources 文件夹已存在");
@@ -99,7 +99,7 @@ fn clone_repository(url: &str, path: &Path) -> Result<(), AppError> {
 
     builder
         .clone(url, path)
-        .map_err(|e| AppError::Internal(format!("克隆 Git 仓库失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("克隆 Git 仓库失败: {e}")))?;
 
     Ok(())
 }
@@ -107,12 +107,12 @@ fn clone_repository(url: &str, path: &Path) -> Result<(), AppError> {
 /// 更新 Git 仓库
 fn update_repository(path: &Path) -> Result<(), AppError> {
     let repo = Repository::open(path)
-        .map_err(|e| AppError::Internal(format!("打开 Git 仓库失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("打开 Git 仓库失败: {e}")))?;
 
     // 获取 origin remote
     let mut remote = repo
         .find_remote("origin")
-        .map_err(|e| AppError::Internal(format!("查找 remote 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("查找 remote 失败: {e}")))?;
 
     // 创建进度回调
     let mut callbacks = RemoteCallbacks::new();
@@ -134,20 +134,20 @@ fn update_repository(path: &Path) -> Result<(), AppError> {
     // 执行 fetch
     remote
         .fetch(&["main", "master"], Some(&mut fetch_options), None)
-        .map_err(|e| AppError::Internal(format!("Fetch 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("Fetch 失败: {e}")))?;
 
     // 尝试快速前进合并
     let fetch_head = repo
         .find_reference("FETCH_HEAD")
-        .map_err(|e| AppError::Internal(format!("查找 FETCH_HEAD 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("查找 FETCH_HEAD 失败: {e}")))?;
 
     let fetch_commit = repo
         .reference_to_annotated_commit(&fetch_head)
-        .map_err(|e| AppError::Internal(format!("获取 commit 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("获取 commit 失败: {e}")))?;
 
     let analysis = repo
         .merge_analysis(&[&fetch_commit])
-        .map_err(|e| AppError::Internal(format!("合并分析失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("合并分析失败: {e}")))?;
 
     if analysis.0.is_up_to_date() {
         tracing::info!("✅ 仓库已是最新");
@@ -158,22 +158,22 @@ fn update_repository(path: &Path) -> Result<(), AppError> {
         match repo.find_reference(refname) {
             Ok(mut r) => {
                 r.set_target(fetch_commit.id(), "Fast-Forward")
-                    .map_err(|e| AppError::Internal(format!("设置 target 失败: {}", e)))?;
+                    .map_err(|e| AppError::Internal(format!("设置 target 失败: {e}")))?;
                 repo.set_head(refname)
-                    .map_err(|e| AppError::Internal(format!("设置 HEAD 失败: {}", e)))?;
+                    .map_err(|e| AppError::Internal(format!("设置 HEAD 失败: {e}")))?;
                 repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-                    .map_err(|e| AppError::Internal(format!("Checkout 失败: {}", e)))?;
+                    .map_err(|e| AppError::Internal(format!("Checkout 失败: {e}")))?;
             }
             Err(_) => {
                 // 如果 main 不存在，尝试 master
                 let refname = "refs/heads/master";
                 if let Ok(mut r) = repo.find_reference(refname) {
                     r.set_target(fetch_commit.id(), "Fast-Forward")
-                        .map_err(|e| AppError::Internal(format!("设置 target 失败: {}", e)))?;
+                        .map_err(|e| AppError::Internal(format!("设置 target 失败: {e}")))?;
                     repo.set_head(refname)
-                        .map_err(|e| AppError::Internal(format!("设置 HEAD 失败: {}", e)))?;
+                        .map_err(|e| AppError::Internal(format!("设置 HEAD 失败: {e}")))?;
                     repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-                        .map_err(|e| AppError::Internal(format!("Checkout 失败: {}", e)))?;
+                        .map_err(|e| AppError::Internal(format!("Checkout 失败: {e}")))?;
                 }
             }
         }

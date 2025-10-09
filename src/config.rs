@@ -320,7 +320,7 @@ impl WatermarkConfig {
         let salt = if self.dynamic_salt.is_empty() { "phi" } else { &self.dynamic_salt };
         let secret = self.dynamic_secret.as_deref().unwrap_or("");
         // 通过 盐值 + 时间窗口 + 可选密钥 计算 SHA-256 哈希，并截取前缀作为口令
-        let input = format!("{}:{}:{}", salt, window, secret);
+        let input = format!("{salt}:{window}:{secret}");
         let hash = Sha256::digest(input.as_bytes());
         let hexed = hex::encode(hash);
         let len = self.dynamic_length.max(4).min(64);

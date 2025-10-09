@@ -10,7 +10,7 @@ use sha2::Sha256;
 /// 采集中间件：记录每次 HTTP 请求的基本信息
 pub async fn stats_middleware(
     State(state): State<StateWithStats>,
-    mut req: Request,
+    req: Request,
     next: Next,
 ) -> Response {
     let started = Instant::now();

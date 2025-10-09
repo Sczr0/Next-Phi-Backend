@@ -19,7 +19,7 @@ pub fn parse_game_record(
     for (song_id, scores_value) in obj.iter() {
         let arr = scores_value
             .as_array()
-            .ok_or_else(|| format!("scores for '{}' must be a JSON array", song_id))?;
+            .ok_or_else(|| format!("scores for '{song_id}' must be a JSON array"))?;
 
         let mut records: Vec<DifficultyRecord> = Vec::new();
 
@@ -32,12 +32,12 @@ pub fn parse_game_record(
             // score: 整数；当 score <= 0 视为无成绩，跳过
             let score_i64 = chunk[0]
                 .as_i64()
-                .ok_or_else(|| format!("score at '{}'[{}] is not an integer", song_id, idx))?;
+                .ok_or_else(|| format!("score at '{song_id}'[{idx}] is not an integer"))?;
             if score_i64 <= 0 {
                 continue;
             }
             let score_u32 = u32::try_from(score_i64)
-                .map_err(|_| format!("score overflow at '{}'[{}]", song_id, idx))?;
+                .map_err(|_| format!("score overflow at '{song_id}'[{idx}]"))?;
 
             // accuracy: 浮点数
             let accuracy_f32 = if let Some(v) = chunk[1].as_f64() {
@@ -46,8 +46,7 @@ pub fn parse_game_record(
                 v as f32
             } else {
                 return Err(format!(
-                    "accuracy at '{}'[{}] is not a number",
-                    song_id, idx
+                    "accuracy at '{song_id}'[{idx}] is not a number"
                 ));
             };
 
@@ -56,11 +55,11 @@ pub fn parse_game_record(
                 Some(1) => true,
                 Some(0) => false,
                 Some(other) => other != 0,
-                None => return Err(format!("fc at '{}'[{}] is not an integer", song_id, idx)),
+                None => return Err(format!("fc at '{song_id}'[{idx}] is not an integer")),
             };
 
             let difficulty = Difficulty::try_from(idx)
-                .map_err(|_| format!("invalid difficulty index {} for '{}'", idx, song_id))?;
+                .map_err(|_| format!("invalid difficulty index {idx} for '{song_id}'"))?;
 
             records.push(DifficultyRecord {
                 difficulty,

@@ -219,7 +219,7 @@ pub fn derive_user_identity_from_auth(salt_opt: Option<&str>, auth: &crate::feat
     if let Some(ext) = &auth.external_credentials {
         if let Some(id) = &ext.api_user_id { if !id.is_empty() { return (Some(hmac_hex16(salt, id)), Some("external_api_user_id".to_string())); } }
         if let Some(st) = &ext.sessiontoken { if !st.is_empty() { return (Some(hmac_hex16(salt, st)), Some("external_sessiontoken".to_string())); } }
-        if let (Some(p), Some(pid)) = (&ext.platform, &ext.platform_id) { if !p.is_empty() && !pid.is_empty() { let k = format!("{}:{}", p, pid); return (Some(hmac_hex16(salt, &k)), Some("platform_pair".to_string())); } }
+        if let (Some(p), Some(pid)) = (&ext.platform, &ext.platform_id) { if !p.is_empty() && !pid.is_empty() { let k = format!("{p}:{pid}"); return (Some(hmac_hex16(salt, &k)), Some("platform_pair".to_string())); } }
     }
     (None, None)
 }

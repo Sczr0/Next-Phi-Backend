@@ -89,7 +89,7 @@ pub async fn get_decrypted_save(source: SaveSource) -> Result<ParsedSave, SavePr
         .ok_or_else(|| SaveProviderError::MissingField("gameRecord".to_string()))?;
 
     let game_record = record_parser::parse_game_record(&game_record_val)
-        .map_err(|e| SaveProviderError::Json(format!("parse gameRecord failed: {}", e)))?;
+        .map_err(|e| SaveProviderError::Json(format!("parse gameRecord failed: {e}")))?;
 
     let summary_parsed = summary_b64_opt
         .as_deref()

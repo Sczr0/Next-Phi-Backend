@@ -20,24 +20,23 @@ pub type ChartConstantsMap = HashMap<String, ChartConstants>;
 pub fn load_chart_constants(file_path: &Path) -> Result<ChartConstantsMap, AppError> {
     if !file_path.exists() {
         return Err(AppError::Internal(format!(
-            "未找到难度常量文件: {:?}",
-            file_path
+            "未找到难度常量文件: {file_path:?}"
         )));
     }
 
     // 先尝试打开文件以区分 IO 问题
     fs::File::open(file_path)
-        .map_err(|e| AppError::Internal(format!("打开 difficulty.csv 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("打开 difficulty.csv 失败: {e}")))?;
 
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
         .from_path(file_path)
-        .map_err(|e| AppError::Internal(format!("读取 CSV 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("读取 CSV 失败: {e}")))?;
 
     let headers = rdr
         .headers()
-        .map_err(|e| AppError::Internal(format!("读取 CSV 表头失败: {}", e)))?
+        .map_err(|e| AppError::Internal(format!("读取 CSV 表头失败: {e}")))?
         .clone();
 
     // 表头索引（不区分大小写）
@@ -45,7 +44,7 @@ pub fn load_chart_constants(file_path: &Path) -> Result<ChartConstantsMap, AppEr
         headers
             .iter()
             .position(|h| h.trim().eq_ignore_ascii_case(name))
-            .ok_or_else(|| AppError::Internal(format!("CSV 缺少必需列: {}", name)))
+            .ok_or_else(|| AppError::Internal(format!("CSV 缺少必需列: {name}")))
     };
 
     let id_idx = idx_of("id")?;
@@ -63,12 +62,12 @@ pub fn load_chart_constants(file_path: &Path) -> Result<ChartConstantsMap, AppEr
         } else {
             s.parse::<f32>()
                 .map(Some)
-                .map_err(|e| AppError::Internal(format!("解析浮点数失败 '{}': {}", s, e)))
+                .map_err(|e| AppError::Internal(format!("解析浮点数失败 '{s}': {e}")))
         }
     };
 
     for result in rdr.records() {
-        let record = result.map_err(|e| AppError::Internal(format!("读取 CSV 记录失败: {}", e)))?;
+        let record = result.map_err(|e| AppError::Internal(format!("读取 CSV 记录失败: {e}")))?;
 
         let id = record.get(id_idx).unwrap_or("").trim().to_string();
         if id.is_empty() {

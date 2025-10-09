@@ -62,7 +62,7 @@ pub async fn get_qrcode(
 
     // 生成二维码（SVG）并 Base64 编码
     let code = QrCode::new(&verification_url)
-        .map_err(|e| AppError::Internal(format!("生成二维码失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("生成二维码失败: {e}")))?;
     let image = code
         .render()
         .min_dimensions(256, 256)
@@ -123,7 +123,7 @@ pub async fn get_qrcode_status(
         QrCodeStatus::Confirmed { session_data } => {
             // 命中确认，删除缓存并返回 token
             state.qrcode_service.remove(&qr_id).await;
-            return Ok((
+            Ok((
                 StatusCode::OK,
                 Json(QrCodeStatusResponse {
                     status: "Confirmed".to_string(),
@@ -131,7 +131,7 @@ pub async fn get_qrcode_status(
                     message: None,
                     retry_after: None,
                 }),
-            ));
+            ))
         }
         QrCodeStatus::Pending {
             device_code,

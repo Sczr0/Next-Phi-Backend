@@ -335,7 +335,7 @@ fn deser_nodes_into(
 
 fn deser_map(reader: &mut Reader, end: u8) -> Result<Value, SaveProviderError> {
     let mut map = serde_json::Map::new();
-    let length = reader.read_varshort()? as i32;
+    let length = reader.read_varshort()?;
     for _ in 0..length {
         let key = reader.read_string(end as usize)?;
         if reader.remain() < 1 {
@@ -382,7 +382,7 @@ fn deser_map(reader: &mut Reader, end: u8) -> Result<Value, SaveProviderError> {
 pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, SaveProviderError> {
     let mut root = serde_json::Map::new();
     if let Some(gr) = entries.get("gameRecord") {
-        if gr.len() < 1 {
+        if gr.is_empty() {
             return Err(SaveProviderError::Decrypt("gameRecord 太短".into()));
         }
         let mut r = Reader::new(&gr[1..]);
@@ -390,7 +390,7 @@ pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, S
         root.insert("gameRecord".to_string(), obj);
     }
     if let Some(gk) = entries.get("gameKey") {
-        if gk.len() < 1 {
+        if gk.is_empty() {
             return Err(SaveProviderError::Decrypt("gameKey 太短".into()));
         }
         let mut r = Reader::new(gk);
@@ -411,7 +411,7 @@ pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, S
         root.insert("gameKey".to_string(), Value::Object(obj));
     }
     if let Some(gp) = entries.get("gameProgress") {
-        if gp.len() < 1 {
+        if gp.is_empty() {
             return Err(SaveProviderError::Decrypt("gameProgress 太短".into()));
         }
         let mut r = Reader::new(gp);
@@ -435,7 +435,7 @@ pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, S
         root.insert("gameProgress".to_string(), Value::Object(obj));
     }
     if let Some(usr) = entries.get("user") {
-        if usr.len() < 1 {
+        if usr.is_empty() {
             return Err(SaveProviderError::Decrypt("user 太短".into()));
         }
         let mut r = Reader::new(&usr[1..]);
@@ -443,7 +443,7 @@ pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, S
         root.insert("user".to_string(), Value::Object(obj));
     }
     if let Some(st) = entries.get("settings") {
-        if st.len() < 1 {
+        if st.is_empty() {
             return Err(SaveProviderError::Decrypt("settings 太短".into()));
         }
         let mut r = Reader::new(&st[1..]);

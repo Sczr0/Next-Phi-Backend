@@ -5,7 +5,7 @@ use phi_backend::features::stats::{self, handler::create_stats_router, middlewar
 use phi_backend::startup::chart_loader::{ChartConstantsMap, load_chart_constants};
 use phi_backend::startup::{run_startup_checks, song_loader};
 use phi_backend::state::AppState;
-use phi_backend::{AppError, config::AppConfig, error::SaveProviderError, ShutdownManager, ShutdownReason, SystemdWatchdog};
+use phi_backend::{AppError, config::AppConfig, error::SaveProviderError, ShutdownManager, SystemdWatchdog};
 use serde_json::json;
 use std::sync::Arc;
 use utoipa::OpenApi;

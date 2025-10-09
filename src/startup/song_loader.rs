@@ -10,8 +10,7 @@ use crate::{
 pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
     if !info_path.exists() {
         return Err(AppError::Internal(format!(
-            "info 目录不存在: {:?}",
-            info_path
+            "info 目录不存在: {info_path:?}"
         )));
     }
 
@@ -20,14 +19,12 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
 
     if !info_csv.exists() {
         return Err(AppError::Internal(format!(
-            "未找到歌曲信息文件 info.csv: {:?}",
-            info_csv
+            "未找到歌曲信息文件 info.csv: {info_csv:?}"
         )));
     }
     if !nicklist_yaml.exists() {
         return Err(AppError::Internal(format!(
-            "未找到别名文件 nicklist.yaml: {:?}",
-            nicklist_yaml
+            "未找到别名文件 nicklist.yaml: {nicklist_yaml:?}"
         )));
     }
 
@@ -38,11 +35,11 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
         .has_headers(true)
         .flexible(true)
         .from_path(&info_csv)
-        .map_err(|e| AppError::Internal(format!("读取 info.csv 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("读取 info.csv 失败: {e}")))?;
 
     let headers = rdr
         .headers()
-        .map_err(|e| AppError::Internal(format!("读取 info.csv 表头失败: {}", e)))?
+        .map_err(|e| AppError::Internal(format!("读取 info.csv 表头失败: {e}")))?
         .clone();
 
     // 支持不同大小写/命名（song 或 name）
@@ -77,13 +74,13 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
         } else {
             s.parse::<f32>()
                 .map(Some)
-                .map_err(|e| AppError::Internal(format!("解析浮点数失败 '{}': {}", s, e)))
+                .map_err(|e| AppError::Internal(format!("解析浮点数失败 '{s}': {e}")))
         }
     };
 
     for rec in rdr.records() {
         let record =
-            rec.map_err(|e| AppError::Internal(format!("读取 info.csv 记录失败: {}", e)))?;
+            rec.map_err(|e| AppError::Internal(format!("读取 info.csv 记录失败: {e}")))?;
 
         let id = record.get(id_idx).unwrap_or("").trim().to_string();
         if id.is_empty() {
@@ -121,10 +118,10 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
 
     // 2) 读取 nicklist.yaml
     let nick_file = File::open(&nicklist_yaml)
-        .map_err(|e| AppError::Internal(format!("打开 nicklist.yaml 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("打开 nicklist.yaml 失败: {e}")))?;
 
     let nick_map: HashMap<String, Vec<String>> = serde_yaml::from_reader(nick_file)
-        .map_err(|e| AppError::Internal(format!("解析 nicklist.yaml 失败: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("解析 nicklist.yaml 失败: {e}")))?;
 
     for (song_id, nick_vec) in nick_map.into_iter() {
         match catalog.by_id.get(&song_id) {

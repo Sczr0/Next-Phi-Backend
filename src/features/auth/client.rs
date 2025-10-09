@@ -26,7 +26,7 @@ impl TapTapClient {
             .http1_title_case_headers()
             .user_agent("TapTapUnitySDK/1.0 UnityPlayer/2021.3.40f1c1")
             .build()
-            .map_err(|e| AppError::Internal(format!("初始化 HTTP Client 失败: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("初始化 HTTP Client 失败: {e}")))?;
 
         let mut tap_headers = HeaderMap::new();
         tap_headers.insert(
@@ -76,12 +76,12 @@ impl TapTapClient {
             .form(&form)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("设备码请求失败: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("设备码请求失败: {e}")))?;
 
         let body: Value = resp
             .json()
             .await
-            .map_err(|e| AppError::Json(format!("解析设备码响应失败: {}", e)))?;
+            .map_err(|e| AppError::Json(format!("解析设备码响应失败: {e}")))?;
 
         let success = body
             .get("success")
@@ -89,12 +89,12 @@ impl TapTapClient {
             .unwrap_or(false);
         if !success {
             let detail = body.get("data").cloned().unwrap_or(Value::Null);
-            return Err(AppError::Auth(format!("TapTap 业务错误: {}", detail)));
+            return Err(AppError::Auth(format!("TapTap 业务错误: {detail}")));
         }
 
         let data = body.get("data").cloned().unwrap_or(Value::Null);
         let parsed: DeviceCodeResponse = serde_json::from_value(data)
-            .map_err(|e| AppError::Json(format!("设备码数据解析失败: {}", e)))?;
+            .map_err(|e| AppError::Json(format!("设备码数据解析失败: {e}")))?;
         Ok(parsed)
     }
 
@@ -122,12 +122,12 @@ impl TapTapClient {
             .form(&form)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("获取 Token 失败: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("获取 Token 失败: {e}")))?;
 
         let body: Value = resp
             .json()
             .await
-            .map_err(|e| AppError::Json(format!("解析 Token 响应失败: {}", e)))?;
+            .map_err(|e| AppError::Json(format!("解析 Token 响应失败: {e}")))?;
 
         let success = body
             .get("success")
@@ -156,7 +156,7 @@ impl TapTapClient {
             };
 
             let msg = if message.is_empty() {
-                format!("TapTap 业务错误: {}", data)
+                format!("TapTap 业务错误: {data}")
             } else {
                 message
             };
@@ -171,26 +171,25 @@ impl TapTapClient {
 
         let token_val = body.get("data").cloned().unwrap_or(Value::Null);
         let token: Token = serde_json::from_value(token_val)
-            .map_err(|e| AppError::Json(format!("Token 数据解析失败: {}", e)))?;
+            .map_err(|e| AppError::Json(format!("Token 数据解析失败: {e}")))?;
 
         // 查询基本信息
         let auth_header = self.build_mac_authorization(&token)?;
         let account_resp = self
             .client
-            .get(&format!(
-                "https://open.tapapis.cn/account/basic-info/v1?client_id={}",
-                LC_APP_ID
+            .get(format!(
+                "https://open.tapapis.cn/account/basic-info/v1?client_id={LC_APP_ID}"
             ))
             .headers(self.tap_headers.clone())
             .header("Authorization", auth_header)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("获取账号信息失败: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("获取账号信息失败: {e}")))?;
 
         let account_wrap: Wrap<Account> = account_resp
             .json()
             .await
-            .map_err(|e| AppError::Json(format!("解析账号信息失败: {}", e)))?;
+            .map_err(|e| AppError::Json(format!("解析账号信息失败: {e}")))?;
         let account = account_wrap.data;
 
         // 通过 LeanCloud 创建/登录用户，返回 SessionToken
@@ -215,7 +214,7 @@ impl TapTapClient {
             .json(&auth_data)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("请求 LeanCloud 失败: {}", e)))?;
+            .map_err(|e| AppError::Network(format!("请求 LeanCloud 失败: {e}")))?;
 
         let status = lc_resp.status();
         if !status.is_success() {
@@ -224,8 +223,7 @@ impl TapTapClient {
                 .await
                 .unwrap_or_else(|_| "<body 读取失败>".to_string());
             return Err(AppError::Auth(format!(
-                "LeanCloud 认证失败: HTTP {} - {}",
-                text, status
+                "LeanCloud 认证失败: HTTP {text} - {status}"
             )));
         }
 
@@ -238,7 +236,7 @@ impl TapTapClient {
         let user: LcUserResp = lc_resp
             .json()
             .await
-            .map_err(|e| AppError::Json(format!("解析 LeanCloud 响应失败: {}", e)))?;
+            .map_err(|e| AppError::Json(format!("解析 LeanCloud 响应失败: {e}")))?;
 
         Ok(SessionData {
             session_token: user.session_token,
@@ -248,19 +246,18 @@ impl TapTapClient {
     fn build_mac_authorization(&self, token: &Token) -> Result<String, AppError> {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| AppError::Internal(format!("时间计算失败: {}", e)))?
+            .map_err(|e| AppError::Internal(format!("时间计算失败: {e}")))?
             .as_secs();
 
         let mut rng = rand::thread_rng();
         let nonce: u32 = rng.next_u32();
 
         let input = format!(
-            "{}\n{}\nGET\n/account/basic-info/v1?client_id={}\nopen.tapapis.cn\n443\n\n",
-            ts, nonce, LC_APP_ID
+            "{ts}\n{nonce}\nGET\n/account/basic-info/v1?client_id={LC_APP_ID}\nopen.tapapis.cn\n443\n\n"
         );
 
         let mut mac = hmac::Hmac::<sha1::Sha1>::new_from_slice(token.mac_key.as_bytes())
-            .map_err(|e| AppError::Internal(format!("HMAC 初始化失败: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("HMAC 初始化失败: {e}")))?;
         mac.update(input.as_bytes());
         let mac = base64::prelude::BASE64_STANDARD.encode(mac.finalize().into_bytes());
         let header = format!(

@@ -3,7 +3,7 @@
 //! 提供systemd看门狗协议支持，定期向systemd发送心跳通知
 
 use std::time::Duration;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 use crate::config::WatchdogConfig;
 use crate::shutdown::{ShutdownManager, ShutdownHandle};
 

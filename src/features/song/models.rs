@@ -58,27 +58,24 @@ impl SongCatalog {
 
         // 官方名：等于（忽略大小写）
         for item in self.by_id.values() {
-            if item.name.eq_ignore_ascii_case(q) {
-                if seen.insert(item.id.as_str()) {
+            if item.name.eq_ignore_ascii_case(q)
+                && seen.insert(item.id.as_str()) {
                     result.push(Arc::clone(item));
                 }
-            }
         }
         // 官方名：前缀包含（忽略大小写）
         for item in self.by_id.values() {
-            if item.name.to_lowercase().starts_with(q_lower.as_str()) {
-                if seen.insert(item.id.as_str()) {
+            if item.name.to_lowercase().starts_with(q_lower.as_str())
+                && seen.insert(item.id.as_str()) {
                     result.push(Arc::clone(item));
                 }
-            }
         }
         // 官方名：子串包含（忽略大小写）
         for item in self.by_id.values() {
-            if item.name.to_lowercase().contains(q_lower.as_str()) {
-                if seen.insert(item.id.as_str()) {
+            if item.name.to_lowercase().contains(q_lower.as_str())
+                && seen.insert(item.id.as_str()) {
                     result.push(Arc::clone(item));
                 }
-            }
         }
 
         // 3) 按别名索引：等于（忽略大小写）
@@ -279,8 +276,8 @@ fn parse_tokens(input: &str, options: &SearchOptions) -> Vec<Token> {
     let mut in_quote = false;
     let mut is_exclude = false;
 
-    let mut chars = s.chars().peekable();
-    while let Some(ch) = chars.next() {
+    let chars = s.chars().peekable();
+    for ch in chars {
         match ch {
             '"' if options.enable_phrase => {
                 if in_quote {
@@ -376,7 +373,7 @@ fn score_song(
         score += score_field(&song.name, tok, options, 100, 80, 60);
         // 别名（任一匹配即可按权重计分）
         let mut nick_scored = false;
-        for (nick, _list) in &catalog.by_nickname {
+        for nick in catalog.by_nickname.keys() {
             if !nick_scored && field_match(nick, tok, options) {
                 score += 70; // 近似于官方名下一档
                 nick_scored = true;

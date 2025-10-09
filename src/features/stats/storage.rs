@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Row, Sqlite, SqlitePool};
+use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Row, SqlitePool};
 
 use crate::error::AppError;
 
@@ -18,7 +18,7 @@ impl StatsStorage {
             .filename(Path::new(path))
             .create_if_missing(true)
             .log_statements(tracing::log::LevelFilter::Off);
-        let pool = SqlitePool::connect_with(opt).await.map_err(|e| AppError::Internal(format!("sqlite connect: {}", e)))?;
+        let pool = SqlitePool::connect_with(opt).await.map_err(|e| AppError::Internal(format!("sqlite connect: {e}")))?;
         if wal {
             sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await.ok();
         }
@@ -57,12 +57,12 @@ impl StatsStorage {
             PRIMARY KEY(date, feature, route, method)
         );
         "#;
-        sqlx::query(ddl).execute(&self.pool).await.map_err(|e| AppError::Internal(format!("init schema: {}", e)))?;
+        sqlx::query(ddl).execute(&self.pool).await.map_err(|e| AppError::Internal(format!("init schema: {e}")))?;
         Ok(())
     }
 
     pub async fn insert_events(&self, events: &[EventInsert]) -> Result<(), AppError> {
-        let mut tx = self.pool.begin().await.map_err(|e| AppError::Internal(format!("begin tx: {}", e)))?;
+        let mut tx = self.pool.begin().await.map_err(|e| AppError::Internal(format!("begin tx: {e}")))?;
         for e in events {
             let extra = e.extra_json.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
             sqlx::query("INSERT INTO events(ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
@@ -77,9 +77,9 @@ impl StatsStorage {
                 .bind(&e.client_ip_hash)
                 .bind(&e.instance)
                 .bind(extra)
-                .execute(&mut *tx).await.map_err(|er| AppError::Internal(format!("insert event: {}", er)))?;
+                .execute(&mut *tx).await.map_err(|er| AppError::Internal(format!("insert event: {er}")))?;
         }
-        tx.commit().await.map_err(|e| AppError::Internal(format!("commit: {}", e)))?;
+        tx.commit().await.map_err(|e| AppError::Internal(format!("commit: {e}")))?;
         Ok(())
     }
 
@@ -110,7 +110,7 @@ impl StatsStorage {
             .bind(feature.as_ref())
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AppError::Internal(format!("query daily: {}", e)))?;
+            .map_err(|e| AppError::Internal(format!("query daily: {e}")))?;
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             out.push(DailyAggRow {

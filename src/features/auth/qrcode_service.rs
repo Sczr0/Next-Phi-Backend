@@ -23,6 +23,12 @@ pub struct QrCodeService {
     pub cache: Cache<String, QrCodeStatus>,
 }
 
+impl Default for QrCodeService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl QrCodeService {
     pub fn new() -> Self {
         let cache = Cache::builder()

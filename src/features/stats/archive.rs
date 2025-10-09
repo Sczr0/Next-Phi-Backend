@@ -2,7 +2,6 @@ use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use arrow_array::builder::{Int64Builder, StringBuilder, UInt16Builder};
 use arrow_array::{builder::TimestampMillisecondBuilder, ArrayRef, RecordBatch};
-use arrow_buffer::ArrowNativeType;
 use arrow_schema::{DataType, Field, Schema};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use parquet::arrow::ArrowWriter;
@@ -58,7 +57,7 @@ pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig,
         .bind(end.to_rfc3339())
         .fetch_all(&storage.pool)
         .await
-        .map_err(|e| AppError::Internal(format!("archive query: {}", e)))?;
+        .map_err(|e| AppError::Internal(format!("archive query: {e}")))?;
 
     if rows.is_empty() {
         tracing::info!("统计归档：{} 无数据，跳过", day);
@@ -126,13 +125,13 @@ pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig,
             std::sync::Arc::new(inst_b.finish()),
             std::sync::Arc::new(extra_b.finish()),
         ],
-    ).map_err(|e| AppError::Internal(format!("build record batch: {}", e)))?;
+    ).map_err(|e| AppError::Internal(format!("build record batch: {e}")))?;
 
     // 输出路径
     let out_dir = partition_dir(&arcfg.dir, day);
     tokio::fs::create_dir_all(&out_dir).await.ok();
     let file = unique_file_in(&out_dir);
-    let f = std::fs::File::create(&file).map_err(|e| AppError::Internal(format!("create parquet: {}", e)))?;
+    let f = std::fs::File::create(&file).map_err(|e| AppError::Internal(format!("create parquet: {e}")))?;
 
     // 压缩设置
     let compression = match arcfg.compress.to_ascii_lowercase().as_str() {
@@ -141,9 +140,9 @@ pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig,
         _ => Compression::UNCOMPRESSED,
     };
     let props = WriterProperties::builder().set_compression(compression).build();
-    let mut writer = ArrowWriter::try_new(f, std::sync::Arc::new(schema), Some(props)).map_err(|e| AppError::Internal(format!("arrow writer: {}", e)))?;
-    writer.write(&batch).map_err(|e| AppError::Internal(format!("write batch: {}", e)))?;
-    writer.close().map_err(|e| AppError::Internal(format!("close parquet: {}", e)))?;
+    let mut writer = ArrowWriter::try_new(f, std::sync::Arc::new(schema), Some(props)).map_err(|e| AppError::Internal(format!("arrow writer: {e}")))?;
+    writer.write(&batch).map_err(|e| AppError::Internal(format!("write batch: {e}")))?;
+    writer.close().map_err(|e| AppError::Internal(format!("close parquet: {e}")))?;
     tracing::info!("统计归档完成: {} (rows={})", file.display(), batch.num_rows());
     Ok(())
 }
@@ -153,9 +152,9 @@ fn partition_dir(base: &str, day: NaiveDate) -> PathBuf {
     let m = day.month();
     let d = day.day();
     PathBuf::from(base)
-        .join(format!("year={}", y))
-        .join(format!("month={:02}", m))
-        .join(format!("day={:02}", d))
+        .join(format!("year={y}"))
+        .join(format!("month={m:02}"))
+        .join(format!("day={d:02}"))
 }
 
 fn unique_file_in(dir: &PathBuf) -> PathBuf {
