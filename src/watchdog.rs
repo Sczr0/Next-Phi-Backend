@@ -3,7 +3,7 @@
 //! 提供systemd看门狗协议支持，定期向systemd发送心跳通知
 
 use std::time::Duration;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 use crate::config::WatchdogConfig;
 use crate::shutdown::{ShutdownManager, ShutdownHandle};
 
@@ -16,25 +16,23 @@ pub struct SystemdWatchdog {
 
 #[cfg(target_os = "linux")]
 mod systemd_impl {
-    use sd_notify::{NotifyState, notify};
+    use sd_notify::{notify, NotifyState};
+    use tracing::{debug, error};
 
     /// 通知systemd服务状态
     fn notify_systemd(state: NotifyState) -> Result<(), Box<dyn std::error::Error>> {
-        match notify(false, &[state]) {
-            Ok(true) => {
-                debug!("systemd通知发送成功: {:?}", state);
-                Ok(())
-            }
-            Ok(false) => {
-                // 不在systemd环境下运行，这是正常的
-                debug!("不在systemd环境下运行，忽略通知");
-                Ok(())
-            }
-            Err(e) => {
-                error!("systemd通知失败: {}", e);
-                Err(Box::new(e))
-            }
+        if std::env::var_os("NOTIFY_SOCKET").is_none() {
+            debug!("不在systemd环境下运行，忽略通知");
+            return Ok(());
         }
+
+        if let Err(e) = notify(false, &[state]) {
+            error!("systemd通知失败: {}", e);
+            return Err(Box::new(e));
+        }
+
+        debug!("systemd通知发送成功: {:?}", state);
+        Ok(())
     }
 
     /// 发送ready信号
@@ -59,7 +57,12 @@ mod systemd_impl {
 
     /// 获取看门狗超时时间
     pub fn get_watchdog_timeout_us() -> Option<u64> {
-        sd_notify::watchdog_enabled(false)
+        let mut usec: u64 = 0;
+        if sd_notify::watchdog_enabled(false, &mut usec) {
+            Some(usec)
+        } else {
+            None
+        }
     }
 }
 
