@@ -26,12 +26,14 @@ mod systemd_impl {
             return Ok(());
         }
 
+        // 发送前记录一次日志，随后将 `state` 移入 `notify`
+        debug!("准备发送systemd通知: {:?}", state);
+
         if let Err(e) = notify(false, &[state]) {
             error!("systemd通知失败: {}", e);
             return Err(Box::new(e));
         }
 
-        debug!("systemd通知发送成功: {:?}", state);
         Ok(())
     }
 
