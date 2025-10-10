@@ -7,8 +7,12 @@ use serde::Serialize;
 /// 单张谱面的 RKS 结果
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct ChartRankingScore {
+    /// 歌曲 ID
+    #[schema(example = "97f9466b2e77")]
     pub song_id: String,
     pub difficulty: Difficulty,
+    /// 谱面 RKS 值
+    #[schema(example = 12.34)]
     pub rks: f64,
 }
 
@@ -34,6 +38,8 @@ pub fn calculate_single_chart_rks(accuracy: f32, chart_constant: f32) -> f64 {
 /// 玩家 RKS 计算结果
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct PlayerRksResult {
+    /// 玩家总 RKS （Best27 + AP3）/ 30
+    #[schema(example = 14.56)]
     pub total_rks: f64,
     pub b30_charts: Vec<ChartRankingScore>,
 }
@@ -149,16 +155,21 @@ fn key_of_difficulty(diff: &Difficulty) -> u8 {
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
 pub struct RksRecord {
     /// 歌曲 ID（与定数表中的键一致）
+    #[schema(example = "97f9466b2e77")]
     pub song_id: String,
     /// 难度枚举
     pub difficulty: Difficulty,
     /// 实际得分（如无可填 0）
+    #[schema(example = 998765)]
     pub score: u32,
     /// ACC 百分比（例：98.50 表示 98.5%）
+    #[schema(example = 98.73)]
     pub acc: f64,
     /// 该条成绩对应的 RKS 值
+    #[schema(example = 13.21)]
     pub rks: f64,
     /// 该谱面的定数（constant）
+    #[schema(example = 12.7)]
     pub chart_constant: f64,
 }
 

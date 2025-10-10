@@ -7,10 +7,12 @@ use super::client::ExternalApiCredentials;
 #[serde(rename_all = "camelCase")]
 pub struct UnifiedSaveRequest {
     /// 官方 LeanCloud 会话令牌
+    #[schema(example = "r:abcdefg.hijklmn-opqrstuvwxyz")] 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_token: Option<String>,
 
     /// 外部 API 凭证
+    /// 三选一：platform+platformId / sessiontoken / apiUserId
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_credentials: Option<ExternalApiCredentials>,
 }
@@ -19,6 +21,7 @@ pub struct UnifiedSaveRequest {
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SaveResponse {
     /// 存档数据
+    #[schema(value_type = Object)]
     pub data: serde_json::Value,
 }
 
@@ -102,21 +105,30 @@ pub struct ParsedSaveDoc {
     #[schema(example = "2025-09-20T04:10:44.188Z")]
     pub updated_at: Option<String>,
     #[serde(rename = "summaryParsed")]
+    /// 解析自 summary 的关键摘要（如段位、RKS 等）
     pub summary_parsed: Option<serde_json::Value>,
+    /// 结构化成绩（歌曲ID -> [四难度成绩]）
     pub game_record: serde_json::Value,
+    /// 进度信息（如金钱、拓展信息）
     pub game_progress: serde_json::Value,
+    /// 用户基本信息
     pub user: serde_json::Value,
+    /// 客户端设置
     pub settings: serde_json::Value,
+    /// 游戏密钥块
     pub game_key: serde_json::Value,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SaveResponseDoc {
+    /// 解析后的存档对象
     pub data: ParsedSaveDoc,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct SaveAndRksResponseDoc {
+    /// 解析后的存档对象
     pub save: ParsedSaveDoc,
+    /// 玩家 RKS 概览
     pub rks: crate::features::rks::engine::PlayerRksResult,
 }

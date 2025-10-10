@@ -23,6 +23,7 @@ use utoipa_swagger_ui::SwaggerUi;
         phi_backend::features::image::handler::render_bn_user,
         phi_backend::features::stats::handler::get_daily_stats,
         phi_backend::features::stats::handler::get_stats_summary,
+        health_check,
     ),
     components(
         schemas(
@@ -65,6 +66,14 @@ use utoipa_swagger_ui::SwaggerUi;
 )]
 pub struct ApiDoc;
 
+#[utoipa::path(
+    get,
+    path = "/health",
+    summary = "健康检查",
+    description = "用于探活的健康检查端点，返回服务状态与版本信息。",
+    responses((status = 200, description = "服务健康", body = serde_json::Value) ),
+    tag = "Health"
+)]
 async fn health_check() -> (StatusCode, Json<serde_json::Value>) {
     (
         StatusCode::OK,

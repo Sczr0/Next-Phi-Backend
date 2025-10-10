@@ -12,14 +12,24 @@ const USER_AGENT: &str = "LeanCloud-CSharp-SDK/1.0.3";
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalApiCredentials {
+    /// 外部平台标识，如 "TapTap"/"Bilibili"（与 platformId 配对）
+    #[schema(example = "TapTap")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
+    /// 外部平台用户唯一标识（与 platform 配对）
+    #[schema(example = "user_123456")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform_id: Option<String>,
+    /// 外部平台会话令牌（某些平台以此直连）
+    #[schema(example = "ext-session-abcdef")] 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sessiontoken: Option<String>,
+    /// 外部 API 的用户 ID（直连方式之一）
+    #[schema(example = "1008611")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_user_id: Option<String>,
+    /// 外部 API 的访问令牌（如需）
+    #[schema(example = "token-xyz")] 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_token: Option<String>,
 }

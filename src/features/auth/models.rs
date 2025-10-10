@@ -31,5 +31,7 @@ pub struct DeviceCodeResponse {
 
 #[derive(Debug, Deserialize, Clone, ToSchema)]
 pub struct SessionData {
+    /// LeanCloud Session Token
+    #[schema(example = "r:abcdefg.hijklmn-opqrstuvwxyz")]
     pub session_token: String,
 }

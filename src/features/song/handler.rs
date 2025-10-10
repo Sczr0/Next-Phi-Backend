@@ -26,6 +26,8 @@ fn parse_bool(s: &str) -> bool {
 #[utoipa::path(
     get,
     path = "/songs/search",
+    summary = "歌曲检索（支持别名与模糊匹配）",
+    description = "按 ID/官方名/别名进行模糊搜索。`unique=true` 时期望唯一命中，未命中返回 404，多命中返回 409。",
     params(
         ("q" = String, Query, description = "查询字符串"),
         ("unique" = bool, Query, description = "是否强制唯一匹配（可选）")

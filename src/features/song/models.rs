@@ -8,10 +8,19 @@ use crate::startup::chart_loader::ChartConstants;
 /// 单曲信息（来源：info/info.csv）
 #[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
 pub struct SongInfo {
+    /// 歌曲唯一 ID（与封面/定数等资源对应）
+    #[schema(example = "97f9466b2e77")]
     pub id: String,
+    /// 官方名称
+    #[schema(example = "Arcahv")]
     pub name: String,
+    /// 作曲者
+    #[schema(example = "Feryquitous")]
     pub composer: String,
+    /// 插画作者
+    #[schema(example = "Catrong")]
     pub illustrator: String,
+    /// 四难度定数（可为空）
     pub chart_constants: ChartConstants,
 }
 

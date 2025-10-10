@@ -18,11 +18,17 @@ pub struct EventInsert {
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct DailyAggRow {
+    /// 日期（本地时区）YYYY-MM-DD
     pub date: String,
+    /// 业务功能名（bestn/single_query/save 等）
     pub feature: Option<String>,
+    /// 路由模板（例如 /image/bn）
     pub route: Option<String>,
+    /// HTTP 方法（GET/POST 等）
     pub method: Option<String>,
+    /// 调用次数
     pub count: i64,
+    /// 错误次数（status >= 400）
     pub err_count: i64,
 }
 

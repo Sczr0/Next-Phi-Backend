@@ -1,217 +1,59 @@
-# Phi-Backend 部署指南
+# Phi-Backend 部署指南（基于代码）
 
-本文档提供了 Phi-Backend 在不同平台上的部署指南，包括优雅退出和系统服务管理功能。
+本文档严格依据仓库代码与配置实现，说明如何在常见环境下构建与部署本服务（Axum + Tokio）。
 
-## 目录
+## 功能与端点
 
-- [系统要求](#系统要求)
-- [快速开始](#快速开始)
-- [Linux部署](#linux部署)
-- [Windows部署](#windows部署)
-- [macOS部署](#macos部署)
-- [配置说明](#配置说明)
-- [优雅退出](#优雅退出)
-- [看门狗功能](#看门狗功能)
-- [故障排除](#故障排除)
+- 默认监听地址与端口：由 `config.toml` 的 `[server]` 控制（默认 `0.0.0.0:3939`）
+- 公开端点：
+  - 健康检查：`GET /health`
+  - API 文档（Swagger UI）：`GET /docs`
+  - OpenAPI 文档：`GET /api-docs/openapi.json`
+  - 业务前缀：`/api/v1`（可通过配置覆盖）
 
-## 系统要求
+## 前置条件
 
-### 最低要求
-- **操作系统**: Linux (Ubuntu 20.04+, CentOS 8+), Windows 10+, macOS 11+
-- **内存**: 512MB RAM
-- **磁盘**: 1GB 可用空间
-- **网络**: 端口 3939 可用
+- 已安装支持 `edition = 2024` 的 Rust 工具链与 Cargo
+- 服务器需能访问 GitHub（首次启动会克隆曲绘仓库：`https://github.com/Catrong/phi-plugin-ill`）
+- 准备数据目录：`./info`（默认），需包含：
+  - `difficulty.csv`
+  - `info.csv`
+  - `nicklist.yaml`
+- 可选字体（提升渲染效果）：`resources/fonts/Source Han Sans & Saira Hybrid-Regular #5446.ttf`
 
-### 推荐配置
-- **操作系统**: Linux (Ubuntu 22.04 LTS)
-- **内存**: 2GB RAM
-- **磁盘**: 5GB 可用空间
-- **CPU**: 2核心
+备注：首次启动会自动创建 `resources/` 目录，并在 `resources/<illustration_folder>` 下克隆或更新曲绘仓库（默认 `ill`，由配置控制）。
 
-## 快速开始
-
-### 1. 环境准备
+## 构建
 
 ```bash
-# 安装 Rust (如果尚未安装)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-
-# 克隆项目
-git clone <repository-url>
-cd phi-backend
-```
-
-### 2. 构建项目
-
-```bash
-# 生产构建
-cargo build --release
-
-# 运行测试
-cargo test
-
-# 验证构建
-./target/release/phi-backend --version
-```
-
-### 3. 基本运行
-
-```bash
-# 直接运行
-./target/release/phi-backend
-
-# 或者指定配置文件
-./target/release/phi-backend --config /path/to/config.toml
-```
-
-服务启动后访问：
-- **API服务**: http://localhost:3939
-- **API文档**: http://localhost:3939/docs
-- **健康检查**: http://localhost:3939/health
-
-## Linux部署
-
-### 使用systemd服务（推荐）
-
-#### 自动安装
-
-```bash
-# 运行安装脚本
-sudo ./scripts/install-systemd-service.sh
-
-# 使用管理脚本
-sudo ./scripts/phi-backendctl status
-```
-
-#### 手动安装
-
-1. **创建服务用户**
-```bash
-sudo useradd -r -s /bin/false -d /opt/phi-backend phi
-```
-
-2. **创建目录结构**
-```bash
-sudo mkdir -p /opt/phi-backend/{resources,info,logs}
-sudo chown -R phi:phi /opt/phi-backend
-```
-
-3. **复制文件**
-```bash
-sudo cp target/release/phi-backend /opt/phi-backend/
-sudo cp config.toml /opt/phi-backend/
-sudo cp -r resources/* /opt/phi-backend/resources/
-sudo cp -r info/* /opt/phi-backend/info/
-sudo chown -R phi:phi /opt/phi-backend
-sudo chmod +x /opt/phi-backend/phi-backend
-```
-
-4. **安装systemd服务**
-```bash
-sudo cp scripts/phi-backend.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable phi-backend
-sudo systemctl start phi-backend
-```
-
-### Docker部署
-
-```dockerfile
-FROM rust:1.75 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/phi-backend /usr/local/bin/
-COPY --from=builder /app/config.toml /etc/phi-backend/
-EXPOSE 3939
-CMD ["phi-backend", "--config", "/etc/phi-backend/config.toml"]
-```
-
-```bash
-# 构建和运行
-docker build -t phi-backend .
-docker run -d -p 3939:3939 -v $(pwd)/resources:/app/resources phi-backend
-```
-
-## Windows部署
-
-### 使用批处理脚本
-
-```cmd
-# 构建项目
-scripts\phi-backend.bat build
-
-# 启动服务
-scripts\phi-backend.bat start
-
-# 检查状态
-scripts\phi-backend.bat status
-```
-
-### 手动部署
-
-1. **构建项目**
-```cmd
 cargo build --release
 ```
 
-2. **配置环境**
-```cmd
-# 设置环境变量
-set APP_RESOURCES_BASE_PATH=C:\phi-backend\resources
-set APP_STATS_SQLITE_PATH=C:\phi-backend\resources\usage_stats.db
-```
+产物位置：
+- Linux/macOS：`./target/release/phi-backend`
+- Windows：`.\n+target\release\phi-backend.exe`
 
-3. **运行服务**
-```cmd
-target\release\phi-backend.exe
-```
-
-### Windows服务
-
-使用NSSM (Non-Sucking Service Manager):
-
-```cmd
-# 下载并安装NSSM
-nssm install PhiBackend "C:\phi-backend\target\release\phi-backend.exe"
-nssm set PhiBackend Arguments "--config C:\phi-backend\config.toml"
-nssm set PhiBackend DisplayName "Phi Backend Service"
-nssm start PhiBackend
-```
-
-## macOS部署
-
-### 使用Homebrew
+可设置日志级别：
 
 ```bash
-# 安装Rust
-brew install rust
-
-# 构建项目
-cargo build --release
-
-# 创建launchd服务
-cp scripts/com.phi-backend.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.phi-backend.plist
+RUST_LOG=phi_backend=info,tower_http=info ./target/release/phi-backend
 ```
 
-### 手动运行
+## 配置（config.toml + 环境变量覆盖）
 
-```bash
-# 直接运行
-./target/release/phi-backend
+应用在工作目录查找 `config.toml`（代码中固定为相对路径 `config.toml`），并允许被前缀为 `APP_` 的环境变量覆盖，分隔符为下划线 `_`。例如：
 
-# 后台运行
-nohup ./target/release/phi-backend > /tmp/phi-backend.log 2>&1 &
-```
+- `APP_SERVER_HOST=127.0.0.1` 覆盖 `[server].host`
+- `APP_SERVER_PORT=8080` 覆盖 `[server].port`
+- `APP_API_PREFIX=/api/v2` 覆盖 `[api].prefix`
+- `APP_RESOURCES_BASE_PATH=/data/phi/resources` 覆盖 `[resources].base_path`
+- `APP_STATS_ENABLED=false` 覆盖 `[stats].enabled`
+- `APP_STATS_SQLITE_PATH=/data/phi/usage_stats.db` 覆盖 `[stats].sqlite_path`
+- `APP_BRANDING_FOOTER_TEXT=Powered by Phi` 覆盖 `[branding].footer_text`
+- `APP_WATERMARK_UNLOCK_DYNAMIC=true` 覆盖 `[watermark].unlock_dynamic`
+- `APP_SHUTDOWN_WATCHDOG_ENABLED=true` 覆盖 `[shutdown.watchdog].enabled`
 
-## 配置说明
-
-### 基础配置
+最小可用配置示例（与仓库根目录中的 `config.toml` 等价）：
 
 ```toml
 [server]
@@ -226,310 +68,308 @@ base_path = "./resources"
 illustration_repo = "https://github.com/Catrong/phi-plugin-ill"
 illustration_folder = "ill"
 info_path = "./info"
-```
 
-### 优雅退出配置
+[logging]
+level = "info"
+format = "full"
 
-```toml
-[shutdown]
-# 优雅退出超时时间（秒）
-timeout_secs = 30
-# 是否启用强制退出
-force_quit = true
-# 强制退出前的等待时间（秒）
-force_delay_secs = 10
+[branding]
+footer_text = ""
 
-[shutdown.watchdog]
-# 是否启用systemd看门狗（仅在Linux下生效）
-enabled = false
-# 看门狗超时时间（秒）
-timeout_secs = 60
-# 心跳间隔时间（秒）
-interval_secs = 10
-```
-
-### 统计配置
-
-```toml
 [stats]
-# 是否启用统计
 enabled = true
 storage = "sqlite"
 sqlite_path = "./resources/usage_stats.db"
+sqlite_wal = true
 batch_size = 100
 flush_interval_ms = 1000
 retention_hot_days = 180
+daily_aggregate_time = "03:00"
 
 [stats.archive]
 parquet = true
 dir = "./resources/stats/v1/events"
 compress = "zstd"
-```
 
-## 优雅退出
+[watermark]
+explicit_badge = true
+implicit_pixel = true
+unlock_static = ""
+unlock_dynamic = true
+dynamic_salt = "phi"
+dynamic_ttl_secs = 10
+dynamic_secret = ""
+dynamic_length = 32
 
-Phi-Backend支持完整的优雅退出机制：
+[shutdown]
+timeout_secs = 30
+force_quit = true
+force_delay_secs = 10
 
-### 支持的信号
-- **Linux/macOS**: SIGINT (Ctrl+C), SIGTERM
-- **Windows**: Ctrl+C
-- **程序内部**: 调用API触发退出
-
-### 退出流程
-1. 接收到退出信号
-2. 停止接受新的HTTP请求
-3. 完成正在处理的请求
-4. 刷新统计数据到数据库
-5. 关闭文件和网络连接
-6. 发送systemd停止信号（如果在systemd环境下）
-7. 退出程序
-
-### 配置参数
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `timeout_secs` | 30 | 优雅退出超时时间 |
-| `force_quit` | true | 超时后是否强制退出 |
-| `force_delay_secs` | 10 | 强制退出前等待时间 |
-
-### 使用示例
-
-```bash
-# Linux/macOS: 发送SIGTERM信号
-kill -TERM <pid>
-
-# Linux/macOS: 发送SIGINT信号
-kill -INT <pid>
-
-# 使用systemd服务管理
-sudo systemctl stop phi-backend
-
-# 使用管理脚本
-sudo ./scripts/phi-backendctl stop
-```
-
-## 看门狗功能
-
-systemd看门狗功能可确保服务在异常情况下自动重启。
-
-### 启用看门狗
-
-```toml
 [shutdown.watchdog]
-enabled = true
+enabled = false
 timeout_secs = 60
 interval_secs = 10
 ```
 
-### systemd服务配置
+说明：代码中未实现命令行参数解析，无法通过 `--config` 指定配置路径；如需放置到其他目录，请配合 `WorkingDirectory`（例如 systemd）或环境变量覆盖。
+
+## 配置项详解（逐项说明）
+
+环境变量覆盖规则：以 `APP_` 为前缀，使用下划线连接层级名，全部大写。例如 `APP_SERVER_HOST` 覆盖 `[server].host`。
+
+### [server]
+- host（字符串，默认 0.0.0.0）
+  - 监听地址；生产环境通常保持 0.0.0.0 以便外部访问
+  - 环境变量：APP_SERVER_HOST
+- port（整数，默认 3939）
+  - 监听端口
+  - 环境变量：APP_SERVER_PORT
+
+### [api]
+- prefix（字符串，默认 /api/v1）
+  - 所有业务路由的前缀（不影响 /health 与 /docs）
+  - 环境变量：APP_API_PREFIX
+
+### [resources]
+- base_path（字符串，默认 ./resources）
+  - 运行时资源根目录；首次启动会自动创建
+  - 环境变量：APP_RESOURCES_BASE_PATH
+- illustration_repo（字符串，默认 https://github.com/Catrong/phi-plugin-ill）
+  - 曲绘仓库地址；启动时若本地不存在将克隆，存在则尝试更新
+  - 环境变量：APP_RESOURCES_ILLUSTRATION_REPO
+- illustration_folder（字符串，默认 ill）
+  - 存放曲绘仓库的子目录名：`<base_path>/<illustration_folder>`
+  - 环境变量：APP_RESOURCES_ILLUSTRATION_FOLDER
+- info_path（字符串，默认 ./info）
+  - 歌曲元数据目录，必须包含 `difficulty.csv`、`info.csv`、`nicklist.yaml`
+  - 环境变量：APP_RESOURCES_INFO_PATH
+
+### [logging]
+- level（字符串，默认 info）
+  - 期望的日志级别；当前主流程使用 `RUST_LOG` 环境变量控制更直接
+  - 环境变量：APP_LOGGING_LEVEL（仅作为配置占位，主流程未直接消费）
+- format（字符串，默认 full）
+  - 日志格式占位：full/compact/pretty/json（当前主流程未直接消费）
+  - 环境变量：APP_LOGGING_FORMAT
+
+提示：实际运行时建议通过 `RUST_LOG=phi_backend=info,tower_http=info` 控制日志；上述 logging 配置为未来扩展预留。
+
+### [branding]
+- footer_text（字符串，默认空）
+  - 图片渲染右下角自定义文字；为空则不显示
+  - 环境变量：APP_BRANDING_FOOTER_TEXT
+
+### [stats]
+- enabled（布尔，默认 true）
+  - 是否启用统计采集与归档；关闭后相关路由仍存在但可能返回空
+  - 环境变量：APP_STATS_ENABLED
+- start_at（可选字符串，默认 null）
+  - ISO8601 起始时间；早于该时间的事件可忽略（当前主要用于后续扩展）
+  - 环境变量：APP_STATS_START_AT
+- storage（字符串，默认 sqlite）
+  - 明细存储类型；当前仅支持 sqlite
+  - 环境变量：APP_STATS_STORAGE
+- sqlite_path（字符串，默认 ./resources/usage_stats.db）
+  - SQLite 文件路径；建议放置到数据盘
+  - 环境变量：APP_STATS_SQLITE_PATH
+- sqlite_wal（布尔，默认 true）
+  - 是否启用 WAL，提升并发写入性能
+  - 环境变量：APP_STATS_SQLITE_WAL
+- batch_size（整数，默认 100）
+  - 批量插入大小；过大可能增加尾延迟，过小影响吞吐
+  - 环境变量：APP_STATS_BATCH_SIZE
+- flush_interval_ms（整数，默认 1000）
+  - 后台 flush 周期（毫秒）；在低流量时保障数据落盘
+  - 环境变量：APP_STATS_FLUSH_INTERVAL_MS
+- retention_hot_days（整数，默认 180）
+  - 热数据保留天数（在线 SQLite）；当前仅作为策略占位
+  - 环境变量：APP_STATS_RETENTION_HOT_DAYS
+- user_hash_salt（可选字符串，默认 null）
+  - 用户去敏哈希盐；不设置则不记录 user_hash/client_ip_hash
+  - 强烈建议通过环境变量注入，勿写入仓库
+  - 环境变量：APP_STATS_USER_HASH_SALT
+- timezone（字符串，默认 Asia/Shanghai）
+  - 展示统计的时区（IANA 名称），用于接口聚合展示
+  - 环境变量：APP_STATS_TIMEZONE
+- daily_aggregate_time（字符串，默认 03:00）
+  - 每日归档触发时间（本地时区），归档“前一日”明细为 Parquet
+  - 环境变量：APP_STATS_DAILY_AGGREGATE_TIME
+- archive（对象）
+  - 见下节 `[stats.archive]`
+
+### [stats.archive]
+- parquet（布尔，默认 true）
+  - 是否导出 Parquet 文件
+  - 环境变量：APP_STATS_ARCHIVE_PARQUET
+- dir（字符串，默认 ./resources/stats/v1/events）
+  - Parquet 根目录，按 year=YYYY/month=MM/day=DD 分区
+  - 环境变量：APP_STATS_ARCHIVE_DIR
+- compress（字符串，默认 zstd）
+  - 压缩算法：zstd | snappy | none（其他值视为 none）
+  - 环境变量：APP_STATS_ARCHIVE_COMPRESS
+
+### [watermark]
+- explicit_badge（布尔，默认 true）
+  - 显式水印：在图片上以标记方式体现
+  - 环境变量：APP_WATERMARK_EXPLICIT_BADGE
+- implicit_pixel（布尔，默认 true）
+  - 隐式水印：在 PNG 首像素写入可追踪标记
+  - 环境变量：APP_WATERMARK_IMPLICIT_PIXEL
+- unlock_static（可选字符串，默认空字符串/None）
+  - 静态解除口令；填写后，提交正确口令可关闭水印
+  - 环境变量：APP_WATERMARK_UNLOCK_STATIC
+- unlock_dynamic（布尔，默认 false 或示例中为 true）
+  - 动态解除口令；启用后服务会在日志周期性打印当前口令
+  - 环境变量：APP_WATERMARK_UNLOCK_DYNAMIC
+- dynamic_salt（字符串，默认 phi）
+  - 动态口令盐
+  - 环境变量：APP_WATERMARK_DYNAMIC_SALT
+- dynamic_ttl_secs（整数，默认 600 或示例 10）
+  - 动态口令有效期（秒），窗口越短越难被复用
+  - 环境变量：APP_WATERMARK_DYNAMIC_TTL_SECS
+- dynamic_secret（可选字符串，默认 null）
+  - 参与口令生成的额外密钥，提高复杂度
+  - 环境变量：APP_WATERMARK_DYNAMIC_SECRET
+- dynamic_length（整数，默认 8 或示例 32）
+  - 取 SHA-256 hex 的前缀长度（4~64）
+  - 环境变量：APP_WATERMARK_DYNAMIC_LENGTH
+
+安全提示：静态/动态口令属于敏感信息，建议仅通过环境变量注入，避免写入仓库或镜像层。
+
+### [shutdown]
+- timeout_secs（整数，默认 30）
+  - 优雅退出总超时；超过后进入强制退出分支
+  - 环境变量：APP_SHUTDOWN_TIMEOUT_SECS
+- force_quit（布尔，默认 true）
+  - 超时后是否强制退出
+  - 环境变量：APP_SHUTDOWN_FORCE_QUIT
+- force_delay_secs（整数，默认 10）
+  - 触发强退前的等待时间
+  - 环境变量：APP_SHUTDOWN_FORCE_DELAY_SECS
+- watchdog（对象）
+  - 见下节 `[shutdown.watchdog]`
+
+### [shutdown.watchdog]
+- enabled（布尔，默认 false）
+  - 启用 systemd 看门狗；仅 Linux 且在 systemd 环境有效
+  - 环境变量：APP_SHUTDOWN_WATCHDOG_ENABLED
+- timeout_secs（整数，默认 60）
+  - systemd 端期望的超时（需同时在 unit 中设置 `WatchdogSec=` 并 `Type=notify`）
+  - 环境变量：APP_SHUTDOWN_WATCHDOG_TIMEOUT_SECS
+- interval_secs（整数，默认 10）
+  - 心跳发送间隔；建议小于 WatchdogSec 的一半
+  - 环境变量：APP_SHUTDOWN_WATCHDOG_INTERVAL_SECS
+
+注意：要让看门狗真正生效，需要同时满足：
+1) 配置中开启 `[shutdown.watchdog].enabled=true`
+2) systemd unit 设置 `Type=notify` 和合适的 `WatchdogSec=`
+
+## 运行
+
+### 直接运行
+
+```bash
+./target/release/phi-backend   # Linux/macOS
+.
+target\release\phi-backend.exe  # Windows
+```
+
+启动日志将打印：绑定地址、文档与健康检查 URL、曲绘目录、以及（启用时）动态水印口令。
+
+### 使用 systemd（Linux，推荐）
+
+1) 创建目录与用户（示例）：
+
+```bash
+sudo useradd -r -s /usr/sbin/nologin phi || true
+sudo mkdir -p /opt/phi-backend/{resources,info}
+sudo chown -R phi:phi /opt/phi-backend
+```
+
+2) 放置二进制与配置：
+
+```bash
+sudo cp target/release/phi-backend /opt/phi-backend/
+sudo cp config.toml /opt/phi-backend/
+sudo cp -r info/* /opt/phi-backend/info/
+sudo chown -R phi:phi /opt/phi-backend
+sudo chmod +x /opt/phi-backend/phi-backend
+```
+
+3) 创建服务单元 `/etc/systemd/system/phi-backend.service`：
 
 ```ini
+[Unit]
+Description=Phi Backend Service
+After=network-online.target
+Wants=network-online.target
+
 [Service]
-WatchdogSec=60
+User=phi
+Group=phi
+WorkingDirectory=/opt/phi-backend
+ExecStart=/opt/phi-backend/phi-backend
+Environment=RUST_LOG=phi_backend=info,tower_http=info
+# 可选：统计用户去敏盐
+# Environment=APP_STATS_USER_HASH_SALT=your-secret-salt
+Restart=on-failure
+RestartSec=5s
+
+# 如需启用 systemd 看门狗（需同时在 config.toml 打开 [shutdown.watchdog].enabled）
+# Type=notify
+# WatchdogSec=60s
+
+[Install]
+WantedBy=multi-user.target
 ```
 
-### 验证看门狗状态
+4) 启动与查看：
 
 ```bash
-# 检查服务状态
+sudo systemctl daemon-reload
+sudo systemctl enable --now phi-backend
 sudo systemctl status phi-backend
-
-# 查看看门狗超时设置
-systemctl show phi-backend --property=WatchdogUSec
-
-# 查看日志
 sudo journalctl -u phi-backend -f
 ```
 
-## 服务管理
+## 统计与持久化
 
-### Linux (systemd)
+- 在线明细：SQLite 文件位于 `[stats].sqlite_path`（默认 `./resources/usage_stats.db`）
+- 每日归档：按本地时区 `[stats].daily_aggregate_time` 导出 Parquet 至 `[stats.archive].dir`
+- 详见仓库根目录《STATS.md》
 
-```bash
-# 使用管理脚本
-sudo ./scripts/phi-backendctl status
-sudo ./scripts/phi-backendctl start
-sudo ./scripts/phi-backendctl stop
-sudo ./scripts/phi-backendctl restart
-sudo ./scripts/phi-backendctl logs -f
+## 首次启动与离线准备
 
-# 直接使用systemctl
-sudo systemctl status phi-backend
-sudo systemctl start phi-backend
-sudo systemctl stop phi-backend
-sudo systemctl restart phi-backend
-sudo journalctl -u phi-backend -f
-```
+- 首次启动会：
+  - 自动创建 `resources/` 目录
+  - 检测 `resources/<illustration_folder>` 是否存在，不存在则克隆，存在则尝试更新
+  - 检查字体是否存在（缺失仅警告，不阻断启动）
+- 离线环境建议：提前将曲绘仓库内容放入 `resources/<illustration_folder>`，并保证写权限
 
-### Windows
-
-```cmd
-# 使用批处理脚本
-scripts\phi-backend.bat status
-scripts\phi-backend.bat start
-scripts\phi-backend.bat stop
-scripts\phi-backend.bat restart
-
-# 使用NSSM (如果已安装为服务)
-nssm status PhiBackend
-nssm start PhiBackend
-nssm stop PhiBackend
-nssm restart PhiBackend
-```
-
-### 健康检查
+## 健康检查与验证
 
 ```bash
-# Linux/macOS
-curl http://localhost:3939/health
+curl http://127.0.0.1:3939/health
+# 期望返回：{"status":"healthy","service":"phi-backend","version":"..."}
 
-# Windows
-curl http://localhost:3939/health
-
-# 使用管理脚本
-sudo ./scripts/phi-backendctl health
+# 打开文档
+# http://127.0.0.1:3939/docs
 ```
 
-## 故障排除
+## 常见问题
 
-### 常见问题
+- 端口占用：调整 `[server].port` 或释放占用
+- 无法克隆曲绘仓库：检查到 GitHub 的网络连通；离线模式请预置资源
+- SQLite 权限：确保进程对 `./resources` 有读写权限（WAL 默认开启）
+- 配置未生效：确认工作目录下存在 `config.toml` 或使用 `APP_` 环境变量覆盖
 
-#### 1. 端口被占用
-```bash
-# 查看端口占用
-sudo netstat -tlnp | grep 3939
+## 升级
 
-# 杀死占用进程
-sudo kill -9 <pid>
-```
+替换二进制并重启服务即可；启动时会自动尝试更新曲绘仓库。升级前建议备份 `config.toml` 与 `resources/`。
 
-#### 2. 权限问题
-```bash
-# 检查文件权限
-ls -la /opt/phi-backend/
+## 安全与上线建议
 
-# 修复权限
-sudo chown -R phi:phi /opt/phi-backend/
-sudo chmod +x /opt/phi-backend/phi-backend
-```
-
-#### 3. 服务启动失败
-```bash
-# 查看详���日志
-sudo journalctl -u phi-backend -n 50
-
-# 检查配置文件
-sudo -u phi /opt/phi-backend/phi-backend --config /opt/phi-backend/config.toml --check
-```
-
-#### 4. 统计数据库问题
-```bash
-# 检查SQLite数据库
-sqlite3 /opt/phi-backend/resources/usage_stats.db ".schema"
-
-# 检查权限
-ls -la /opt/phi-backend/resources/
-```
-
-### 日志级别
-
-在配置文件中设置日志级别：
-
-```toml
-[logging]
-level = "debug"  # trace, debug, info, warn, error
-format = "full"  # full, compact, pretty, json
-```
-
-或者通过环境变量：
-
-```bash
-export RUST_LOG=debug
-./target/release/phi-backend
-```
-
-### 性能监控
-
-```bash
-# 查看进程状态
-ps aux | grep phi-backend
-
-# 查看资源使用
-htop
-iotop
-
-# 网络连接
-netstat -tlnp | grep 3939
-ss -tlnp | grep 3939
-```
-
-## 升级指南
-
-### 滚动升级
-
-```bash
-# 1. 备份配置和数据
-sudo cp /opt/phi-backend/config.toml /opt/phi-backend/config.toml.bak
-sudo cp -r /opt/phi-backend/resources /opt/phi-backend/resources.bak
-
-# 2. 停止服务
-sudo systemctl stop phi-backend
-
-# 3. 更新二进制文件
-sudo cp target/release/phi-backend /opt/phi-backend/
-sudo chown phi:phi /opt/phi-backend/phi-backend
-sudo chmod +x /opt/phi-backend/phi-backend
-
-# 4. 重启服务
-sudo systemctl start phi-backend
-
-# 5. 验证升级
-sudo systemctl status phi-backend
-curl http://localhost:3939/health
-```
-
-### 配置迁移
-
-新版本的配置文件可能有新增字段，建议：
-
-1. 备份现有配置
-2. 查看新的默认配置文件
-3. 合并配置更改
-4. 测试配置文件语法
-
-## 安全建议
-
-1. **防火墙配置**
-```bash
-# 限制访问端口
-sudo ufw allow 3939/tcp
-sudo ufw enable
-```
-
-2. **用户权限**
-- 使用专用用户运行服务
-- 限制文件系统权限
-- 定期更新系统和依赖
-
-3. **SSL/TLS**
-- 使用反向代理 (nginx/apache)
-- 配置HTTPS证书
-- 强制HTTPS重定向
-
-4. **监控和告警**
-- 设置日志监控
-- 配置服务状态检查
-- 设置资源使用告警
-
-## 支持
-
-如遇到问题，请：
-
-1. 查看日志文件
-2. 检查配置文件
-3. 运行健康检查
-4. 提交Issue到项目仓库
-
----
-
-**注意**: 本文档会随着项目更新而持续更新。建议定期查看最新版本的部署指南。
+- 建议置于反向代理之后（TLS 终止、限流、IP 过滤）
+- 不要将 `APP_STATS_USER_HASH_SALT` 等敏感值写入仓库；改用环境变量
+- 最小权限运行（独立用户、限制写权限至 `resources/`）

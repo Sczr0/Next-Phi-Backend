@@ -19,6 +19,8 @@ pub struct DailyQuery {
 #[utoipa::path(
     get,
     path = "/stats/daily",
+    summary = "按日聚合的统计数据",
+    description = "在在线 SQLite 明细上进行区间聚合，返回每天每功能/路由的调用与错误次数汇总。",
     params(
         ("start" = String, Query, description = "开始日期 YYYY-MM-DD"),
         ("end" = String, Query, description = "结束日期 YYYY-MM-DD"),
@@ -41,6 +43,8 @@ pub struct ArchiveQuery { date: Option<String> }
 #[utoipa::path(
     post,
     path = "/stats/archive/now",
+    summary = "手动触发某日归档",
+    description = "将指定日期（默认昨天）的明细导出为 Parquet 文件，落地到配置的归档目录。",
     params(("date" = Option<String>, Query, description = "归档日期 YYYY-MM-DD，默认为昨天")),
     responses((status = 200, description = "归档已触发")),
     tag = "Stats"
@@ -61,30 +65,43 @@ pub fn create_stats_router() -> Router<AppState> {
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct FeatureUsageSummary {
+    /// 功能名（如 bestn / single_query / save）
     feature: String,
+    /// 事件计数
     count: i64,
+    /// 最近一次发生时间（本地时区 RFC3339）
     last_at: Option<String>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct UniqueUsersSummary {
+    /// 去敏后唯一用户总数
     total: i64,
+    /// 按用户来源/凭证类型聚合的唯一用户数，例如 ("official", 123)
     by_kind: Vec<(String, i64)>,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct StatsSummaryResponse {
+    /// 展示使用的时区（IANA 名称）
     timezone: String,
+    /// 配置中设置的统计起始时间（如有）
     config_start_at: Option<String>,
+    /// 全量事件中的最早时间（本地时区）
     first_event_at: Option<String>,
+    /// 全量事件中的最晚时间（本地时区）
     last_event_at: Option<String>,
+    /// 各功能使用概览
     features: Vec<FeatureUsageSummary>,
+    /// 唯一用户统计
     unique_users: UniqueUsersSummary,
 }
 
 #[utoipa::path(
     get,
     path = "/stats/summary",
+    summary = "统计总览（唯一用户与功能使用）",
+    description = "提供统计模块关键指标：全局首末事件时间、按功能的使用次数与最近时间、唯一用户总量及来源分布。",
     responses((status = 200, body = StatsSummaryResponse)),
     tag = "Stats"
 )]

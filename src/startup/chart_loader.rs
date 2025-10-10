@@ -5,10 +5,18 @@ use crate::error::AppError;
 /// 单曲各难度定数
 #[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
 pub struct ChartConstants {
+    /// EZ 难度定数
+    #[schema(example = 4.5)]
     pub ez: Option<f32>,
+    /// HD 难度定数
+    #[schema(example = 7.9)]
     pub hd: Option<f32>,
     #[serde(rename = "in")]
+    /// IN 难度定数
+    #[schema(example = 9.6)]
     pub in_level: Option<f32>,
+    /// AT 难度定数
+    #[schema(example = 12.3)]
     pub at: Option<f32>,
 }
 

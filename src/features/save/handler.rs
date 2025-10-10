@@ -20,6 +20,8 @@ use super::{
 #[utoipa::path(
     post,
     path = "/save",
+    summary = "获取并解析玩家存档",
+    description = "支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 `calculate_rks=true` 时同时返回玩家 RKS 概览。",
     request_body = UnifiedSaveRequest,
     params(
         ("calculate_rks" = Option<bool>, Query, description = "是否计算玩家RKS（true=计算，默认不计算）"),
@@ -110,6 +112,8 @@ pub fn create_save_router() -> Router<AppState> {
 
 #[derive(Debug, serde::Serialize, utoipa::ToSchema)]
 pub struct SaveAndRksResponse {
+    /// 解析后的存档对象（等价于 SaveResponse.data）
     save: serde_json::Value,
+    /// 计算得到的玩家 RKS 概览
     rks: PlayerRksResult,
 }

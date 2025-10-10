@@ -18,12 +18,17 @@ pub enum Theme {
 /// BN 渲染请求体
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RenderBnRequest {
+    /// 认证方式（二选一）：sessionToken 或 externalCredentials
     #[serde(flatten)]
     pub auth: UnifiedSaveRequest,
+    /// 取前 N 条 RKS 最高的成绩（默认 30）
+    #[schema(example = 30)]
     #[serde(default = "default_n")]
     pub n: u32,
+    /// 渲染主题：white/black（默认 black）
     #[serde(default)]
     pub theme: Theme,
+    /// 是否将封面等资源内嵌到 PNG（默认为 false）
     #[serde(default)]
     pub embed_images: bool,
     /// 可选：用于显示的玩家昵称（若未提供且无法从服务端获取，将使用默认占位）
@@ -34,9 +39,13 @@ pub struct RenderBnRequest {
 /// 单曲渲染请求体
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RenderSongRequest {
+    /// 认证方式（二选一）：sessionToken 或 externalCredentials
     #[serde(flatten)]
     pub auth: UnifiedSaveRequest,
+    /// 歌曲 ID 或名称
+    #[schema(example = "Arcahv")] 
     pub song: String,
+    /// 是否将封面等资源内嵌到 PNG（默认为 false）
     #[serde(default)]
     pub embed_images: bool,
     /// 可选：用于显示的玩家昵称

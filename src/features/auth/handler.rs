@@ -17,19 +17,30 @@ use super::qrcode_service::QrCodeStatus;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct QrCodeCreateResponse {
+    /// 二维码标识，用于轮询状态
+    #[schema(example = "8b8f2f8a-1a2b-4c3d-9e0f-112233445566")]
     pub qr_id: String,
+    /// 用户在浏览器中访问以确认授权的 URL
+    #[schema(example = "https://www.taptap.com/account/device?code=abcd-efgh")]
     pub verification_url: String,
+    /// SVG 二维码的 data URL（base64 编码）
+    #[schema(example = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0uLi4=")]
     pub qrcode_base64: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QrCodeStatusResponse {
+    /// 当前状态：Pending/Scanned/Confirmed/Error/Expired
+    #[schema(example = "Pending")]
     pub status: String,
+    /// 若 Confirmed，返回 LeanCloud Session Token
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_token: Option<String>,
+    /// 可选的人类可读提示消息
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// 若需延后轮询，返回建议的等待秒数
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
 }
@@ -37,6 +48,8 @@ pub struct QrCodeStatusResponse {
 #[utoipa::path(
     get,
     path = "/auth/qrcode",
+    summary = "生成登录二维码",
+    description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。客户端需保存返回的 qr_id 以轮询授权状态。",
     responses(
         (status = 200, description = "生成二维码成功", body = QrCodeCreateResponse),
         (status = 500, description = "服务器内部错误", body = AppError)
@@ -92,6 +105,8 @@ pub async fn get_qrcode(
 #[utoipa::path(
     get,
     path = "/auth/qrcode/{qr_id}/status",
+    summary = "轮询二维码授权状态",
+    description = "根据 qr_id 查询当前授权进度。若返回 Pending 且包含 retry_after，客户端应按该秒数后再发起轮询。",
     params(("qr_id" = String, Path, description = "二维码ID")),
     responses(
         (status = 200, description = "状态返回", body = QrCodeStatusResponse),

@@ -1,16 +1,29 @@
 use base64::{Engine as _, engine::general_purpose};
 
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::error::SaveProviderError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SummaryParsed {
+    /// 存档格式版本
+    #[schema(example = 2)]
     pub save_version: u8,
+    /// 课题模式段位（编码：1x=Green,2x=Blue,3x=Red,4x=Gold,5x=Rainbow）
+    #[schema(example = 42)]
     pub challenge_mode_rank: u16,
+    /// 排名分（用于排行榜/展示）
+    #[schema(example = 14.73)]
     pub ranking_score: f32,
+    /// 客户端版本（简化）
+    #[schema(example = 12)]
     pub game_version: u8,
+    /// 头像标识
+    #[schema(example = "default-avatar")]
     pub avatar: String,
+    /// 进度数组（固定长度 12）
+    #[schema(example = json!([1,2,3,4,5,6,7,8,9,10,11,12]))]
     pub progress: [u16; 12],
 }
 

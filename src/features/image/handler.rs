@@ -25,6 +25,8 @@ use super::types::{RenderBnRequest, RenderSongRequest, RenderUserBnRequest};
 #[utoipa::path(
     post,
     path = "/image/bn",
+    summary = "生成 BestN 汇总图片",
+    description = "从官方/外部存档解析玩家成绩，按 RKS 值排序取前 N 条生成 BestN 概览（PNG）。可选内嵌封面与主题切换。",
     request_body = RenderBnRequest,
     responses(
         (status = 200, description = "PNG bytes of BN image"),
@@ -191,6 +193,8 @@ pub async fn render_bn(
 #[utoipa::path(
     post,
     path = "/image/song",
+    summary = "生成单曲成绩图片",
+    description = "从存档中定位指定歌曲（支持 ID/名称），展示四难度成绩、RKS、推分建议等信息（PNG）。",
     request_body = RenderSongRequest,
     responses(
         (status = 200, description = "PNG bytes of song image"),
@@ -374,6 +378,8 @@ async fn fetch_nickname(session_token: &str) -> Option<String> {
 #[utoipa::path(
     post,
     path = "/image/bn/user",
+    summary = "生成用户自报成绩的 BestN 图片",
+    description = "无需存档，直接提交若干条用户自报成绩，计算 RKS 排序并生成 BestN 图片；支持水印解除口令。",
     request_body = RenderUserBnRequest,
     responses(
         (status = 200, description = "PNG bytes of user BN image"),
