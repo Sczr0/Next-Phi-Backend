@@ -2,7 +2,7 @@ name: Build, Release and Deploy
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "master" ]
 
 jobs:
   # 任务一：构建和创建发布产物
