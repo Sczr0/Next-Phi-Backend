@@ -18,7 +18,7 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     env:
-      EXECUTABLE_NAME: phi-backend-rust
+      EXECUTABLE_NAME: phi-backend
       
     steps:
     - name: 检出代码
