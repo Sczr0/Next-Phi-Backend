@@ -20,6 +20,7 @@ logs/
 *.db-shm
 *.db-wal
 resources/usage_stats.db*
+resources/ill
 
 # 统计数据
 resources/stats/

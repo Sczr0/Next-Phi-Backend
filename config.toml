@@ -28,7 +28,7 @@ format = "full"
 
 [branding]
 # 右下角自定义文字（留空则不显示）
-footer_text = ""
+footer_text = "Powered by lilith.xtower.site"
 
 [stats]
 # 是否启用统计
@@ -46,7 +46,7 @@ flush_interval_ms = 1000
 # 热数据保留天数
 retention_hot_days = 180
 # 每日聚合/归档时间（本地时区）
-daily_aggregate_time = "03:00"
+daily_aggregate_time = "04:00"
 [stats.archive]
 parquet = true
 dir = "./resources/stats/v1/events"
@@ -64,7 +64,7 @@ unlock_dynamic = true
 # 动态口令盐值
 dynamic_salt = "phi"
 # 动态口令有效期（秒）
-dynamic_ttl_secs = 10
+dynamic_ttl_secs = 600
 # 动态口令可选密钥（与盐值共同参与hash）
 dynamic_secret = ""
 # 动态口令长度（从SHA-256十六进制哈希前缀截取）
@@ -72,7 +72,7 @@ dynamic_length = 32
 
 [shutdown]
 # 优雅退出超时时间（秒）
-timeout_secs = 30
+timeout_secs = 10
 # 是否启用强制退出
 force_quit = true
 # 强制退出前的等待时间（秒）
@@ -80,7 +80,7 @@ force_delay_secs = 10
 
 [shutdown.watchdog]
 # 是否启用systemd看门狗（仅在Linux下生效）
-enabled = false
+enabled = true
 # 看门狗超时时间（秒）
 timeout_secs = 60
 # 心跳间隔时间（秒）
