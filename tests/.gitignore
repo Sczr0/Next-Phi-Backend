@@ -1,0 +1,6 @@
+# 测试输出文件
+output/
+
+# 示例脚本中的真实 token（如果用户忘记修改）
+example_run_actual.ps1
+example_run_actual.sh
