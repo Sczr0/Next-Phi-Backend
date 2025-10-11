@@ -233,5 +233,5 @@ pub async fn get_qrcode_status(
 pub fn create_auth_router() -> Router<AppState> {
     Router::<AppState>::new()
         .route("/qrcode", get(get_qrcode))
-        .route("/qrcode/{qr_id}/status", get(get_qrcode_status))
+        .route("/qrcode/:qr_id/status", get(get_qrcode_status))
 }
