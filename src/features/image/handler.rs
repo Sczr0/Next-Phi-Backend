@@ -40,7 +40,7 @@ pub async fn render_bn(
     Json(req): Json<RenderBnRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let source = to_save_source(&req.auth)?;
-    let parsed = provider::get_decrypted_save(source).await
+    let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
 
     // 扁平化为渲染记录
@@ -208,7 +208,7 @@ pub async fn render_song(
     Json(req): Json<RenderSongRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     let source = to_save_source(&req.auth)?;
-    let parsed = provider::get_decrypted_save(source).await
+    let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
 
     let song = state

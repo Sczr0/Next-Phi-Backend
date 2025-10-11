@@ -9,6 +9,7 @@ use super::models::DifficultyRecord;
 use super::record_parser;
 use super::summary_parser::{SummaryParsed, parse_summary_base64};
 use crate::error::SaveProviderError;
+use crate::startup::chart_loader::ChartConstantsMap;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParsedSave {
@@ -40,7 +41,10 @@ impl SaveSource {
     }
 }
 
-pub async fn get_decrypted_save(source: SaveSource) -> Result<ParsedSave, SaveProviderError> {
+pub async fn get_decrypted_save(
+    source: SaveSource,
+    chart_constants: &ChartConstantsMap,
+) -> Result<ParsedSave, SaveProviderError> {
     let (download_url, meta, summary_b64_opt, updated_at_opt) = match source {
         SaveSource::Official { session_token } => {
             client::fetch_from_official(&session_token).await?
@@ -88,7 +92,7 @@ pub async fn get_decrypted_save(source: SaveSource) -> Result<ParsedSave, SavePr
         .remove("gameRecord")
         .ok_or_else(|| SaveProviderError::MissingField("gameRecord".to_string()))?;
 
-    let game_record = record_parser::parse_game_record(&game_record_val)
+    let game_record = record_parser::parse_game_record(&game_record_val, chart_constants)
         .map_err(|e| SaveProviderError::Json(format!("parse gameRecord failed: {e}")))?;
 
     let summary_parsed = summary_b64_opt

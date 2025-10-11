@@ -96,6 +96,8 @@ pub struct DifficultyRecord {
     pub score: u32,
     pub accuracy: f32,
     pub is_full_combo: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chart_constant: Option<f32>,
 }
 
 // 仅用于 OpenAPI 文档展示的响应模型（包含 updatedAt 字段）

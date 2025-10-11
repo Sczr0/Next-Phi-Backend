@@ -44,7 +44,7 @@ pub async fn get_save_data(
     let (user_hash, user_kind) = crate::features::stats::derive_user_identity_from_auth(salt, &payload);
 
     let source = validate_and_create_source(payload)?;
-    let parsed = provider::get_decrypted_save(source).await?;
+    let parsed = provider::get_decrypted_save(source, &state.chart_constants).await?;
 
     // 业务打点：成功获取存档
     if let Some(stats) = state.stats.as_ref() {

@@ -3,12 +3,14 @@ use std::collections::HashMap;
 use serde_json::Value;
 
 use super::models::{Difficulty, DifficultyRecord};
+use crate::startup::chart_loader::ChartConstantsMap;
 
 /// 解析 Phigros 存档中的 gameRecord 部分
 /// 输入应为形如 { "song_id": [score, accuracy, fc, score, accuracy, fc, ...], ... } 的 JSON 对象
 /// 返回每首歌对应的各难度成绩列表（仅包含有成绩的难度）
 pub fn parse_game_record(
     record_value: &Value,
+    chart_constants: &ChartConstantsMap,
 ) -> Result<HashMap<String, Vec<DifficultyRecord>>, String> {
     let obj = record_value
         .as_object()
@@ -61,11 +63,22 @@ pub fn parse_game_record(
             let difficulty = Difficulty::try_from(idx)
                 .map_err(|_| format!("invalid difficulty index {idx} for '{song_id}'"))?;
 
+            // 查询定数
+            let chart_constant = chart_constants.get(song_id).and_then(|consts| {
+                match difficulty {
+                    Difficulty::EZ => consts.ez,
+                    Difficulty::HD => consts.hd,
+                    Difficulty::IN => consts.in_level,
+                    Difficulty::AT => consts.at,
+                }
+            });
+
             records.push(DifficultyRecord {
                 difficulty,
                 score: score_u32,
                 accuracy: accuracy_f32,
                 is_full_combo,
+                chart_constant,
             });
         }
 
