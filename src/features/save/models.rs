@@ -2,6 +2,24 @@ use serde::{Deserialize, Serialize};
 
 use super::client::ExternalApiCredentials;
 
+mod float_serialize {
+    use serde::Serializer;
+
+    pub fn serialize_f32_option<S>(value: &Option<f32>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(v) => {
+                // 将浮点数转换为字符串，保留1位小数，然后再解析回浮点数以去除多余的精度
+                let rounded = (v * 10.0).round() / 10.0;
+                serializer.serialize_some(&rounded)
+            }
+            None => serializer.serialize_none(),
+        }
+    }
+}
+
 /// 统一的存档请求结构
 #[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -96,7 +114,10 @@ pub struct DifficultyRecord {
     pub score: u32,
     pub accuracy: f32,
     pub is_full_combo: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "float_serialize::serialize_f32_option"
+    )]
     pub chart_constant: Option<f32>,
 }
 
