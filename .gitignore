@@ -55,4 +55,3 @@ cargo_cache/
 
 # 系统文件
 *.pid
-*.lock

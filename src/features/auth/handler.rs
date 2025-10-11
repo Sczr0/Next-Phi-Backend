@@ -73,8 +73,22 @@ pub async fn get_qrcode(
         .verification_url
         .ok_or_else(|| AppError::Internal("TapTap 未返回 verification_url".to_string()))?;
 
+    // 组合用于扫码/跳转的最终链接：优先使用服务端提供的 qrcode_url；
+    // 否则在 verification_url 基础上拼接 user_code 参数。
+    let verification_url_for_scan = if let Some(qr) = device.qrcode_url.clone() {
+        qr
+    } else if let Some(code) = device.user_code.clone() {
+        if verification_url.contains('?') {
+            format!("{verification_url}&qrcode=1&user_code={code}")
+        } else {
+            format!("{verification_url}?qrcode=1&user_code={code}")
+        }
+    } else {
+        verification_url.clone()
+    };
+
     // 生成二维码（SVG）并 Base64 编码
-    let code = QrCode::new(&verification_url)
+    let code = QrCode::new(&verification_url_for_scan)
         .map_err(|e| AppError::Internal(format!("生成二维码失败: {e}")))?;
     let image = code
         .render()
@@ -96,7 +110,7 @@ pub async fn get_qrcode(
 
     let resp = QrCodeCreateResponse {
         qr_id,
-        verification_url,
+        verification_url: verification_url_for_scan,
         qrcode_base64,
     };
     Ok((StatusCode::OK, Json(resp)))
