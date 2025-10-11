@@ -92,7 +92,15 @@ impl AppConfig {
             )
             .build()?;
 
-        builder.try_deserialize()
+        let config: Self = builder.try_deserialize()?;
+        
+        // 调试：打印 user_hash_salt 配置状态
+        tracing::debug!(
+            "配置加载完成: user_hash_salt = {:?}",
+            config.stats.user_hash_salt.as_deref().map(|s| format!("{}...", &s[..s.len().min(4)]))
+        );
+        
+        Ok(config)
     }
 
     /// 获取全局配置单例
@@ -221,7 +229,7 @@ pub struct StatsConfig {
     #[serde(default)]
     pub archive: StatsArchiveConfig,
     /// 用户哈希盐
-    #[serde(default)]
+    #[serde(default, alias = "user-hash-salt", alias = "userHashSalt")]
     pub user_hash_salt: Option<String>,
     /// 展示统计的时区（IANA 名称，如 Asia/Shanghai）
     #[serde(default = "StatsConfig::default_timezone")] 

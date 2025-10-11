@@ -11,9 +11,10 @@ mod float_serialize {
     {
         match value {
             Some(v) => {
-                // 将浮点数转换为字符串，保留1位小数，然后再解析回浮点数以去除多余的精度
-                let rounded = (v * 10.0).round() / 10.0;
-                serializer.serialize_some(&rounded)
+                // 格式化为1位小数的字符串，然后解析为f64以获得干净的表示
+                let formatted = format!("{:.1}", v);
+                let clean: f64 = formatted.parse().unwrap_or(0.0);
+                serializer.serialize_some(&clean)
             }
             None => serializer.serialize_none(),
         }
