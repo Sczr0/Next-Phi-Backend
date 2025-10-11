@@ -94,6 +94,13 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
         tracing::warn!("统计功能已禁用（config.stats.enabled=false）");
     }
 
+    // 用户哈希盐配置提示
+    if config.stats.user_hash_salt.is_none() {
+        tracing::info!("user_hash_salt 未配置，user_hash/client_ip_hash 将不会被记录");
+    } else {
+        tracing::info!("user_hash_salt 已配置，将记录用户和IP的去敏哈希");
+    }
+
     // 确保目录存在
     let db_path = PathBuf::from(&config.stats.sqlite_path);
     if let Some(dir) = db_path.parent() { tokio::fs::create_dir_all(dir).await.ok(); }
