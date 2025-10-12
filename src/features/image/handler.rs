@@ -480,6 +480,17 @@ pub async fn render_bn_user(
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, false)?;
     let png = renderer::render_svg_to_png(svg, implicit)?;
 
+    // 统计：用户自报 BestN 图片生成
+    if let Some(stats_handle) = state.stats.as_ref() {
+        let extra = serde_json::json!({
+            "scores_len": records.len(),
+            "unlocked": unlocked
+        });
+        stats_handle
+            .track_feature("bestn_user", "generate_image", None, Some(extra))
+            .await;
+    }
+
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
     Ok((StatusCode::OK, headers, png))

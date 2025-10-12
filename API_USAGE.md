@@ -1,325 +1,72 @@
 # Phi Backend API 使用指南
 
-## 快速开�?
-### 启动服务�?
-```bash
-cargo run --release
-```
-
-服务器启动后，你会看到以下信息：
-```
-🚀 Phi-Backend 运行�?http://0.0.0.0:3939
-📚 API 文档地址: http://0.0.0.0:3939/docs
-🏥 健康检查地址: http://0.0.0.0:3939/health
-💾 存档 API 地址: http://0.0.0.0:3939/api/v1/save
-```
+## 快速开始
+- 启动服务：`cargo run`
+- Swagger UI：`http://localhost:3939/docs`
+- 健康检查：`GET /health`
+- 默认 API 前缀：`/api/v1`（可通过 `APP_API_PREFIX` 覆盖）
 
 ## API 端点
 
-### 1. 健康检�?
-**端点**: `GET /health`
+### 健康检查
+- 端点：`GET /health`
+- 用途：探活与版本信息
 
-**响应示例**:
-```json
-{
-  "status": "healthy",
-  "service": "phi-backend",
-  "version": "0.1.0"
-}
-```
+### 存档 API（Save）
+- 端点：`POST {api_prefix}/save`
+- 认证：二选一
+  - 官方会话：请求体 `{ "sessionToken": "..." }`
+  - 外部凭证：请求体 `{ "externalCredentials": { ... } }`
+- 可选参数：`calculate_rks=true|false`（查询字符串）
+- 成功：返回解析后的存档，或附带玩家 RKS 概览
 
-### 2. 获取存档数据
-
-**端点**: `POST /api/v1/save`
-
-**Content-Type**: `application/json`
-
-#### 认证方式 1: 使用官方会话令牌
-
+示例：
 ```bash
-curl -X POST http://localhost:3939/api/v1/save \
+curl -X POST "http://localhost:3939/api/v1/save?calculate_rks=true" \
   -H "Content-Type: application/json" \
-  -d '{
-    "sessionToken": "your-leancloud-session-token"
-  }'
+  -d '{ "sessionToken": "your-leancloud-session-token" }'
 ```
 
-#### 认证方式 2: 使用外部 API 凭证（平台认证）
+### 图片 API（Image）
+- BN 图：`POST {api_prefix}/image/bn`（从存档生成 BestN 汇总图）
+- 单曲图：`POST {api_prefix}/image/song`（从存档生成单曲图片）
+- 用户自报 BN 图：`POST {api_prefix}/image/bn/user`（无需存档，直接提交成绩生成 BestN）
+- 响应均为 `image/png`
 
+### 歌曲检索（Song）
+- 端点：`GET {api_prefix}/songs/search`
+- 参数：
+  - `q` 必填：歌曲 ID/名称/别名，支持模糊匹配
+  - `unique` 可选：`true|false`，`true` 时要求唯一匹配（未命中 404，多命中 409）
 ```bash
-curl -X POST http://localhost:3939/api/v1/save \
-  -H "Content-Type: application/json" \
-  -d '{
-    "externalCredentials": {
-      "platform": "taptap",
-      "platformId": "123456"
-    }
-  }'
+curl "http://localhost:3939/api/v1/songs/search?q=devil&unique=true"
 ```
 
-### 3. 生成图片（Image APIs�?
-- BN 图（Best N�?  - 端点: `POST {api_prefix}/image/bn`
-  - Content-Type: `application/json`
-  - 请求体示�?
-    ```json
-    {
-      "n": 30,
-      "theme": "black",
-      "playerName": "Player A",
-      "isUserGenerated": false,
-      "records": [
-        {
-          "songId": "devillics",
-          "songName": "Devillics",
-          "difficulty": "IN",
-          "score": 1000000,
-          "acc": 99.53,
-          "rks": 13.45,
-          "difficultyValue": 13.7,
-          "isFc": false
-        }
-      ]
-    }
-    ```
-  - 响应: `image/png` 二进制字�?
-- 单曲图（Song�?  - 端点: `POST {api_prefix}/image/song`
-  - Content-Type: `application/json`
-  - 请求体示�?
-    ```json
-    {
-      "songId": "devillics",
-      "songName": "Devillics",
-      "playerName": "Player A",
-      "difficultyScores": {
-        "IN": { "score": 1000000, "acc": 99.53, "rks": 13.45, "difficultyValue": 13.7, "isFc": false, "isPhi": false }
-      }
-    }
-    ```
-  - 响应: `image/png` 二进制字�?
-- RKS 排行榜图（Leaderboard�?  - 端点: `POST {api_prefix}/image/leaderboard`
-  - Content-Type: `application/json`
-  - 请求体示�?
-    ```json
-    {
-      "title": "RKS 排行�?,
-      "updateTime": "2024-01-01T00:00:00Z",
-      "displayCount": 20,
-      "entries": [
-        { "playerName": "AAA", "rks": 12.34 }
-      ]
-    }
-    ```
-  - 响应: `image/png` 二进制字�?
-#### 认证方式 3: 使用外部 API 凭证（会话令牌）
+### 统计 API（Stats）
 
-```bash
-curl -X POST http://localhost:3939/api/v1/save \
-  -H "Content-Type: application/json" \
-  -d '{
-    "externalCredentials": {
-      "sessiontoken": "external-session-token"
-    }
-  }'
-```
+1) 汇总
+- 端点：`GET {api_prefix}/stats/summary`
+- 返回：首末事件时间、各功能的使用次数与最近时间、唯一用户统计（总量与来源分布）
+- 功能次数统计中的“功能名”可能值：
+  - `bestn`：生成 BestN 汇总图
+  - `bestn_user`：生成用户自报 BestN 图片
+  - `single_query`：生成单曲成绩图
+  - `save`：获取并解析玩家存档
+  - `song_search`：歌曲检索
+- 备注：功能统计只包含通过业务打点上报的功能；路由级请求数请使用日聚合接口。
 
-#### 认证方式 4: 使用外部 API 凭证（API 用户 ID�?
-```bash
-curl -X POST http://localhost:3939/api/v1/save \
-  -H "Content-Type: application/json" \
-  -d '{
-    "externalCredentials": {
-      "apiUserId": "user-id-123",
-      "apiToken": "optional-token"
-    }
-  }'
-```
+2) 日聚合
+- 端点：`GET {api_prefix}/stats/daily?start=YYYY-MM-DD&end=YYYY-MM-DD[&feature=bestn]`
+- 返回：`[{ date, feature, route, method, count, err_count }]`
 
-**成功响应 (200 OK)**:
-```json
-{
-  "data": {
-    "gameRecord": { ... },
-    "gameKey": { ... },
-    "gameProgress": { ... },
-    "user": { ... },
-    "settings": { ... }
-  }
-}
-```
+## 配置与环境
+- 配置文件：`config.toml`
+- 常用覆盖：
+  - `APP_API_PREFIX` 调整 API 前缀
+  - `APP_STATS_USER_HASH_SALT` 启用去敏化用户哈希
+  - `APP_LOGGING_LEVEL` 调整日志级别
 
-**错误响应示例**:
+## 说明
+- 仓库所有字符串与文件均为 UTF-8 编码
+- 更多统计细节参考：`STATS.md`
 
-- **400 Bad Request** - 参数错误
-```json
-{
-  "error": "必须提供 sessionToken �?externalCredentials 中的一�?
-}
-```
-
-- **400 Bad Request** - 凭证无效
-```json
-{
-  "error": "外部凭证无效：必须提供以下凭证之一�?platform + platformId) �?sessiontoken �?apiUserId"
-}
-```
-
-- **500 Internal Server Error** - 服务器错�?```json
-{
-  "error": "存档提供器错�? 网络错误: ..."
-}
-```
-
-## 配置
-
-### 配置文件 (config.toml)
-
-```toml
-[server]
-host = "0.0.0.0"
-port = 3939
-
-[api]
-prefix = "/api/v1"
-
-[resources]
-base_path = "./resources"
-illustration_repo = "https://github.com/Catrong/phi-plugin-ill"
-illustration_folder = "ill"
-
-[logging]
-level = "info"
-format = "full"
-```
-
-### 环境变量覆盖
-
-你可以使用环境变量覆盖配置文件中的值：
-
-```bash
-# 修改 API 前缀
-export APP_API_PREFIX="/v2"
-
-# 修改服务器端�?export APP_SERVER_PORT=8080
-
-# 修改日志级别
-export APP_LOGGING_LEVEL="debug"
-
-cargo run
-```
-
-## API 文档
-
-启动服务器后，访�?http://localhost:3939/docs 查看完整的交互式 API 文档（Swagger UI）�?
-## 请求示例（使�?JavaScript�?
-```javascript
-// 使用官方会话令牌
-const response = await fetch('http://localhost:3939/api/v1/save', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    sessionToken: 'your-session-token'
-  })
-});
-
-const data = await response.json();
-console.log(data);
-
-// 使用外部 API 凭证
-const response2 = await fetch('http://localhost:3939/api/v1/save', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({
-    externalCredentials: {
-      platform: 'taptap',
-      platformId: '123456'
-    }
-  })
-});
-
-const data2 = await response2.json();
-console.log(data2);
-```
-
-## 请求示例（使�?Python�?
-```python
-import requests
-import json
-
-# 使用官方会话令牌
-response = requests.post(
-    'http://localhost:3939/api/v1/save',
-    headers={'Content-Type': 'application/json'},
-    json={'sessionToken': 'your-session-token'}
-)
-
-print(response.json())
-
-# 使用外部 API 凭证
-response2 = requests.post(
-    'http://localhost:3939/api/v1/save',
-    headers={'Content-Type': 'application/json'},
-    json={
-        'externalCredentials': {
-            'platform': 'taptap',
-            'platformId': '123456'
-        }
-    }
-)
-
-print(response2.json())
-```
-
-## 注意事项
-
-1. **认证方式互斥**: 不能同时提供 `sessionToken` �?`externalCredentials`
-2. **外部凭证验证**: 使用外部凭证时，必须提供以下组合之一�?   - `platform` + `platformId`
-   - `sessiontoken`
-   - `apiUserId`（可选配�?`apiToken`�?3. **字段命名**: 请求体使�?camelCase 命名（如 `sessionToken`, `platformId`�?4. **超时设置**: 网络请求�?30-90 秒超时限�?5. **错误处理**: 建议实现重试机制以处理网络波�?
-## 开发和调试
-
-### 启用调试日志
-
-```bash
-export APP_LOGGING_LEVEL="debug"
-cargo run
-```
-
-或修�?`config.toml`:
-```toml
-[logging]
-level = "debug"
-```
-
-### 测试健康检�?
-```bash
-curl http://localhost:3939/health
-```
-
-### 查看 API 文档
-
-浏览器访�? http://localhost:3939/docs
-
-
-
-
-## 图片 API（更新）
-
-- BN 图（Best N）
-  - 端点: `POST {api_prefix}/image/bn`
-  - Content-Type: `application/json`
-  - 请求体: 与 `POST {api_prefix}/save` 的 `UnifiedSaveRequest` 相同（官方 sessionToken 或 externalCredentials）
-  - Query: `?n=27`（可选，Best-N 数量，默认 27）
-  - 响应: `image/png` 二进制字节
-
-- 单曲图（Song）
-  - 端点: `POST {api_prefix}/image/song`
-  - Content-Type: `application/json`
-  - 请求体: 与 `POST {api_prefix}/save` 的 `UnifiedSaveRequest` 相同
-  - Query: `?song=<ID|名称|别名>`（唯一匹配，否则返回错误）
-  - 响应: `image/png` 二进制字节
-
-说明：Leaderboard 排行榜图片接口暂不提供。

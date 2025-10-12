@@ -1,7 +1,6 @@
 use axum::{extract::{Query, State}, response::Json, routing::{get, post}, Router};
 use chrono::{NaiveDate, Utc};
-use serde::Deserialize;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
 use crate::error::AppError;
@@ -20,7 +19,7 @@ pub struct DailyQuery {
     get,
     path = "/stats/daily",
     summary = "按日聚合的统计数据",
-    description = "在在线 SQLite 明细上进行区间聚合，返回每天每功能/路由的调用与错误次数汇总。",
+    description = "在 SQLite 明细上进行区间聚合，返回每天每功能/路由的调用与错误次数汇总",
     params(
         ("start" = String, Query, description = "开始日期 YYYY-MM-DD"),
         ("end" = String, Query, description = "结束日期 YYYY-MM-DD"),
@@ -44,7 +43,7 @@ pub struct ArchiveQuery { date: Option<String> }
     post,
     path = "/stats/archive/now",
     summary = "手动触发某日归档",
-    description = "将指定日期（默认昨天）的明细导出为 Parquet 文件，落地到配置的归档目录。",
+    description = "将指定日期（默认昨天）的明细导出为 Parquet 文件，落地到配置的归档目录",
     params(("date" = Option<String>, Query, description = "归档日期 YYYY-MM-DD，默认为昨天")),
     responses((status = 200, description = "归档已触发")),
     tag = "Stats"
@@ -65,7 +64,12 @@ pub fn create_stats_router() -> Router<AppState> {
 
 #[derive(Serialize, utoipa::ToSchema)]
 pub struct FeatureUsageSummary {
-    /// 功能名（如 bestn / single_query / save）
+    /// 功能名（可能值：bestn、bestn_user、single_query、save、song_search）。
+    /// - bestn：生成 BestN 汇总图
+    /// - bestn_user：生成用户自报 BestN 图片
+    /// - single_query：生成单曲成绩图
+    /// - save：获取并解析玩家存档
+    /// - song_search：歌曲检索
     feature: String,
     /// 事件计数
     count: i64,
@@ -101,7 +105,7 @@ pub struct StatsSummaryResponse {
     get,
     path = "/stats/summary",
     summary = "统计总览（唯一用户与功能使用）",
-    description = "提供统计模块关键指标：全局首末事件时间、按功能的使用次数与最近时间、唯一用户总量及来源分布。",
+    description = "提供统计模块关键指标：全局首末事件时间、按功能的使用次数与最近时间、唯一用户总量及来源分布。\n\n功能次数统计中的功能名可能值：\n- bestn：生成 BestN 汇总图\n- bestn_user：生成用户自报 BestN 图片\n- single_query：生成单曲成绩图\n- save：获取并解析玩家存档\n- song_search：歌曲检索",
     responses((status = 200, body = StatsSummaryResponse)),
     tag = "Stats"
 )]
@@ -133,7 +137,7 @@ pub async fn get_stats_summary(State(state): State<AppState>) -> Result<Json<Sta
         .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
     let total: i64 = row.try_get("total").unwrap_or(0);
 
-    // by_kind via extra_json.user_kind （在应用端聚合，避免对 JSON1 的依赖）
+    // by_kind via extra_json.user_kind （在应用端聚合，避免对 SQLite JSON1 的依赖）
     let rows = sqlx::query("SELECT user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL")
         .fetch_all(&storage.pool).await.map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?;
     use std::collections::{HashMap, HashSet};

@@ -51,6 +51,17 @@ pub async fn search_songs(
 
     let unique = params.get("unique").map(|v| parse_bool(v)).unwrap_or(false);
 
+    // 统计：歌曲搜索（不记录原始查询词，避免敏感信息）
+    if let Some(stats_handle) = state.stats.as_ref() {
+        let extra = serde_json::json!({
+            "unique": unique,
+            "q_len": q.len()
+        });
+        stats_handle
+            .track_feature("song_search", "search", None, Some(extra))
+            .await;
+    }
+
     if unique {
         let item = state.song_catalog.search_unique(&q)?;
         Ok(Json::<SongInfo>(item.as_ref().clone()).into_response())
