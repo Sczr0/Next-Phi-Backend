@@ -45,18 +45,50 @@ pub async fn render_bn(
     let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
 
-    // Cache hit (if enabled and user hash derivable)
-    if AppConfig::global().image.cache_enabled {
-        let salt = AppConfig::global().stats.user_hash_salt.as_deref();
-        let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-        if let Some(user_hash) = uh.as_ref() {
+    // Cache hit/miss 事件 + 快速返回
+    let cache_enabled = AppConfig::global().image.cache_enabled;
+    let salt = AppConfig::global().stats.user_hash_salt.as_deref();
+    let (user_hash_for_cache, user_kind_for_cache) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+    if cache_enabled {
+        if let Some(user_hash) = user_hash_for_cache.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let theme_code = match req.theme { super::types::Theme::White => "w", super::types::Theme::Black => "b" };
             let key = format!("{}:bn:{}:{}:{}:{}", user_hash, req.n.max(1), updated, theme_code, if req.embed_images { 1 } else { 0 });
             if let Some(p) = state.bn_image_cache.get(&key).await {
+                if let Some(h) = state.stats.as_ref() {
+                    let evt = crate::features::stats::models::EventInsert {
+                        ts_utc: chrono::Utc::now(),
+                        route: Some("/image/bn".into()),
+                        feature: Some("image_cache".into()),
+                        action: Some("bn_hit".into()),
+                        method: Some("POST".into()),
+                        status: None,
+                        duration_ms: None,
+                        user_hash: Some(user_hash.clone()),
+                        client_ip_hash: None,
+                        instance: None,
+                        extra_json: Some(serde_json::json!({ "cached": true, "user_kind": user_kind_for_cache })),
+                    };
+                    h.track(evt).await;
+                }
                 let mut headers = axum::http::HeaderMap::new();
                 headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
                 return Ok((StatusCode::OK, headers, (*p).clone()));
+            } else if let Some(h) = state.stats.as_ref() {
+                let evt = crate::features::stats::models::EventInsert {
+                    ts_utc: chrono::Utc::now(),
+                    route: Some("/image/bn".into()),
+                    feature: Some("image_cache".into()),
+                    action: Some("bn_miss".into()),
+                    method: Some("POST".into()),
+                    status: None,
+                    duration_ms: None,
+                    user_hash: Some(user_hash.clone()),
+                    client_ip_hash: None,
+                    instance: None,
+                    extra_json: Some(serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache })),
+                };
+                h.track(evt).await;
             }
         }
     }
@@ -191,8 +223,19 @@ pub async fn render_bn(
         is_user_generated: false,
     };
 
+    // 等待许可与渲染分段计时
+    let sem = state.render_semaphore.clone();
+    let permits_avail = sem.available_permits() as i64;
+    let t_wait = Instant::now();
+    let _permit = sem
+        .acquire_owned()
+        .await
+        .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
+    let wait_ms = t_wait.elapsed().as_millis() as i64;
+    let t_render = Instant::now();
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, req.embed_images)?;
     let png = renderer::render_svg_to_png(svg, false)?;
+    let render_ms = t_render.elapsed().as_millis() as i64;
 
     // 统计：BestN 图片生成（带用户去敏哈希 + 榜单歌曲ID列表 + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
@@ -221,7 +264,6 @@ pub async fn render_bn(
     // Basic render metrics (total time and permits)
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
-        let permits_avail = state.render_semaphore.available_permits() as i64;
         let evt = crate::features::stats::models::EventInsert{
             ts_utc: chrono::Utc::now(),
             route: Some("/image/bn".into()),
@@ -233,7 +275,7 @@ pub async fn render_bn(
             user_hash: None,
             client_ip_hash: None,
             instance: None,
-            extra_json: Some(serde_json::json!({"permits_avail": permits_avail, "png_bytes": png.len()})),
+            extra_json: Some(serde_json::json!({"permits_avail": permits_avail, "wait_ms": wait_ms, "render_ms": render_ms, "png_bytes": png.len()})),
         };
         h.track(evt).await;
     }
@@ -267,17 +309,49 @@ pub async fn render_song(
         .search_unique(&req.song)
         .map_err(AppError::Search)?;
 
-    // Cache hit (if enabled and user hash derivable)
-    if AppConfig::global().image.cache_enabled {
-        let salt = AppConfig::global().stats.user_hash_salt.as_deref();
-        let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-        if let Some(user_hash) = uh.as_ref() {
+    // Cache hit/miss 事件 + 快速返回
+    let cache_enabled = AppConfig::global().image.cache_enabled;
+    let salt = AppConfig::global().stats.user_hash_salt.as_deref();
+    let (user_hash_for_cache, user_kind_for_cache) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+    if cache_enabled {
+        if let Some(user_hash) = user_hash_for_cache.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let key = format!("{}:song:{}:{}:{}:{}", user_hash, song.id, updated, "d", if req.embed_images { 1 } else { 0 });
             if let Some(p) = state.song_image_cache.get(&key).await {
+                if let Some(h) = state.stats.as_ref() {
+                    let evt = crate::features::stats::models::EventInsert{
+                        ts_utc: chrono::Utc::now(),
+                        route: Some("/image/song".into()),
+                        feature: Some("image_cache".into()),
+                        action: Some("song_hit".into()),
+                        method: Some("POST".into()),
+                        status: None,
+                        duration_ms: None,
+                        user_hash: Some(user_hash.clone()),
+                        client_ip_hash: None,
+                        instance: None,
+                        extra_json: Some(serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id})),
+                    };
+                    h.track(evt).await;
+                }
                 let mut headers = axum::http::HeaderMap::new();
                 headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
                 return Ok((StatusCode::OK, headers, (*p).clone()));
+            } else if let Some(h) = state.stats.as_ref() {
+                let evt = crate::features::stats::models::EventInsert{
+                    ts_utc: chrono::Utc::now(),
+                    route: Some("/image/song".into()),
+                    feature: Some("image_cache".into()),
+                    action: Some("song_miss".into()),
+                    method: Some("POST".into()),
+                    status: None,
+                    duration_ms: None,
+                    user_hash: Some(user_hash.clone()),
+                    client_ip_hash: None,
+                    instance: None,
+                    extra_json: Some(serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id})),
+                };
+                h.track(evt).await;
             }
         }
     }
@@ -377,8 +451,19 @@ pub async fn render_song(
         custom_footer_text: Some(AppConfig::global().branding.footer_text.clone()),
     };
 
+    // 等待许可与渲染分段计时
+    let sem2 = state.render_semaphore.clone();
+    let permits_avail2 = sem2.available_permits() as i64;
+    let t_wait2 = Instant::now();
+    let _permit2 = sem2
+        .acquire_owned()
+        .await
+        .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
+    let wait_ms2 = t_wait2.elapsed().as_millis() as i64;
+    let t_render2 = Instant::now();
     let svg = renderer::generate_song_svg_string(&render_data, req.embed_images)?;
     let png = renderer::render_svg_to_png(svg, false)?;
+    let render_ms2 = t_render2.elapsed().as_millis() as i64;
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
         let salt = crate::config::AppConfig::global().stats.user_hash_salt.as_deref();
@@ -403,7 +488,6 @@ pub async fn render_song(
     // Basic render metrics (total)
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
-        let permits_avail = state.render_semaphore.available_permits() as i64;
         let evt = crate::features::stats::models::EventInsert{
             ts_utc: chrono::Utc::now(),
             route: Some("/image/song".into()),
@@ -415,7 +499,7 @@ pub async fn render_song(
             user_hash: None,
             client_ip_hash: None,
             instance: None,
-            extra_json: Some(serde_json::json!({"permits_avail": permits_avail, "png_bytes": png.len(), "song_id": song.id})),
+            extra_json: Some(serde_json::json!({"permits_avail": permits_avail2, "wait_ms": wait_ms2, "render_ms": render_ms2, "png_bytes": png.len(), "song_id": song.id})),
         };
         h.track(evt).await;
     }
