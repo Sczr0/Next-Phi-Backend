@@ -70,3 +70,32 @@ curl "http://localhost:3939/api/v1/songs/search?q=devil&unique=true"
 - 仓库所有字符串与文件均为 UTF-8 编码
 - 更多统计细节参考：`STATS.md`
 
+## 性能调优参数
+
+以下参数位于 `config.toml` 的 `[image]` 部分，均可用环境变量 `APP_IMAGE_*` 覆盖（下划线分隔）。
+
+- `optimize_speed: bool`
+  - 启用后使用 SVG 栅格的 OptimizeSpeed 策略（更快，画质略降）。
+  - 例：`APP_IMAGE_OPTIMIZE_SPEED=true`
+
+- `cache_enabled: bool`
+  - 开启 BN/单曲图片缓存（按图片字节大小加权）。
+  - 例：`APP_IMAGE_CACHE_ENABLED=true`
+
+- `cache_max_bytes: u64`（字节）
+  - 缓存总容量上限（默认 100MB），超过逐出最少使用项。
+  - 例：`APP_IMAGE_CACHE_MAX_BYTES=134217728`
+
+- `cache_ttl_secs: u64` / `cache_tti_secs: u64`（秒）
+  - TTL：条目自写入起最大存活时间；TTI：条目自最后一次访问起的空闲时间上限。
+  - 例：`APP_IMAGE_CACHE_TTL_SECS=60`、`APP_IMAGE_CACHE_TTI_SECS=30`
+
+- `max_parallel: u32`（0 = 自动）
+  - 并发渲染许可数（Semaphore）。0 表示自动取 CPU 核心数。
+  - 例：`APP_IMAGE_MAX_PARALLEL=8`
+
+说明：
+- 缓存键包含用户哈希、存档更新时间、请求参数（BN：n/theme/embed；单曲：song_id/embed），避免跨用户串缓存。
+- 统计上报：
+  - `image_render`：记录渲染总耗时（ms）、可用许可数、输出 PNG 字节数。
+  - `bestn` / `single_query` / `bestn_user`：原有业务事件保持不变。

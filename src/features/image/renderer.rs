@@ -1,4 +1,5 @@
 use super::cover_loader;
+use crate::config::AppConfig;
 use crate::error::AppError;
 use crate::features::image::Theme;
 use crate::features::rks::engine;
@@ -302,16 +303,16 @@ fn get_background_image(path: &PathBuf) -> Option<String> {
 
 /// 返回适合放入 <image href> 的引用：小图返回 data URI，大图返回文件路径
 fn get_image_href(path: &PathBuf, embed_images: bool) -> Option<String> {
-    if embed_images {
-        return get_background_image(path);
-    }
-    if let Ok(meta) = fs::metadata(path) {
-        let len = meta.len();
-        if len <= 256 * 1024 {
+    // 当 embed_images=false 时，总是返回文件路径，避免小图内嵌 data URI（减轻 usvg 解析和内存压力）
+    if !embed_images {
+        if path.exists() {
+            return Some(path.to_string_lossy().into_owned());
+        } else {
+            // 兜底：路径异常时尝试小图内嵌，尽量保证可渲染
             return get_background_image(path);
         }
-        return Some(path.to_string_lossy().into_owned());
     }
+    // 需要显式内嵌时，复用小图内嵌逻辑（大图直接返回路径）
     get_background_image(path)
 }
 
@@ -767,7 +768,9 @@ pub fn generate_svg_string(
         Theme::White => "url(#normal-card-stroke-gradient)".to_string(),
         Theme::Black => "#252A38".to_string(), // Weaker border for black theme
     };
-    let mut svg = String::new();
+    // 预分配 SVG 字符串容量，减少多次分配与拷贝
+    let mut svg = String::with_capacity(200_000);
+    let t0 = std::time::Instant::now();
     let fmt_err = |e| AppError::ImageRendererError(format!("SVG formatting error: {e}"));
 
     // --- 获取随机背景图 ---
@@ -899,6 +902,7 @@ pub fn generate_svg_string(
         "#
     ).map_err(fmt_err)?;
     writeln!(svg, "</style>").map_err(fmt_err)?;
+    let t_defs = t0.elapsed();
 
     // Define normal card stroke gradient
     writeln!(
@@ -933,6 +937,7 @@ pub fn generate_svg_string(
     // Gradients for white theme are now solid colors.
 
     writeln!(svg, "</defs>").map_err(fmt_err)?;
+    let t_after_defs = t0.elapsed();
 
     // --- Background ---
     // 如果找到了背景图，则使用<image>并应用模糊，否则使用原来的<rect>和渐变
@@ -1089,6 +1094,7 @@ pub fn generate_svg_string(
         }
         writeln!(svg, r#"</g>"#).map_err(fmt_err)?;
     }
+    let t_after_ap = t0.elapsed();
 
     // --- Main Score Cards Section --- (保持不变) ...
     let main_content_start_y = header_height + ap_section_height + 15;
@@ -1123,6 +1129,7 @@ pub fn generate_svg_string(
             embed_images,
         })?
     }
+    let t_after_main = t0.elapsed();
 
     // --- Footer ---
     let footer_y = (total_height - footer_height / 2 + 10) as f64;
@@ -1154,6 +1161,15 @@ pub fn generate_svg_string(
 
     writeln!(svg, "</svg>").map_err(fmt_err)?;
 
+    // 分段计时日志：defs/ap/main/total
+    tracing::info!(
+        "SVG生成分段: defs={:?}, ap={:?}, main={:?}, 总计={:?}",
+        t_defs,
+        t_after_ap - t_after_defs,
+        t_after_main - t_after_ap,
+        t0.elapsed(),
+    );
+
     Ok(svg)
 }
 
@@ -1165,6 +1181,7 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
     // 字体数据库（全局复用）
     let font_db = get_global_font_db();
 
+    let speed = AppConfig::global().image.optimize_speed;
     let opts = UsvgOptions {
         resources_dir: Some(
             std::env::current_dir()
@@ -1174,9 +1191,9 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
         font_family: MAIN_FONT_NAME.to_string(),
         font_size: 16.0,
         languages: vec!["zh-CN".to_string(), "en".to_string()],
-        shape_rendering: usvg::ShapeRendering::GeometricPrecision,
-        text_rendering: usvg::TextRendering::OptimizeLegibility,
-        image_rendering: usvg::ImageRendering::OptimizeQuality,
+        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
+        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
+        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
         ..Default::default()
     };
 
@@ -1302,6 +1319,7 @@ fn get_inverse_color_from_path_cached(path: &Path) -> Option<String> {
 // --- 新增：生成单曲成绩 SVG ---
 pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Result<String, AppError> {
     let fmt_err = |e| AppError::ImageRendererError(format!("SVG formatting error: {e}"));
+    let t0 = std::time::Instant::now();
 
     // --- 整体布局与尺寸（横版）---
     let width = 1400; // 图片宽度，从1200增加到1400
@@ -1331,7 +1349,8 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
     let difficulty_card_height = (illust_height - difficulty_spacing_total) / 4.0; // 每张卡片高度
     let difficulty_card_spacing = padding * 0.8; // 卡片间距增加，从0.6调整为0.8
 
-    let mut svg = String::new();
+    // 预分配 SVG 字符串容量
+    let mut svg = String::with_capacity(120_000);
 
     // --- 获取随机背景图 ---
     let mut background_image_href = None;
@@ -1437,6 +1456,7 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
     writeln!(svg, r#"<linearGradient id="rks-gradient-ap" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" style="stop-color:#f6d365" /><stop offset="100%" style="stop-color:#fda085" /></linearGradient>"#).map_err(fmt_err)?;
     writeln!(svg, r#"<linearGradient id="rks-gradient-push" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" style="stop-color:#a8e063" /><stop offset="100%" style="stop-color:#56ab2f" /></linearGradient>"#).map_err(fmt_err)?;
     writeln!(svg, "</defs>").map_err(fmt_err)?;
+    let t_defs_song = t0.elapsed();
 
     // --- Background ---
     if let Some(href) = background_image_href {
@@ -1670,6 +1690,7 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
     }
 
     // --- Footer ---
+    let t_body_song = t0.elapsed();
     let footer_y = height as f64 - padding / 2.0;
     let footer_x = width as f64 - padding;
     let time_str = local_time.format("%Y-%m-%d %H:%M:%S UTC+8").to_string(); // 使用UTC+8表示时区
@@ -1680,6 +1701,13 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
 
     // --- End SVG ---
     writeln!(svg, "</svg>").map_err(fmt_err)?;
+
+    tracing::info!(
+        "SVG(单曲)生成分段: defs={:?}, body={:?}, 总计={:?}",
+        t_defs_song,
+        t_body_song - t_defs_song,
+        t0.elapsed(),
+    );
 
     Ok(svg)
 }

@@ -8,6 +8,9 @@ use phi_backend::state::AppState;
 use phi_backend::{AppError, config::AppConfig, error::SaveProviderError, ShutdownManager, SystemdWatchdog};
 use serde_json::json;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
+use moka::future::Cache;
+use std::time::Duration;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -187,6 +190,26 @@ async fn main() {
         }
     } else { (None, None) };
 
+    // 初始化图片缓存（容量按总字节数加权）
+    let bn_image_cache: Cache<String, Arc<Vec<u8>>> = {
+        let img = &config.image;
+        Cache::builder()
+            .weigher(|_k, v: &Arc<Vec<u8>>| v.len() as u32)
+            .max_capacity(img.cache_max_bytes)
+            .time_to_live(Duration::from_secs(img.cache_ttl_secs))
+            .time_to_idle(Duration::from_secs(img.cache_tti_secs))
+            .build()
+    };
+    let song_image_cache: Cache<String, Arc<Vec<u8>>> = {
+        let img = &config.image;
+        Cache::builder()
+            .weigher(|_k, v: &Arc<Vec<u8>>| v.len() as u32)
+            .max_capacity(img.cache_max_bytes)
+            .time_to_live(Duration::from_secs(img.cache_ttl_secs))
+            .time_to_idle(Duration::from_secs(img.cache_tti_secs))
+            .build()
+    };
+
     let app_state = AppState {
         chart_constants: Arc::new(chart_map),
         song_catalog: Arc::new(song_catalog),
@@ -194,6 +217,9 @@ async fn main() {
         qrcode_service,
         stats: stats_handle_opt.clone(),
         stats_storage: stats_storage_opt.clone(),
+        render_semaphore: Arc::new(Semaphore::new({ let m = config.image.max_parallel as usize; if m == 0 { num_cpus::get() } else { m } })),
+        bn_image_cache,
+        song_image_cache,
     };
 
     // Routes

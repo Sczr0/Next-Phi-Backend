@@ -69,6 +69,9 @@ pub struct AppConfig {
     /// 水印配置
     #[serde(default)]
     pub watermark: WatermarkConfig,
+    /// 图片渲染配置
+    #[serde(default)]
+    pub image: ImageRenderConfig,
     /// 优雅退出配置
     #[serde(default)]
     pub shutdown: ShutdownConfig,
@@ -167,9 +170,40 @@ impl Default for AppConfig {
             stats: StatsConfig::default(),
             branding: BrandingConfig::default(),
             watermark: WatermarkConfig::default(),
+            image: ImageRenderConfig::default(),
             shutdown: ShutdownConfig::default(),
         }
     }
+}
+
+/// 图片渲染配置
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ImageRenderConfig {
+    /// 是否优先速度渲染（OptimizeSpeed），提升栅格化性能，可能略降画质
+    #[serde(default)]
+    pub optimize_speed: bool,
+    /// 是否启用图片缓存（BN/单曲）
+    #[serde(default = "ImageRenderConfig::default_cache_enabled")]
+    pub cache_enabled: bool,
+    /// 缓存最大容量（字节），按图片字节大小加权
+    #[serde(default = "ImageRenderConfig::default_cache_max_bytes")]
+    pub cache_max_bytes: u64,
+    /// 缓存 TTL（秒）
+    #[serde(default = "ImageRenderConfig::default_cache_ttl")]
+    pub cache_ttl_secs: u64,
+    /// 缓存 TTI（秒）
+    #[serde(default = "ImageRenderConfig::default_cache_tti")]
+    pub cache_tti_secs: u64,
+    /// 并发渲染许可数（0=自动，取 CPU 核心数）
+    #[serde(default)]
+    pub max_parallel: u32,
+}
+
+impl ImageRenderConfig {
+    fn default_cache_enabled() -> bool { true }
+    fn default_cache_max_bytes() -> u64 { 100 * 1024 * 1024 }
+    fn default_cache_ttl() -> u64 { 60 }
+    fn default_cache_tti() -> u64 { 30 }
 }
 
 /// 统计归档配置
