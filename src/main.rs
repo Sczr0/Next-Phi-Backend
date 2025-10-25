@@ -1,6 +1,7 @@
 use axum::{Router, http::StatusCode, response::Json, routing::get};
 use phi_backend::features::auth::client::TapTapClient;
 use phi_backend::features::{auth, save, song};
+use phi_backend::features::leaderboard::handler::create_leaderboard_router;
 use phi_backend::features::stats::{self, handler::create_stats_router, middleware::{stats_middleware, StateWithStats}};
 use phi_backend::startup::chart_loader::{ChartConstantsMap, load_chart_constants};
 use phi_backend::startup::{run_startup_checks, song_loader};
@@ -12,6 +13,8 @@ use tokio::sync::Semaphore;
 use moka::future::Cache;
 use std::time::Duration;
 use utoipa::OpenApi;
+use utoipa::{Modify};
+use utoipa::openapi::security::{SecurityScheme, ApiKey, ApiKeyValue};
 use utoipa_swagger_ui::SwaggerUi;
 
 #[derive(OpenApi)]
@@ -26,6 +29,12 @@ use utoipa_swagger_ui::SwaggerUi;
         phi_backend::features::image::handler::render_bn_user,
         phi_backend::features::stats::handler::get_daily_stats,
         phi_backend::features::stats::handler::get_stats_summary,
+        phi_backend::features::leaderboard::handler::get_top,
+        phi_backend::features::leaderboard::handler::get_by_rank,
+        phi_backend::features::leaderboard::handler::post_me,
+        phi_backend::features::leaderboard::handler::put_alias,
+        phi_backend::features::leaderboard::handler::put_profile,
+        phi_backend::features::leaderboard::handler::get_public_profile,
         health_check,
     ),
     components(
@@ -51,14 +60,24 @@ use utoipa_swagger_ui::SwaggerUi;
             phi_backend::features::stats::handler::FeatureUsageSummary,
             phi_backend::features::stats::handler::UniqueUsersSummary,
             phi_backend::features::stats::handler::StatsSummaryResponse,
+            phi_backend::features::leaderboard::models::ChartTextItem,
+            phi_backend::features::leaderboard::models::RksCompositionText,
+            phi_backend::features::leaderboard::models::LeaderboardTopItem,
+            phi_backend::features::leaderboard::models::LeaderboardTopResponse,
+            phi_backend::features::leaderboard::models::MeResponse,
+            phi_backend::features::leaderboard::models::AliasRequest,
+            phi_backend::features::leaderboard::models::ProfileUpdateRequest,
+            phi_backend::features::leaderboard::models::PublicProfileResponse,
         )
     ),
+    modifiers(&AdminTokenSecurity),
     tags(
         (name = "Save", description = "Save APIs"),
         (name = "Auth", description = "Auth APIs"),
         (name = "Song", description = "Song APIs"),
         (name = "Image", description = "Image APIs"),
         (name = "Stats", description = "Stats APIs"),
+        (name = "Leaderboard", description = "Leaderboard APIs"),
         (name = "Health", description = "Health APIs"),
     ),
     info(
@@ -68,6 +87,18 @@ use utoipa_swagger_ui::SwaggerUi;
     )
 )]
 pub struct ApiDoc;
+
+struct AdminTokenSecurity;
+
+impl Modify for AdminTokenSecurity {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_with(Default::default);
+        components.add_security_scheme(
+            "AdminToken",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-Admin-Token"))),
+        );
+    }
+}
 
 #[utoipa::path(
     get,
@@ -227,7 +258,8 @@ async fn main() {
         .nest("/auth", auth::create_auth_router())
         .merge(save::create_save_router())
         .merge(song::create_song_router())
-        .merge(phi_backend::features::image::create_image_router());
+        .merge(phi_backend::features::image::create_image_router())
+        .merge(create_leaderboard_router());
     api_router = api_router.merge(create_stats_router());
 
     let mut app = Router::<AppState>::new()

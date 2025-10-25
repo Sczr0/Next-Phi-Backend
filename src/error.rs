@@ -31,6 +31,14 @@ pub enum AppError {
     #[error("图像渲染错误: {0}")]
     ImageRendererError(String),
 
+    /// 参数校验错误
+    #[error("参数校验错误: {0}")]
+    Validation(String),
+
+    /// 资源冲突（如别名占用）
+    #[error("资源冲突: {0}")]
+    Conflict(String),
+
     /// 内部服务器错误
     #[error("内部错误: {0}")]
     Internal(String),
@@ -132,6 +140,8 @@ impl IntoResponse for AppError {
             AppError::Auth(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
             AppError::SaveHandlerError(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::ImageRendererError(_) => (StatusCode::UNPROCESSABLE_ENTITY, self.to_string()),
+            AppError::Validation(_) => (StatusCode::UNPROCESSABLE_ENTITY, self.to_string()),
+            AppError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
             AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
             AppError::SaveProvider(_) => (StatusCode::BAD_REQUEST, self.to_string()),
             AppError::Search(SearchError::NotFound) => (StatusCode::NOT_FOUND, self.to_string()),

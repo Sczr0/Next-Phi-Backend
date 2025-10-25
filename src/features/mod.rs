@@ -4,3 +4,4 @@ pub mod save;
 pub mod song;
 pub mod image;
 pub mod stats;
+pub mod leaderboard;

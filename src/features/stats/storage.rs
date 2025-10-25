@@ -56,6 +56,53 @@ impl StatsStorage {
             err_count INTEGER NOT NULL,
             PRIMARY KEY(date, feature, route, method)
         );
+
+        -- Leaderboard tables (no images, textual details only)
+        CREATE TABLE IF NOT EXISTS leaderboard_rks (
+            user_hash TEXT PRIMARY KEY,
+            total_rks REAL NOT NULL,
+            user_kind TEXT,
+            suspicion_score REAL NOT NULL DEFAULT 0.0,
+            is_hidden INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_lb_rks_order ON leaderboard_rks(total_rks DESC, updated_at ASC, user_hash ASC);
+
+        CREATE TABLE IF NOT EXISTS user_profile (
+            user_hash TEXT PRIMARY KEY,
+            alias TEXT UNIQUE COLLATE NOCASE,
+            is_public INTEGER NOT NULL DEFAULT 0,
+            show_rks_composition INTEGER NOT NULL DEFAULT 1,
+            show_best_top3 INTEGER NOT NULL DEFAULT 1,
+            show_ap_top3 INTEGER NOT NULL DEFAULT 1,
+            user_kind TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_profile_public ON user_profile(is_public);
+
+        CREATE TABLE IF NOT EXISTS save_submissions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_hash TEXT NOT NULL,
+            total_rks REAL NOT NULL,
+            acc_stats TEXT,
+            rks_jump REAL,
+            route TEXT,
+            client_ip_hash TEXT,
+            details_json TEXT,
+            suspicion_score REAL NOT NULL DEFAULT 0.0,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_submissions_user ON save_submissions(user_hash, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS leaderboard_details (
+            user_hash TEXT PRIMARY KEY,
+            rks_composition_json TEXT,
+            best_top3_json TEXT,
+            ap_top3_json TEXT,
+            updated_at TEXT NOT NULL
+        );
         "#;
         sqlx::query(ddl).execute(&self.pool).await.map_err(|e| AppError::Internal(format!("init schema: {e}")))?;
         Ok(())
@@ -123,5 +170,103 @@ impl StatsStorage {
             });
         }
         Ok(out)
+    }
+}
+
+impl StatsStorage {
+    pub async fn get_prev_rks(&self, user_hash: &str) -> Result<Option<(f64, String)>, AppError> {
+        let row = sqlx::query("SELECT total_rks, updated_at FROM leaderboard_rks WHERE user_hash = ?")
+            .bind(user_hash)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("get prev rks: {e}")))?;
+        if let Some(r) = row {
+            Ok(Some((r.get::<f64, _>("total_rks"), r.get::<String, _>("updated_at"))))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub async fn insert_submission(&self,
+        user_hash: &str,
+        total_rks: f64,
+        rks_jump: f64,
+        route: &str,
+        client_ip_hash: Option<&str>,
+        details_json: Option<&str>,
+        suspicion_score: f64,
+        now_rfc3339: &str,
+    ) -> Result<(), AppError> {
+        sqlx::query("INSERT INTO save_submissions(user_hash,total_rks,acc_stats,rks_jump,route,client_ip_hash,details_json,suspicion_score,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
+            .bind(user_hash)
+            .bind(total_rks)
+            .bind(Option::<String>::None)
+            .bind(rks_jump)
+            .bind(route)
+            .bind(client_ip_hash)
+            .bind(details_json)
+            .bind(suspicion_score)
+            .bind(now_rfc3339)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("insert submission: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn upsert_leaderboard_rks(&self,
+        user_hash: &str,
+        total_rks: f64,
+        user_kind: Option<&str>,
+        suspicion_score: f64,
+        hide: bool,
+        now_rfc3339: &str,
+    ) -> Result<(), AppError> {
+        let is_hidden_i = if hide { 1_i64 } else { 0_i64 };
+        sqlx::query(
+            "INSERT INTO leaderboard_rks(user_hash,total_rks,user_kind,suspicion_score,is_hidden,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
+             ON CONFLICT(user_hash) DO UPDATE SET
+               total_rks = CASE WHEN excluded.total_rks > leaderboard_rks.total_rks THEN excluded.total_rks ELSE leaderboard_rks.total_rks END,
+               updated_at = CASE WHEN excluded.total_rks > leaderboard_rks.total_rks THEN excluded.updated_at ELSE leaderboard_rks.updated_at END,
+               user_kind = COALESCE(excluded.user_kind, leaderboard_rks.user_kind),
+               suspicion_score = excluded.suspicion_score,
+               is_hidden = CASE WHEN leaderboard_rks.is_hidden=1 OR excluded.is_hidden=1 THEN 1 ELSE 0 END"
+        )
+        .bind(user_hash)
+        .bind(total_rks)
+        .bind(user_kind)
+        .bind(suspicion_score)
+        .bind(is_hidden_i)
+        .bind(now_rfc3339)
+        .bind(now_rfc3339)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("upsert leaderboard: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn upsert_details(&self,
+        user_hash: &str,
+        rks_comp_json: Option<&str>,
+        best3_json: Option<&str>,
+        ap3_json: Option<&str>,
+        now_rfc3339: &str,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO leaderboard_details(user_hash,rks_composition_json,best_top3_json,ap_top3_json,updated_at) VALUES(?,?,?,?,?)
+             ON CONFLICT(user_hash) DO UPDATE SET
+               rks_composition_json = COALESCE(excluded.rks_composition_json, leaderboard_details.rks_composition_json),
+               best_top3_json = COALESCE(excluded.best_top3_json, leaderboard_details.best_top3_json),
+               ap_top3_json = COALESCE(excluded.ap_top3_json, leaderboard_details.ap_top3_json),
+               updated_at = excluded.updated_at"
+        )
+        .bind(user_hash)
+        .bind(rks_comp_json)
+        .bind(best3_json)
+        .bind(ap3_json)
+        .bind(now_rfc3339)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("upsert details: {e}")))?;
+        Ok(())
     }
 }

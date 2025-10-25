@@ -8,6 +8,8 @@
 *.swp
 *.swo
 *~
+.codex
+.spec-workflow
 .DS_Store
 Thumbs.db
 

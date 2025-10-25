@@ -101,7 +101,7 @@ async fn test_b27_generation_with_flamegraph() {
     // 获取存档
     use phi_backend::features::save::provider::{SaveSource, get_decrypted_save};
     let source = SaveSource::official(session_token.clone());
-    let parsed = get_decrypted_save(source).await
+    let parsed = get_decrypted_save(source, &chart_map).await
         .expect("获取存档失败");
     
     let phase3_elapsed = phase3_start.elapsed();

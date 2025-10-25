@@ -9,7 +9,7 @@ use axum::{
 use std::collections::HashMap;
 
 use crate::error::AppError;
-use crate::features::rks::engine::{PlayerRksResult, calculate_player_rks};
+use crate::features::rks::engine::{PlayerRksResult, calculate_player_rks, calculate_single_chart_rks};
 use crate::state::AppState;
 
 use super::{
@@ -50,6 +50,29 @@ pub async fn get_save_data(
     if let Some(stats) = state.stats.as_ref() {
         let extra = serde_json::json!({ "user_kind": user_kind });
         stats.track_feature("save", "get_save", user_hash.clone(), Some(extra)).await;
+    }
+    // 排行榜入库（无论是否返回RKS）
+    if let Some(storage) = state.stats_storage.as_ref() {
+        if let Some(user_hash_ref) = user_hash.as_ref() {
+            let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
+            let total_rks = rks_res.total_rks;
+            let (best_top3, ap_top3, rks_comp) = compute_textual_details(&parsed.game_record, &state);
+            let best_top3_json = serde_json::to_string(&best_top3).ok();
+            let ap_top3_json = serde_json::to_string(&ap_top3).ok();
+            let rks_comp_json = serde_json::to_string(&rks_comp).ok();
+            let now = chrono::Utc::now().to_rfc3339();
+            let prev = storage.get_prev_rks(user_hash_ref).await?;
+            let prev_rks = prev.as_ref().map(|v| v.0).unwrap_or(0.0);
+            let rks_jump = if prev_rks > 0.0 { total_rks - prev_rks } else { 0.0 };
+            let mut suspicion = 0.0_f64;
+            if total_rks > 20.0 { suspicion += 0.5; }
+            if rks_jump > 1.0 { suspicion += 0.8; } else if rks_jump > 0.5 { suspicion += 0.3; }
+            if let Some(kind) = user_kind.as_deref() { if kind == "session_token" { suspicion = (suspicion - 0.2).max(0.0); } }
+            let hide = suspicion >= 1.0;
+            storage.insert_submission(user_hash_ref, total_rks, rks_jump, "/save", None, None, suspicion, &now).await?;
+            storage.upsert_leaderboard_rks(user_hash_ref, total_rks, user_kind.as_deref(), suspicion, hide, &now).await?;
+            storage.upsert_details(user_hash_ref, rks_comp_json.as_deref(), best_top3_json.as_deref(), ap_top3_json.as_deref(), &now).await?;
+        }
     }
 
     let calc_rks = params
@@ -116,4 +139,57 @@ pub struct SaveAndRksResponse {
     save: serde_json::Value,
     /// 计算得到的玩家 RKS 概览
     rks: PlayerRksResult,
+}
+
+/// 计算用于公开展示的文字详情（BestTop3、APTop3、RKS 构成）
+fn compute_textual_details(
+    records: &std::collections::HashMap<String, Vec<super::models::DifficultyRecord>>,
+    state: &AppState,
+) -> (
+    Vec<crate::features::leaderboard::models::ChartTextItem>,
+    Vec<crate::features::leaderboard::models::ChartTextItem>,
+    crate::features::leaderboard::models::RksCompositionText,
+) {
+    use crate::features::leaderboard::models::{ChartTextItem, RksCompositionText};
+    use super::models::Difficulty;
+    let chart_constants = &state.chart_constants;
+
+    let mut all_scores: Vec<(String, Difficulty, f64, f64)> = Vec::new(); // (song_id, diff, acc_percent, rks)
+    let mut ap_scores: Vec<(String, Difficulty, f64, f64)> = Vec::new();
+
+    for (song_id, diffs) in records.iter() {
+        for rec in diffs.iter() {
+            let Some(consts) = chart_constants.get(song_id) else { continue; };
+            let level_opt = match rec.difficulty {
+                Difficulty::EZ => consts.ez,
+                Difficulty::HD => consts.hd,
+                Difficulty::IN => consts.in_level,
+                Difficulty::AT => consts.at,
+            };
+            let Some(level) = level_opt else { continue; };
+            let acc_percent = rec.accuracy as f64;
+            let acc_decimal = if acc_percent > 1.5 { acc_percent / 100.0 } else { acc_percent } as f32;
+            let rks = calculate_single_chart_rks(acc_decimal, level);
+            all_scores.push((song_id.clone(), rec.difficulty.clone(), acc_percent, rks));
+            if acc_percent >= 100.0 { ap_scores.push((song_id.clone(), rec.difficulty.clone(), acc_percent, rks)); }
+        }
+    }
+
+    all_scores.sort_by(|a,b| b.3.partial_cmp(&a.3).unwrap_or(core::cmp::Ordering::Equal));
+    ap_scores.sort_by(|a,b| b.3.partial_cmp(&a.3).unwrap_or(core::cmp::Ordering::Equal));
+
+    let name_of = |sid: &str| -> String {
+        state.song_catalog.by_id.get(sid).map(|s| s.name.clone()).unwrap_or_else(|| sid.to_string())
+    };
+
+    let to_text = |v: &[(String, Difficulty, f64, f64)]| -> Vec<ChartTextItem> {
+        v.iter().take(3).map(|(sid, d, acc, rks)| ChartTextItem { song: name_of(sid), difficulty: d.to_string(), acc: (*acc), rks: (*rks) }).collect()
+    };
+    let best_top3 = to_text(&all_scores);
+    let ap_top3 = to_text(&ap_scores);
+
+    let best27_sum: f64 = all_scores.iter().take(27).map(|t| t.3).sum();
+    let ap3_sum: f64 = ap_scores.iter().take(3).map(|t| t.3).sum();
+    let rks_comp = RksCompositionText { best27_sum, ap_top3_sum: ap3_sum };
+    (best_top3, ap_top3, rks_comp)
 }

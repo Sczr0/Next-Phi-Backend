@@ -75,6 +75,9 @@ pub struct AppConfig {
     /// 优雅退出配置
     #[serde(default)]
     pub shutdown: ShutdownConfig,
+    /// 排行榜配置（纯文字）
+    #[serde(default)]
+    pub leaderboard: LeaderboardConfig,
 }
 
 impl AppConfig {
@@ -172,6 +175,7 @@ impl Default for AppConfig {
             watermark: WatermarkConfig::default(),
             image: ImageRenderConfig::default(),
             shutdown: ShutdownConfig::default(),
+            leaderboard: LeaderboardConfig::default(),
         }
     }
 }
@@ -470,6 +474,51 @@ impl Default for WatchdogConfig {
             enabled: Self::default_enabled(),
             timeout_secs: Self::default_timeout(),
             interval_secs: Self::default_interval(),
+        }
+    }
+}
+
+/// 排行榜配置（无图片，纯文字）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LeaderboardConfig {
+    /// 是否启用排行榜功能
+    #[serde(default = "LeaderboardConfig::default_enabled")]
+    pub enabled: bool,
+    /// 是否允许公开资料
+    #[serde(default = "LeaderboardConfig::default_allow_public")]
+    pub allow_public: bool,
+    /// 默认展示 RKS 构成（Best27+APTop3）
+    #[serde(default = "LeaderboardConfig::default_show_rc")]
+    pub default_show_rks_composition: bool,
+    /// 默认展示 BestTop3
+    #[serde(default = "LeaderboardConfig::default_show_b3")]
+    pub default_show_best_top3: bool,
+    /// 默认展示 APTop3
+    #[serde(default = "LeaderboardConfig::default_show_ap3")]
+    pub default_show_ap_top3: bool,
+    /// 管理员令牌列表（Header: X-Admin-Token）
+    #[serde(default = "LeaderboardConfig::default_admin_tokens", alias = "admin-tokens", alias = "adminTokens")]
+    pub admin_tokens: Vec<String>,
+}
+
+impl LeaderboardConfig {
+    fn default_enabled() -> bool { true }
+    fn default_allow_public() -> bool { true }
+    fn default_show_rc() -> bool { true }
+    fn default_show_b3() -> bool { true }
+    fn default_show_ap3() -> bool { true }
+    fn default_admin_tokens() -> Vec<String> { Vec::new() }
+}
+
+impl Default for LeaderboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            allow_public: Self::default_allow_public(),
+            default_show_rks_composition: Self::default_show_rc(),
+            default_show_best_top3: Self::default_show_b3(),
+            default_show_ap_top3: Self::default_show_ap3(),
+            admin_tokens: Self::default_admin_tokens(),
         }
     }
 }
