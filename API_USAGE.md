@@ -99,3 +99,7 @@ curl "http://localhost:3939/api/v1/songs/search?q=devil&unique=true"
 - ç»Ÿè®¡ä¸ŠæŠ¥ï¼š
   - `image_render`ï¼šè®°å½•æ¸²æŸ“æ€»è€—æ—¶ï¼ˆmsï¼‰ã€å¯ç”¨è®¸å¯æ•°ã€è¾“å‡º PNG å­—èŠ‚æ•°ã€‚
   - `bestn` / `single_query` / `bestn_user`ï¼šåŸæœ‰ä¸šåŠ¡äº‹ä»¶ä¿æŒä¸å˜ã€‚
+## Í¼Æ¬Êä³öÓÅ»¯
+- ËùÓĞÍ¼Æ¬¶ËµãÖ§³Ö²éÑ¯²ÎÊı£ºormat=jpeg|png¡¢width=<ÏñËØ>£¨°´Ä¿±ê¿í¶ÈÍ¬±ÈËõ·Å£©
+- µÍ´ø¿í½¨Òé£ºormat=jpeg + width=800£¬Í¨³£¿É´ó·ù½µµÍ·µ»Ø×Ö½ÚÊı
+- Ê¾Àı£ºPOST /image/bn?format=jpeg&width=800£¨ÇëÇóÌåÍ¬Ô­½Ó¿Ú£©

@@ -23,6 +23,12 @@ logs/
 *.db-wal
 resources/usage_stats.db*
 resources/ill
+# 曲绘仓库及派生大文件（默认文件夹：phi-plugin-ill）
+/resources/phi-plugin-ill/
+# 兼容自定义文件夹名下的典型子目录
+/resources/**/ill/
+/resources/**/illLow/
+/resources/**/illBlur/
 
 # 统计数据
 resources/stats/
@@ -57,3 +63,12 @@ cargo_cache/
 
 # 系统文件
 *.pid
+
+# SDK 生成与前端构建产物
+/sdk/ts/node_modules/
+/sdk/ts/dist/
+# 可由示例导出再生成，无需纳入版本控制
+/sdk/openapi.json
+
+# 锁文件（如需固定工作区可保留，此处忽略以减少噪音）
+# /sdk/ts/pnpm-lock.yaml

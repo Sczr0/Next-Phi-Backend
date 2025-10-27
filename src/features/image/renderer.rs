@@ -13,6 +13,8 @@ use resvg::{
     render,
     tiny_skia::{Pixmap, Transform},
 };
+use image::codecs::jpeg::JpegEncoder;
+use image::ColorType;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
@@ -1221,8 +1223,13 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
         let mut encoder = png::Encoder::new(&mut out, pixmap_size.width(), pixmap_size.height());
         encoder.set_color(png::ColorType::Rgba);
         encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_compression(png::Compression::Fast);
-        encoder.set_filter(png::FilterType::NoFilter);
+        if AppConfig::global().image.optimize_speed {
+            encoder.set_compression(png::Compression::Fast);
+            encoder.set_filter(png::FilterType::NoFilter);
+        } else {
+            encoder.set_compression(png::Compression::Default);
+            encoder.set_filter(png::FilterType::Paeth);
+        }
         // 如需更小体积可改为 Adaptive，但会更慢
         let mut writer = encoder
             .write_header()
@@ -1244,6 +1251,155 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
         t_encode
     );
 
+    Ok(out)
+}
+
+/// 按目标宽度下采样后编码为 PNG（未提供则使用 SVG 原始宽度）
+pub fn render_svg_to_png_scaled(
+    svg_data: String,
+    is_user_generated: bool,
+    target_width: Option<u32>,
+) -> Result<Vec<u8>, AppError> {
+    // 字体数据库（全局复用）
+    let font_db = get_global_font_db();
+    let speed = AppConfig::global().image.optimize_speed;
+    let opts = UsvgOptions {
+        resources_dir: Some(
+            std::env::current_dir()
+                .map_err(|e| AppError::ImageRendererError(format!("Failed to get current dir: {e}")))?,
+        ),
+        fontdb: font_db,
+        font_family: MAIN_FONT_NAME.to_string(),
+        font_size: 16.0,
+        languages: vec!["zh-CN".to_string(), "en".to_string()],
+        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
+        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
+        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
+        ..Default::default()
+    };
+
+    let tree = usvg::Tree::from_data(svg_data.as_bytes(), &opts)
+        .map_err(|e| AppError::ImageRendererError(format!("Failed to parse SVG: {e}")))?;
+
+    let src_size = tree.size().to_int_size();
+    let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
+        if tw > 0 && tw != src_size.width() {
+            let s = tw as f32 / src_size.width() as f32;
+            ((src_size.width() as f32 * s).round() as u32, (src_size.height() as f32 * s).round() as u32, s)
+        } else {
+            (src_size.width(), src_size.height(), 1.0)
+        }
+    } else { (src_size.width(), src_size.height(), 1.0) };
+
+    let mut pixmap = Pixmap::new(dst_w, dst_h)
+        .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
+    render(&tree, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+
+    // 隐式水印
+    if is_user_generated {
+        if let Some(px) = pixmap.data_mut().get_mut(0..4) {
+            px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
+        }
+    }
+
+    // 编码 PNG
+    let mut out = Vec::with_capacity((dst_w * dst_h * 4) as usize);
+    {
+        let mut encoder = png::Encoder::new(&mut out, dst_w, dst_h);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        if AppConfig::global().image.optimize_speed {
+            encoder.set_compression(png::Compression::Fast);
+            encoder.set_filter(png::FilterType::NoFilter);
+        } else {
+            encoder.set_compression(png::Compression::Default);
+            encoder.set_filter(png::FilterType::Paeth);
+        }
+        let mut writer = encoder
+            .write_header()
+            .map_err(|e| AppError::ImageRendererError(format!("PNG write_header error: {e}")))?;
+        writer
+            .write_image_data(pixmap.data())
+            .map_err(|e| AppError::ImageRendererError(format!("PNG write_image_data error: {e}")))?;
+        writer
+            .finish()
+            .map_err(|e| AppError::ImageRendererError(format!("PNG finish error: {e}")))?;
+    }
+    Ok(out)
+}
+
+/// 按目标宽度下采样后编码为 JPEG（quality 1-100，建议 80-90）
+pub fn render_svg_to_jpeg(
+    svg_data: String,
+    is_user_generated: bool,
+    target_width: Option<u32>,
+    quality: u8,
+) -> Result<Vec<u8>, AppError> {
+    // 字体数据库（全局复用）
+    let font_db = get_global_font_db();
+    let speed = AppConfig::global().image.optimize_speed;
+    let opts = UsvgOptions {
+        resources_dir: Some(
+            std::env::current_dir()
+                .map_err(|e| AppError::ImageRendererError(format!("Failed to get current dir: {e}")))?,
+        ),
+        fontdb: font_db,
+        font_family: MAIN_FONT_NAME.to_string(),
+        font_size: 16.0,
+        languages: vec!["zh-CN".to_string(), "en".to_string()],
+        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
+        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
+        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
+        ..Default::default()
+    };
+
+    let tree = usvg::Tree::from_data(svg_data.as_bytes(), &opts)
+        .map_err(|e| AppError::ImageRendererError(format!("Failed to parse SVG: {e}")))?;
+
+    let src_size = tree.size().to_int_size();
+    let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
+        if tw > 0 && tw != src_size.width() {
+            let s = tw as f32 / src_size.width() as f32;
+            ((src_size.width() as f32 * s).round() as u32, (src_size.height() as f32 * s).round() as u32, s)
+        } else {
+            (src_size.width(), src_size.height(), 1.0)
+        }
+    } else { (src_size.width(), src_size.height(), 1.0) };
+
+    let mut pixmap = Pixmap::new(dst_w, dst_h)
+        .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
+    render(&tree, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+
+    // 隐式水印
+    if is_user_generated {
+        if let Some(px) = pixmap.data_mut().get_mut(0..4) {
+            px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
+        }
+    }
+
+    // 将 RGBA 像素扁平化到黑色背景（JPEG 无透明通道）
+    let rgba = pixmap.data();
+    let mut rgb: Vec<u8> = Vec::with_capacity((dst_w as usize) * (dst_h as usize) * 3);
+    let mut i = 0;
+    while i + 3 < rgba.len() {
+        let r = rgba[i] as u16;
+        let g = rgba[i + 1] as u16;
+        let b = rgba[i + 2] as u16;
+        let a = rgba[i + 3] as u16; // 0..255
+        // 过黑底合成：c' = c * a/255
+        let r_out = ((r * a) / 255) as u8;
+        let g_out = ((g * a) / 255) as u8;
+        let b_out = ((b * a) / 255) as u8;
+        rgb.push(r_out);
+        rgb.push(g_out);
+        rgb.push(b_out);
+        i += 4;
+    }
+
+    let mut out = Vec::new();
+    let mut enc = JpegEncoder::new_with_quality(&mut out, quality.max(1).min(100));
+    enc.encode(&rgb, dst_w, dst_h, ColorType::Rgb8.into())
+        .map_err(|e| AppError::ImageRendererError(format!("JPEG encode error: {e}")))?;
     Ok(out)
 }
 

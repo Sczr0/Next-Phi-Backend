@@ -1,0 +1,38 @@
+{
+  "name": "phi-backend-sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK generated from Phi Backend OpenAPI",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": ["phi", "phigros", "sdk", "openapi", "typescript"],
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "generate": "openapi --input ../openapi.json --output ./src --client fetch --useOptions --exportCore true --useUnionTypes true",
+    "build": "tsc -p tsconfig.json",
+    "clean": "rimraf dist || rm -rf dist",
+    "prepublishOnly": "pnpm run build"
+  },
+  "devDependencies": {
+    "openapi-typescript-codegen": "^0.29.0",
+    "typescript": "^5.6.3"
+  }
+}
