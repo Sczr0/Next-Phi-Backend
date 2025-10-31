@@ -27,12 +27,18 @@ use serde::Deserialize;
 /// 图片输出选项（通过 Query 传入，避免破坏现有 JSON 请求体）
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ImageQueryOpts {
-    /// 输出格式：png 或 jpeg（默认 png）
+    /// 输出格式：png、jpeg 或 webp（默认 png）
     #[serde(default)]
     format: Option<String>,
     /// 目标宽度：按宽度同比例缩放（可选）
     #[serde(default)]
     width: Option<u32>,
+    /// WebP 质量：1-100（仅在 format=webp 时有效，默认 80）
+    #[serde(default)]
+    webp_quality: Option<u8>,
+    /// WebP 无损模式：true=无损，false=有损（仅在 format=webp 时有效，默认 false）
+    #[serde(default)]
+    webp_lossless: Option<bool>,
 }
 
 #[utoipa::path(
@@ -42,11 +48,13 @@ pub struct ImageQueryOpts {
     description = "从官方/外部存档解析玩家成绩，按 RKS 值排序取前 N 条生成 BestN 概览（PNG）。可选内嵌封面与主题切换。",
     request_body = RenderBnRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg，默认 png"),
-        ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放")
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp，默认 png"),
+        ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
+        ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
+        ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
-        (status = 200, description = "PNG bytes of BN image"),
+        (status = 200, description = "PNG/JPEG/WebP bytes of BN image"),
         (status = 400, description = "Bad request", body = AppError),
         (status = 500, description = "Renderer error", body = AppError)
     ),
@@ -62,6 +70,13 @@ pub async fn render_bn(
     let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
 
+    // 参数验证：webp_quality 范围
+    if let Some(quality) = q.webp_quality {
+        if quality > 100 {
+            return Err(AppError::Validation("webp_quality 必须在 1-100 范围内".to_string()));
+        }
+    }
+
     // Cache hit/miss 事件 + 快速返回
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
@@ -70,9 +85,15 @@ pub async fn render_bn(
         if let Some(user_hash) = user_hash_for_cache.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let theme_code = match req.theme { super::types::Theme::White => "w", super::types::Theme::Black => "b" };
-            let fmt_code = match q.format.as_deref() { Some("jpeg")|Some("jpg") => "jpg", _ => "png" };
+            let fmt_code = match q.format.as_deref() {
+                Some("jpeg") | Some("jpg") => "jpg",
+                Some("webp") => "webp",
+                _ => "png"
+            };
             let width_code = q.width.unwrap_or(0);
-            let key = format!("{}:bn:{}:{}:{}:{}:{}:{}", user_hash, req.n.max(1), updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code);
+            let webp_quality_code = q.webp_quality.unwrap_or(80);
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
+            let key = format!("{}:bn:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, req.n.max(1), updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
             if let Some(p) = state.bn_image_cache.get(&key).await {
                 if let Some(h) = state.stats.as_ref() {
                     let evt = crate::features::stats::models::EventInsert {
@@ -91,7 +112,12 @@ pub async fn render_bn(
                     h.track(evt).await;
                 }
                 let mut headers = axum::http::HeaderMap::new();
-                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+                let content_type = match fmt_code {
+                    "jpg" => "image/jpeg",
+                    "webp" => "image/webp",
+                    _ => "image/png"
+                };
+                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
                 return Ok((StatusCode::OK, headers, (*p).clone()));
             } else if let Some(h) = state.stats.as_ref() {
                 let evt = crate::features::stats::models::EventInsert {
@@ -255,8 +281,13 @@ pub async fn render_bn(
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, req.embed_images)?;
     // 输出格式与宽度处理
     let want_jpeg = matches!(q.format.as_deref(), Some("jpeg") | Some("jpg"));
+    let want_webp = matches!(q.format.as_deref(), Some("webp"));
     let (bytes, content_type) = if want_jpeg {
         (renderer::render_svg_to_jpeg(svg, false, q.width, 85)?, "image/jpeg")
+    } else if want_webp {
+        let quality = q.webp_quality.unwrap_or(80);
+        let lossless = q.webp_lossless.unwrap_or(false);
+        (renderer::render_svg_to_webp(svg, false, q.width, quality, lossless)?, "image/webp")
     } else {
         (renderer::render_svg_to_png_scaled(svg, false, q.width)?, "image/png")
     };
@@ -281,9 +312,11 @@ pub async fn render_bn(
         if let Some(user_hash) = uh.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let theme_code = match req.theme { super::types::Theme::White => "w", super::types::Theme::Black => "b" };
-            let fmt_code = if want_jpeg { "jpg" } else { "png" };
+            let fmt_code = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
             let width_code = q.width.unwrap_or(0);
-            let key = format!("{}:bn:{}:{}:{}:{}:{}:{}", user_hash, n, updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code);
+            let webp_quality_code = q.webp_quality.unwrap_or(80);
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
+            let key = format!("{}:bn:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, n, updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
             state.bn_image_cache.insert(key, std::sync::Arc::new(bytes.clone())).await;
         }
     }
@@ -291,6 +324,7 @@ pub async fn render_bn(
     // Basic render metrics (total time and permits)
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
+        let fmt_str = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
         let evt = crate::features::stats::models::EventInsert{
             ts_utc: chrono::Utc::now(),
             route: Some("/image/bn".into()),
@@ -302,7 +336,7 @@ pub async fn render_bn(
             user_hash: None,
             client_ip_hash: None,
             instance: None,
-            extra_json: Some(serde_json::json!({"permits_avail": permits_avail, "wait_ms": wait_ms, "render_ms": render_ms, "bytes": bytes.len(), "fmt": if want_jpeg {"jpg"} else {"png"}, "width": q.width})),
+            extra_json: Some(serde_json::json!({"permits_avail": permits_avail, "wait_ms": wait_ms, "render_ms": render_ms, "bytes": bytes.len(), "fmt": fmt_str, "width": q.width})),
         };
         h.track(evt).await;
     }
@@ -316,11 +350,13 @@ pub async fn render_bn(
     description = "从存档中定位指定歌曲（支持 ID/名称），展示四难度成绩、RKS、推分建议等信息（PNG）。",
     request_body = RenderSongRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg，默认 png"),
-        ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放")
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp，默认 png"),
+        ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
+        ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
+        ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
-        (status = 200, description = "PNG bytes of song image"),
+        (status = 200, description = "PNG/JPEG/WebP bytes of song image"),
         (status = 400, description = "Bad request", body = AppError),
         (status = 500, description = "Renderer error", body = AppError)
     ),
@@ -341,6 +377,13 @@ pub async fn render_song(
         .search_unique(&req.song)
         .map_err(AppError::Search)?;
 
+    // 参数验证：webp_quality 范围
+    if let Some(quality) = q.webp_quality {
+        if quality > 100 {
+            return Err(AppError::Validation("webp_quality 必须在 1-100 范围内".to_string()));
+        }
+    }
+
     // Cache hit/miss 事件 + 快速返回
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
@@ -348,9 +391,15 @@ pub async fn render_song(
     if cache_enabled {
         if let Some(user_hash) = user_hash_for_cache.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let fmt_code = match q.format.as_deref() { Some("jpeg")|Some("jpg") => "jpg", _ => "png" };
+            let fmt_code = match q.format.as_deref() {
+                Some("jpeg") | Some("jpg") => "jpg",
+                Some("webp") => "webp",
+                _ => "png"
+            };
             let width_code = q.width.unwrap_or(0);
-            let key = format!("{}:song:{}:{}:{}:{}:{}:{}", user_hash, song.id, updated, "d", if req.embed_images { 1 } else { 0 }, fmt_code, width_code);
+            let webp_quality_code = q.webp_quality.unwrap_or(80);
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
+            let key = format!("{}:song:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, song.id, updated, "d", if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
             if let Some(p) = state.song_image_cache.get(&key).await {
                 if let Some(h) = state.stats.as_ref() {
                     let evt = crate::features::stats::models::EventInsert{
@@ -369,7 +418,12 @@ pub async fn render_song(
                     h.track(evt).await;
                 }
                 let mut headers = axum::http::HeaderMap::new();
-                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("image/png"));
+                let content_type = match fmt_code {
+                    "jpg" => "image/jpeg",
+                    "webp" => "image/webp",
+                    _ => "image/png"
+                };
+                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
                 return Ok((StatusCode::OK, headers, (*p).clone()));
             } else if let Some(h) = state.stats.as_ref() {
                 let evt = crate::features::stats::models::EventInsert{
@@ -497,8 +551,13 @@ pub async fn render_song(
     let t_render2 = Instant::now();
     let svg = renderer::generate_song_svg_string(&render_data, req.embed_images)?;
     let want_jpeg = matches!(q.format.as_deref(), Some("jpeg") | Some("jpg"));
+    let want_webp = matches!(q.format.as_deref(), Some("webp"));
     let (bytes, content_type) = if want_jpeg {
         (renderer::render_svg_to_jpeg(svg, false, q.width, 85)?, "image/jpeg")
+    } else if want_webp {
+        let quality = q.webp_quality.unwrap_or(80);
+        let lossless = q.webp_lossless.unwrap_or(false);
+        (renderer::render_svg_to_webp(svg, false, q.width, quality, lossless)?, "image/webp")
     } else {
         (renderer::render_svg_to_png_scaled(svg, false, q.width)?, "image/png")
     };
@@ -519,9 +578,11 @@ pub async fn render_song(
         let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         if let Some(user_hash) = uh.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let fmt_code = if want_jpeg { "jpg" } else { "png" };
+            let fmt_code = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
             let width_code = q.width.unwrap_or(0);
-            let key = format!("{}:song:{}:{}:{}:{}:{}:{}", user_hash, song.id, updated, "d", if req.embed_images { 1 } else { 0 }, fmt_code, width_code);
+            let webp_quality_code = q.webp_quality.unwrap_or(80);
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
+            let key = format!("{}:song:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, song.id, updated, "d", if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
             state.song_image_cache.insert(key, std::sync::Arc::new(bytes.clone())).await;
         }
     }
@@ -529,6 +590,7 @@ pub async fn render_song(
     // Basic render metrics (total)
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
+        let fmt_str = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
         let evt = crate::features::stats::models::EventInsert{
             ts_utc: chrono::Utc::now(),
             route: Some("/image/song".into()),
@@ -540,7 +602,7 @@ pub async fn render_song(
             user_hash: None,
             client_ip_hash: None,
             instance: None,
-            extra_json: Some(serde_json::json!({"permits_avail": permits_avail2, "wait_ms": wait_ms2, "render_ms": render_ms2, "bytes": bytes.len(), "fmt": if want_jpeg {"jpg"} else {"png"}, "width": q.width, "song_id": song.id})),
+            extra_json: Some(serde_json::json!({"permits_avail": permits_avail2, "wait_ms": wait_ms2, "render_ms": render_ms2, "bytes": bytes.len(), "fmt": fmt_str, "width": q.width, "song_id": song.id})),
         };
         h.track(evt).await;
     }
@@ -604,11 +666,13 @@ async fn fetch_nickname(session_token: &str) -> Option<String> {
     description = "无需存档，直接提交若干条用户自报成绩，计算 RKS 排序并生成 BestN 图片；支持水印解除口令。",
     request_body = RenderUserBnRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg，默认 png"),
-        ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放")
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp，默认 png"),
+        ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
+        ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
+        ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
-        (status = 200, description = "PNG bytes of user BN image"),
+        (status = 200, description = "PNG/JPEG/WebP bytes of user BN image"),
         (status = 400, description = "Bad request", body = AppError),
         (status = 500, description = "Renderer error", body = AppError)
     ),
@@ -619,6 +683,13 @@ pub async fn render_bn_user(
     Query(q): Query<ImageQueryOpts>,
     Json(req): Json<RenderUserBnRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    // 参数验证：webp_quality 范围
+    if let Some(quality) = q.webp_quality {
+        if quality > 100 {
+            return Err(AppError::Validation("webp_quality 必须在 1-100 范围内".to_string()));
+        }
+    }
+
     // 解析成绩并计算 RKS
     let mut records: Vec<RenderRecord> = Vec::with_capacity(req.scores.len());
     for (idx, item) in req.scores.iter().enumerate() {
@@ -706,8 +777,13 @@ pub async fn render_bn_user(
 
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, false)?;
     let want_jpeg = matches!(q.format.as_deref(), Some("jpeg") | Some("jpg"));
+    let want_webp = matches!(q.format.as_deref(), Some("webp"));
     let (bytes, content_type) = if want_jpeg {
         (renderer::render_svg_to_jpeg(svg, implicit, q.width, 85)?, "image/jpeg")
+    } else if want_webp {
+        let quality = q.webp_quality.unwrap_or(80);
+        let lossless = q.webp_lossless.unwrap_or(false);
+        (renderer::render_svg_to_webp(svg, implicit, q.width, quality, lossless)?, "image/webp")
     } else {
         (renderer::render_svg_to_png_scaled(svg, implicit, q.width)?, "image/png")
     };

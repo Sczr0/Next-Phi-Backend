@@ -1403,6 +1403,93 @@ pub fn render_svg_to_jpeg(
     Ok(out)
 }
 
+/// 按目标宽度下采样后编码为 WebP（支持透明通道）
+/// # 参数
+/// * `svg_data` - SVG 字符串数据
+/// * `is_user_generated` - 是否用户生成的内容（用于隐式水印）
+/// * `target_width` - 目标宽度（可选，按宽度同比例缩放）
+/// * `quality` - 有损压缩质量 1-100（默认 80，lossless 模式时无效）
+/// * `lossless` - 是否使用无损模式（默认 false）
+/// # 返回
+/// WebP 格式的图片字节数据
+pub fn render_svg_to_webp(
+    svg_data: String,
+    is_user_generated: bool,
+    target_width: Option<u32>,
+    _quality: u8,
+    _lossless: bool,
+) -> Result<Vec<u8>, AppError> {
+    // 字体数据库（全局复用）
+    let font_db = get_global_font_db();
+    let speed = AppConfig::global().image.optimize_speed;
+    let opts = UsvgOptions {
+        resources_dir: Some(
+            std::env::current_dir()
+                .map_err(|e| AppError::ImageRendererError(format!("Failed to get current dir: {e}")))?,
+        ),
+        fontdb: font_db,
+        font_family: MAIN_FONT_NAME.to_string(),
+        font_size: 16.0,
+        languages: vec!["zh-CN".to_string(), "en".to_string()],
+        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
+        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
+        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
+        ..Default::default()
+    };
+
+    let tree = usvg::Tree::from_data(svg_data.as_bytes(), &opts)
+        .map_err(|e| AppError::ImageRendererError(format!("Failed to parse SVG: {e}")))?;
+
+    let src_size = tree.size().to_int_size();
+    let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
+        if tw > 0 && tw != src_size.width() {
+            let s = tw as f32 / src_size.width() as f32;
+            ((src_size.width() as f32 * s).round() as u32, (src_size.height() as f32 * s).round() as u32, s)
+        } else {
+            (src_size.width(), src_size.height(), 1.0)
+        }
+    } else { (src_size.width(), src_size.height(), 1.0) };
+
+    let mut pixmap = Pixmap::new(dst_w, dst_h)
+        .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
+    render(&tree, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+
+    // 隐式水印
+    if is_user_generated {
+        if let Some(px) = pixmap.data_mut().get_mut(0..4) {
+            px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
+        }
+    }
+
+    // WebP 支持透明度通道，直接使用 RGBA 像素数据
+    let _rgba = pixmap.data();
+
+    #[cfg(feature = "webp")]
+    {
+        // 如果启用了 webp feature，使用 image crate 的 WebPEncoder
+        use image::codecs::webp::WebPEncoder;
+
+        let mut out = Vec::new();
+        let mut enc = WebPEncoder::new(&mut out);
+        if lossless {
+            enc = enc.with_lossless_quality(100.0);
+        } else {
+            enc = enc.with_lossy_quality(quality.max(1).min(100) as f32);
+        }
+        enc.encode(_rgba, dst_w, dst_h, ColorType::Rgba8.into())
+            .map_err(|e| AppError::ImageRendererError(format!("WebP encode error: {e}")))?;
+        Ok(out)
+    }
+
+    #[cfg(not(feature = "webp"))]
+    {
+        // 如果没有启用 webp feature，返回错误提示
+        Err(AppError::ImageRendererError(
+            "WebP encoding is not available. Please enable the 'webp' feature for the image crate in Cargo.toml: image = { version = \"0.25\", features = [\"webp\"] }".to_string()
+        ))
+    }
+}
+
 // ... (escape_xml function - unchanged) ...
 fn escape_xml(input: &str) -> String {
     input

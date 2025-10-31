@@ -73,7 +73,7 @@ chrono-tz = "0.9"
 resvg = "0.43"
 tiny-skia = { version = "0.11", features = ["png"] }
 png = "0.17"
-image = "0.25"
+image = { version = "0.25", features = ["webp"] }
 lru = "0.12"
 num_cpus = "1.16"
 

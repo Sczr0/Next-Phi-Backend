@@ -12,7 +12,7 @@ pub enum ImageFormat {
     Png,
     /// JPEG（有损压缩，体积显著更小，适合照片/插画类背景）
     Jpeg,
-    /// WebP（预留，暂未实现编码，未来可扩展）
+    /// WebP（新一代图片格式，相比JPEG/PNG可减少25-35%的文件大小，同时支持有损和无损压缩）
     Webp,
 }
 
