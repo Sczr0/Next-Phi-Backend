@@ -300,7 +300,7 @@ pub async fn fetch_from_external(
         .build()?;
 
     let response = client
-        .post("http://phib19.top:8080/get/cloud/saves")
+        .post("https://phib19.top:8080/get/cloud/saves")
         .json(&request_body)
         .send()
         .await?;

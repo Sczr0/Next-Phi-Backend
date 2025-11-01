@@ -15,6 +15,7 @@ use resvg::{
 };
 use image::codecs::jpeg::JpegEncoder;
 use image::ColorType;
+use image::imageops::FilterType;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
@@ -118,6 +119,54 @@ fn get_inverse_color_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, Stri
     INVERSE_COLOR_CACHE.get_or_init(|| {
         std::sync::Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap()))
     })
+}
+
+// 预缩放图片 Data URI 缓存（键包含源路径与目标尺寸）
+#[derive(Hash, Eq, PartialEq, Clone, Debug)]
+struct ScaledImageKey {
+    path: PathBuf,
+    w: u32,
+    h: u32,
+}
+
+static SCALED_IMAGE_CACHE: OnceLock<std::sync::Mutex<LruCache<ScaledImageKey, String>>> = OnceLock::new();
+const SCALED_IMAGE_CACHE_SIZE: usize = 256;
+
+fn get_scaled_image_cache() -> &'static std::sync::Mutex<LruCache<ScaledImageKey, String>> {
+    SCALED_IMAGE_CACHE.get_or_init(|| {
+        std::sync::Mutex::new(LruCache::new(NonZeroUsize::new(SCALED_IMAGE_CACHE_SIZE).unwrap()))
+    })
+}
+
+/// 将磁盘图片按给定尺寸进行等比裁剪填充（相当于 xMidYMid slice），再编码为 JPEG 并返回 Data URI。
+/// 结果加入 LRU 缓存以避免重复解码与缩放。
+fn get_scaled_image_data_uri(path: &Path, target_w: u32, target_h: u32) -> Option<String> {
+    if target_w == 0 || target_h == 0 {
+        return None;
+    }
+    let key = ScaledImageKey { path: path.to_path_buf(), w: target_w, h: target_h };
+    if let Ok(mut cache) = get_scaled_image_cache().lock() {
+        if let Some(uri) = cache.get(&key) {
+            return Some(uri.clone());
+        }
+    }
+
+    let speed = AppConfig::global().image.optimize_speed;
+    let filter = if speed { FilterType::Triangle } else { FilterType::Lanczos3 };
+    let img = image::open(path).ok()?;
+    let rgb = img.resize_to_fill(target_w, target_h, filter).to_rgb8();
+
+    let mut out = Vec::new();
+    let mut enc = JpegEncoder::new_with_quality(&mut out, 85);
+    if enc.encode(&rgb, target_w, target_h, ColorType::Rgb8.into()).is_err() {
+        return None;
+    }
+    let b64 = base64_engine.encode(out);
+    let uri = format!("data:image/jpeg;base64,{b64}");
+    if let Ok(mut cache) = get_scaled_image_cache().lock() {
+        cache.put(key, uri.clone());
+    }
+    Some(uri)
 }
 
 /// 初始化全局字体数据库
@@ -478,7 +527,9 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
     if let Some(href) = cover_href {
         let final_href = if embed_images {
             let pb = PathBuf::from(&href);
-            get_background_image(&pb).unwrap_or(href)
+            let w = cover_size_w.max(1.0).round() as u32;
+            let h = cover_size_h.max(1.0).round() as u32;
+            get_scaled_image_data_uri(&pb, w, h).unwrap_or(href)
         } else {
             href
         };
@@ -808,6 +859,16 @@ pub fn generate_svg_string(
             // 使用缓存函数获取背景图片
             if let Some(image_href) = get_image_href(random_path, embed_images) {
                 background_image_href = Some(image_href);
+                // 若需内嵌，则将背景预缩放为 Data URI，避免 resvg 进行大图缩放
+                if embed_images {
+                    if let Some(ref href_str) = background_image_href {
+                        if !href_str.starts_with("data:") {
+                            if let Some(uri) = get_scaled_image_data_uri(random_path, width as u32, total_height as u32) {
+                                background_image_href = Some(uri);
+                            }
+                        }
+                    }
+                }
                 tracing::info!("使用随机背景图: {}", random_path.display());
             } else {
                 tracing::error!("获取背景图片失败: {}", random_path.display());
@@ -944,6 +1005,11 @@ pub fn generate_svg_string(
     // --- Background ---
     // 如果找到了背景图，则使用<image>并应用模糊，否则使用原来的<rect>和渐变
     if let Some(href) = background_image_href {
+        // 预缩放并内嵌背景，减少 resvg 的解码与缩放开销
+        let href = if embed_images && !href.starts_with("data:") {
+            let p = Path::new(&href);
+            get_scaled_image_data_uri(p, width as u32, height as u32).unwrap_or(href)
+        } else { href };
         writeln!(svg,
             // 使用 href (Base64 data URI), preserveAspectRatio 保证图片覆盖并居中裁剪, filter 应用模糊
             r#"<image href="{href}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" filter="url(#bg-blur)" />"#
@@ -1777,6 +1843,12 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
 
     // 曲绘图片或占位矩形（移除单独的阴影）
     if let Some(href) = illust_href {
+        // 预缩放并内嵌曲绘，减少 resvg 的解码与缩放开销
+        let final_href = if embed_images && !href.starts_with("data:") {
+            let pb = PathBuf::from(&href);
+            get_scaled_image_data_uri(&pb, illust_width as u32, illust_height as u32).unwrap_or(href)
+        } else { href };
+        let href = final_href;
         writeln!(svg, r#"<image href="{}" x="{}" y="{}" width="{}" height="{}" clip-path="url(#{})" preserveAspectRatio="xMidYMid slice" />"#,
                  escape_xml(&href), illust_x, illust_y, illust_width, illust_height, illust_clip_id).map_err(fmt_err)?;
     } else {
