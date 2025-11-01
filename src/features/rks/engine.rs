@@ -45,6 +45,7 @@ pub struct PlayerRksResult {
 }
 
 /// 根据玩家成绩与定数表计算 B30 与总 RKS
+#[deprecated(note = "Use calculate_player_rks_simplified (简化法)")]
 pub fn calculate_player_rks(
     records: &HashMap<String, Vec<DifficultyRecord>>,
     chart_constants: &ChartConstantsMap,
@@ -129,6 +130,47 @@ pub fn calculate_player_rks(
         total_rks,
         b30_charts: picked,
     }
+}
+
+/// 根据玩家成绩与定数表计算 B30 与总 RKS（简化法：Best27 + AP3，允许重叠）
+pub fn calculate_player_rks_simplified(
+    records: &HashMap<String, Vec<DifficultyRecord>>,
+    chart_constants: &ChartConstantsMap,
+) -> PlayerRksResult {
+    // 收集所有有效谱面 RKS 与 AP 列表
+    let mut all_scores: Vec<ChartRankingScore> = Vec::new();
+    let mut phi_scores: Vec<ChartRankingScore> = Vec::new();
+
+    for (song_id, diffs) in records.iter() {
+        for rec in diffs {
+            let Some(consts) = chart_constants.get(song_id) else { continue; };
+            let Some(level) = level_for_difficulty(consts, &rec.difficulty) else { continue; };
+
+            let acc_percent = rec.accuracy as f64;
+            let acc_decimal = if acc_percent > 1.5 { acc_percent / 100.0 } else { acc_percent } as f32;
+            let rks_value = calculate_single_chart_rks(acc_decimal, level);
+            let entry = ChartRankingScore { song_id: song_id.clone(), difficulty: rec.difficulty.clone(), rks: rks_value };
+            all_scores.push(entry.clone());
+            if acc_percent >= 100.0 { phi_scores.push(entry); }
+        }
+    }
+
+    all_scores.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
+    phi_scores.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
+
+    const TOP_GENERAL: usize = 27;
+    const TOP_PHI: usize = 3;
+
+    // 简化法组成：Top27 + AP Top3（允许重叠）
+    let mut picked: Vec<ChartRankingScore> = all_scores.iter().take(TOP_GENERAL).cloned().collect();
+    let ap_top3: Vec<ChartRankingScore> = phi_scores.iter().take(TOP_PHI).cloned().collect();
+    picked.extend(ap_top3.iter().cloned());
+
+    let sum_best27: f64 = all_scores.iter().take(TOP_GENERAL).map(|c| c.rks).sum();
+    let sum_ap3: f64 = phi_scores.iter().take(TOP_PHI).map(|c| c.rks).sum();
+    let total_rks = (sum_best27 + sum_ap3) / 30.0;
+
+    PlayerRksResult { total_rks, b30_charts: picked }
 }
 
 fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f32> {

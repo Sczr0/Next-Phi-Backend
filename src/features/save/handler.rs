@@ -9,7 +9,7 @@ use axum::{
 use std::collections::HashMap;
 
 use crate::error::AppError;
-use crate::features::rks::engine::{PlayerRksResult, calculate_player_rks, calculate_single_chart_rks};
+use crate::features::rks::engine::{PlayerRksResult, calculate_player_rks_simplified as calculate_player_rks, calculate_single_chart_rks};
 use crate::state::AppState;
 
 use super::{
@@ -72,6 +72,29 @@ pub async fn get_save_data(
             storage.insert_submission(user_hash_ref, total_rks, rks_jump, "/save", None, None, suspicion, &now).await?;
             storage.upsert_leaderboard_rks(user_hash_ref, total_rks, user_kind.as_deref(), suspicion, hide, &now).await?;
             storage.upsert_details(user_hash_ref, rks_comp_json.as_deref(), best_top3_json.as_deref(), ap_top3_json.as_deref(), &now).await?;
+
+            // 默认在排行榜上展示：首次保存时创建公开资料
+            let cfg = crate::config::AppConfig::global();
+            if cfg.leaderboard.allow_public {
+                let def_rc = if cfg.leaderboard.default_show_rks_composition {1_i64} else {0_i64};
+                let def_b3 = if cfg.leaderboard.default_show_best_top3 {1_i64} else {0_i64};
+                let def_ap3 = if cfg.leaderboard.default_show_ap_top3 {1_i64} else {0_i64};
+                // 仅当不存在时创建公开行（不覆盖用户后续设置）
+                let _ = sqlx::query(
+                    "INSERT INTO user_profile(user_hash,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
+                     ON CONFLICT(user_hash) DO NOTHING"
+                )
+                .bind(user_hash_ref)
+                .bind(1_i64)
+                .bind(def_rc)
+                .bind(def_b3)
+                .bind(def_ap3)
+                .bind(user_kind.as_deref())
+                .bind(&now)
+                .bind(&now)
+                .execute(&storage.pool)
+                .await;
+            }
         }
     }
 
