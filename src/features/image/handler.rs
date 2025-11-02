@@ -280,17 +280,14 @@ pub async fn render_bn(
     let t_render = Instant::now();
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, req.embed_images)?;
     // 输出格式与宽度处理
-    let want_jpeg = matches!(q.format.as_deref(), Some("jpeg") | Some("jpg"));
-    let want_webp = matches!(q.format.as_deref(), Some("webp"));
-    let (bytes, content_type) = if want_jpeg {
-        (renderer::render_svg_to_jpeg(svg, false, q.width, 85)?, "image/jpeg")
-    } else if want_webp {
-        let quality = q.webp_quality.unwrap_or(80);
-        let lossless = q.webp_lossless.unwrap_or(false);
-        (renderer::render_svg_to_webp(svg, false, q.width, quality, lossless)?, "image/webp")
-    } else {
-        (renderer::render_svg_to_png_scaled(svg, false, q.width)?, "image/png")
-    };
+    let (bytes, content_type) = renderer::render_svg_unified(
+        svg,
+        false,
+        q.format.as_deref(),
+        q.width,
+        q.webp_quality,
+        q.webp_lossless,
+    )?;
     let render_ms = t_render.elapsed().as_millis() as i64;
 
     // 统计：BestN 图片生成（带用户去敏哈希 + 榜单歌曲ID列表 + 用户凭证类型）
@@ -312,7 +309,11 @@ pub async fn render_bn(
         if let Some(user_hash) = uh.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let theme_code = match req.theme { super::types::Theme::White => "w", super::types::Theme::Black => "b" };
-            let fmt_code = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
+            let fmt_code = match q.format.as_deref() {
+                Some("jpeg") | Some("jpg") => "jpg",
+                Some("webp") => "webp",
+                _ => "png",
+            };
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
             let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
@@ -324,7 +325,11 @@ pub async fn render_bn(
     // Basic render metrics (total time and permits)
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
-        let fmt_str = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
+        let fmt_str = match q.format.as_deref() {
+            Some("jpeg") | Some("jpg") => "jpg",
+            Some("webp") => "webp",
+            _ => "png",
+        };
         let evt = crate::features::stats::models::EventInsert{
             ts_utc: chrono::Utc::now(),
             route: Some("/image/bn".into()),
@@ -550,17 +555,14 @@ pub async fn render_song(
     let wait_ms2 = t_wait2.elapsed().as_millis() as i64;
     let t_render2 = Instant::now();
     let svg = renderer::generate_song_svg_string(&render_data, req.embed_images)?;
-    let want_jpeg = matches!(q.format.as_deref(), Some("jpeg") | Some("jpg"));
-    let want_webp = matches!(q.format.as_deref(), Some("webp"));
-    let (bytes, content_type) = if want_jpeg {
-        (renderer::render_svg_to_jpeg(svg, false, q.width, 85)?, "image/jpeg")
-    } else if want_webp {
-        let quality = q.webp_quality.unwrap_or(80);
-        let lossless = q.webp_lossless.unwrap_or(false);
-        (renderer::render_svg_to_webp(svg, false, q.width, quality, lossless)?, "image/webp")
-    } else {
-        (renderer::render_svg_to_png_scaled(svg, false, q.width)?, "image/png")
-    };
+    let (bytes, content_type) = renderer::render_svg_unified(
+        svg,
+        false,
+        q.format.as_deref(),
+        q.width,
+        q.webp_quality,
+        q.webp_lossless,
+    )?;
     let render_ms2 = t_render2.elapsed().as_millis() as i64;
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
@@ -578,7 +580,11 @@ pub async fn render_song(
         let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         if let Some(user_hash) = uh.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let fmt_code = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
+            let fmt_code = match q.format.as_deref() {
+                Some("jpeg") | Some("jpg") => "jpg",
+                Some("webp") => "webp",
+                _ => "png",
+            };
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
             let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
@@ -590,7 +596,11 @@ pub async fn render_song(
     // Basic render metrics (total)
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
-        let fmt_str = if want_jpeg { "jpg" } else if want_webp { "webp" } else { "png" };
+        let fmt_str = match q.format.as_deref() {
+            Some("jpeg") | Some("jpg") => "jpg",
+            Some("webp") => "webp",
+            _ => "png",
+        };
         let evt = crate::features::stats::models::EventInsert{
             ts_utc: chrono::Utc::now(),
             route: Some("/image/song".into()),
@@ -776,17 +786,14 @@ pub async fn render_bn_user(
     };
 
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, false)?;
-    let want_jpeg = matches!(q.format.as_deref(), Some("jpeg") | Some("jpg"));
-    let want_webp = matches!(q.format.as_deref(), Some("webp"));
-    let (bytes, content_type) = if want_jpeg {
-        (renderer::render_svg_to_jpeg(svg, implicit, q.width, 85)?, "image/jpeg")
-    } else if want_webp {
-        let quality = q.webp_quality.unwrap_or(80);
-        let lossless = q.webp_lossless.unwrap_or(false);
-        (renderer::render_svg_to_webp(svg, implicit, q.width, quality, lossless)?, "image/webp")
-    } else {
-        (renderer::render_svg_to_png_scaled(svg, implicit, q.width)?, "image/png")
-    };
+    let (bytes, content_type) = renderer::render_svg_unified(
+        svg,
+        implicit,
+        q.format.as_deref(),
+        q.width,
+        q.webp_quality,
+        q.webp_lossless,
+    )?;
 
     // 统计：用户自报 BestN 图片生成
     if let Some(stats_handle) = state.stats.as_ref() {

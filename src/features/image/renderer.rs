@@ -1008,7 +1008,7 @@ pub fn generate_svg_string(
         // 预缩放并内嵌背景，减少 resvg 的解码与缩放开销
         let href = if embed_images && !href.starts_with("data:") {
             let p = Path::new(&href);
-            get_scaled_image_data_uri(p, width as u32, height as u32).unwrap_or(href)
+            get_scaled_image_data_uri(p, width as u32, total_height as u32).unwrap_or(href)
         } else { href };
         writeln!(svg,
             // 使用 href (Base64 data URI), preserveAspectRatio 保证图片覆盖并居中裁剪, filter 应用模糊
@@ -1553,6 +1553,41 @@ pub fn render_svg_to_webp(
         Err(AppError::ImageRendererError(
             "WebP encoding is not available. Please enable the 'webp' feature for the image crate in Cargo.toml: image = { version = \"0.25\", features = [\"webp\"] }".to_string()
         ))
+    }
+}
+
+/// 统一的图片编码入口：根据 `format` 选择编码器，并返回字节与 Content-Type。
+///
+/// 参数：
+/// - format: "png" | "jpeg" | "jpg" | "webp"（大小写不敏感）
+/// - is_user_generated: 是否用户生成（用于隐式水印）
+/// - width: 目标宽度（可选）
+/// - webp_quality: WebP 质量（1-100，缺省 80）
+/// - webp_lossless: WebP 无损（缺省 false）
+pub fn render_svg_unified(
+    svg: String,
+    is_user_generated: bool,
+    format: Option<&str>,
+    width: Option<u32>,
+    webp_quality: Option<u8>,
+    webp_lossless: Option<bool>,
+) -> Result<(Vec<u8>, &'static str), AppError> {
+    let fmt = format.unwrap_or("png").to_ascii_lowercase();
+    match fmt.as_str() {
+        "jpeg" | "jpg" => {
+            let bytes = render_svg_to_jpeg(svg, is_user_generated, width, 85)?;
+            Ok((bytes, "image/jpeg"))
+        }
+        "webp" => {
+            let q = webp_quality.unwrap_or(80).clamp(1, 100);
+            let lossless = webp_lossless.unwrap_or(false);
+            let bytes = render_svg_to_webp(svg, is_user_generated, width, q, lossless)?;
+            Ok((bytes, "image/webp"))
+        }
+        _ => {
+            let bytes = render_svg_to_png_scaled(svg, is_user_generated, width)?;
+            Ok((bytes, "image/png"))
+        }
     }
 }
 
