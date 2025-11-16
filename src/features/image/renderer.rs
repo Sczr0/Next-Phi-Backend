@@ -456,7 +456,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         is_ap_score,
         pre_calculated_push_acc,
         all_engine_records,
-        theme: _theme,
+        theme,
         is_user_generated,
         embed_images,
     } = info;
@@ -681,25 +681,29 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
     let fc_ap_badge_height = 20.0;
     let fc_ap_badge_radius = 4.0;
     let fc_ap_badge_spacing = 5.0;
+    let (ap_badge_fill, fc_badge_fill, ap_text_fill, fc_text_fill) = match theme {
+        Theme::White => ("url(#ap-gradient-white)", "#4682B4", "white", "white"),
+        Theme::Black => ("url(#ap-gradient)", "#87CEEB", "white", "white"),
+    };
 
     if score.acc == 100.0 {
         // 仅显示 AP
         let ap_badge_x = badge_x + badge_width + fc_ap_badge_spacing;
         let ap_badge_y = badge_y;
-        let ap_badge_color = "gold";
+        let ap_badge_color = ap_badge_fill;
         writeln!(svg, r#"<rect x="{ap_badge_x}" y="{ap_badge_y:.1}" width="{fc_ap_badge_width:.1}" height="{fc_ap_badge_height:.1}" rx="{fc_ap_badge_radius:.1}" ry="{fc_ap_badge_radius:.1}" fill="{ap_badge_color}" />"#).map_err(fmt_err)?;
         let ap_badge_text_x = ap_badge_x + fc_ap_badge_width / 2.0;
         let ap_badge_text_y = ap_badge_y + fc_ap_badge_height / 2.0 + 5.0;
-        writeln!(svg, r#"<text x="{ap_badge_text_x:.1}" y="{ap_badge_text_y:.1}" class="text-fc-ap-badge" text-anchor="middle" fill="black">AP</text>"#).map_err(fmt_err)?;
+        writeln!(svg, r#"<text x="{ap_badge_text_x:.1}" y="{ap_badge_text_y:.1}" class="text-fc-ap-badge" text-anchor="middle" fill="{ap_text_fill}">AP</text>"#).map_err(fmt_err)?;
     } else if score.is_fc {
         // 仅显示 FC
         let fc_badge_x = badge_x + badge_width + fc_ap_badge_spacing;
         let fc_badge_y = badge_y;
-        let fc_badge_color = "#4682B4";
+        let fc_badge_color = fc_badge_fill;
         writeln!(svg, r#"<rect x="{fc_badge_x}" y="{fc_badge_y:.1}" width="{fc_ap_badge_width:.1}" height="{fc_ap_badge_height:.1}" rx="{fc_ap_badge_radius:.1}" ry="{fc_ap_badge_radius:.1}" fill="{fc_badge_color}" />"#).map_err(fmt_err)?;
         let fc_badge_text_x = fc_badge_x + fc_ap_badge_width / 2.0;
         let fc_badge_text_y = fc_badge_y + fc_ap_badge_height / 2.0 + 5.0;
-        writeln!(svg, r#"<text x="{fc_badge_text_x:.1}" y="{fc_badge_text_y:.1}" class="text-fc-ap-badge" text-anchor="middle" fill="white">FC</text>"#).map_err(fmt_err)?;
+        writeln!(svg, r#"<text x="{fc_badge_text_x:.1}" y="{fc_badge_text_y:.1}" class="text-fc-ap-badge" text-anchor="middle" fill="{fc_text_fill}">FC</text>"#).map_err(fmt_err)?;
     }
 
     // 恢复等级和RKS的简单字符串拼接
@@ -714,12 +718,11 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
     // Rank (Only for main scores, not AP)
     if !is_ap_card {
         let rank_text = format!("#{}", index + 1);
-        // 将坐标改回右下角
         writeln!(
             svg,
             r#"<text x="{}" y="{:.1}" class="text-rank">{}</text>"#,
             (card_width as f64) - card_padding,
-            level_y,
+            level_y + 2.0,
             rank_text
         )
         .map_err(fmt_err)?;
@@ -786,11 +789,11 @@ pub fn generate_svg_string(
         ap_stroke_color,
     ) = match theme {
         Theme::White => (
-            "#FFFFFF",
+            "#F7FAFF",
             "#000000",
-            "#F0F0F0",
-            "#DDDDDD",
-            "#666666",
+            "#ECEFF4",
+            "#D0D4DD",
+            "#555555",
             "#4682B4",
             "url(#ap-gradient)",
         ),
@@ -889,7 +892,7 @@ pub fn generate_svg_string(
     // Background Gradient (Fallback)
     match theme {
         Theme::White => {
-            writeln!(svg, r#"<linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#FFFFFF" /><stop offset="100%" style="stop-color:#F0F0F0" /></linearGradient>"#).map_err(fmt_err)?;
+            writeln!(svg, r#"<linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#F7FAFF" /><stop offset="100%" style="stop-color:#ECEFF4" /></linearGradient>"#).map_err(fmt_err)?;
         }
         Theme::Black => {
             writeln!(svg, r#"<linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#141826" /><stop offset="100%" style="stop-color:#252E48" /></linearGradient>"#).map_err(fmt_err)?;
@@ -942,13 +945,13 @@ pub fn generate_svg_string(
         .text-title {{ font-size: 34px; fill: {text_color}; /* font-weight: bold; */ text-shadow: 0px 2px 4px rgba(0, 0, 0, 0.4); }}
         .text-stat {{ font-size: 21px; fill: {text_color}; }}
         .text-info {{ font-size: 16px; fill: {text_secondary_color}; text-anchor: end; }} /* For new info */
-        .text-time {{ font-size: 14px; fill: {text_secondary_color}; text-anchor: end; }}
-        .text-footer {{ font-size: 13px; fill: {text_secondary_color}; }}
+        .text-time {{ font-size: 15px; fill: {text_secondary_color}; text-anchor: end; }}
+        .text-footer {{ font-size: 14px; fill: {text_secondary_color}; }}
         .text-songname {{ font-size: 20px; fill: {text_color}; font-weight: 600; }}
         .text-score {{ font-size: 30px; fill: {text_color}; font-weight: 700; }}
-        .text-acc {{ font-size: 14px; fill: #999999; font-weight: 400; }}
-        .text-level {{ font-size: 14px; fill: #999999; font-weight: 400; }}
-        .text-rank {{ font-size: 14px; fill: #AAAAAA; font-weight: 400; text-anchor: end; }}
+        .text-acc {{ font-size: 14px; fill: {text_secondary_color}; font-weight: 400; }}
+        .text-level {{ font-size: 14px; fill: {text_secondary_color}; font-weight: 400; }}
+        .text-rank {{ font-size: 15px; fill: {text_secondary_color}; font-weight: 500; text-anchor: end; }}
         .text-difficulty-badge {{ font-size: 12px; font-weight: 700; }} /* 难度标签文本样式 */
         .text-fc-ap-badge {{ font-size: 11px; font-weight: 700; }} /* FC/AP标签文本样式 */
         .push-acc {{ fill: #4CAF50; font-weight: 600; }}
@@ -1014,7 +1017,7 @@ pub fn generate_svg_string(
             Theme::White => {
                 writeln!(
                     svg,
-                    r#"<rect width="100%" height="100%" fill="rgba(255, 255, 255, 0.7)" />"#
+                    r#"<rect width="100%" height="100%" fill="rgba(247, 250, 255, 0.78)" />"#
                 )
                 .map_err(fmt_err)?;
             }
