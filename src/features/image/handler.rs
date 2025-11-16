@@ -71,6 +71,10 @@ pub async fn render_bn(
     // 存档获取耗时（含认证源构造 + 解密）
     let t_save = Instant::now();
     let source = to_save_source(&req.auth)?;
+    let auth_duration = t_auth_start.elapsed();
+    tracing::info!(target: "bestn_performance", "用户凭证验证完成，耗时: {:?}ms", auth_duration.as_millis());
+    
+    let t_save_start = Instant::now();
     let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
     let save_ms = t_save.elapsed().as_millis() as i64;
@@ -83,9 +87,11 @@ pub async fn render_bn(
     }
 
     // Cache hit/miss 事件 + 快速返回
+    let t_cache_start = Instant::now();
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash_for_cache, user_kind_for_cache) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+    let mut cache_hit = false;
     if cache_enabled {
         if let Some(user_hash) = user_hash_for_cache.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
@@ -100,6 +106,10 @@ pub async fn render_bn(
             let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
             let key = format!("{}:bn:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, req.n.max(1), updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
             if let Some(p) = state.bn_image_cache.get(&key).await {
+                cache_hit = true;
+                let cache_duration = t_cache_start.elapsed();
+                tracing::info!(target: "bestn_performance", "缓存命中，缓存键: {}, 耗时: {:?}ms", key, cache_duration.as_millis());
+                
                 if let Some(h) = state.stats.as_ref() {
                     let total_ms = t_total.elapsed().as_millis() as i64;
                     let evt = crate::features::stats::models::EventInsert {
@@ -139,8 +149,15 @@ pub async fn render_bn(
                     _ => "image/png"
                 };
                 headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+                
+                let total_duration = t_total.elapsed();
+                tracing::info!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
                 return Ok((StatusCode::OK, headers, (*p).clone()));
-            } else if let Some(h) = state.stats.as_ref() {
+            } else {
+                let cache_duration = t_cache_start.elapsed();
+                tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}, 耗时: {:?}ms", key, cache_duration.as_millis());
+            }
+            if let Some(h) = state.stats.as_ref() {
                 let evt = crate::features::stats::models::EventInsert {
                     ts_utc: chrono::Utc::now(),
                     route: Some("/image/bn".into()),
@@ -198,11 +215,20 @@ pub async fn render_bn(
         }
     }
 
+    let data_process_duration = t_data_start.elapsed();
+    let data_record_count = all.len();
+    tracing::info!(target: "bestn_performance", "数据扁平化完成，记录数: {}, 耗时: {:?}ms", data_record_count, data_process_duration.as_millis());
+
+    let t_sort_start = Instant::now();
     // 按 RKS 降序
     all.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
+    let sort_duration = t_sort_start.elapsed();
+    
     let n = req.n.max(1);
     let top: Vec<RenderRecord> = all.iter().take(n as usize).cloned().collect();
+    tracing::info!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
 
+    let t_push_start = Instant::now();
     // 预计算推分 ACC
     let mut push_acc_map: HashMap<String, f64> = HashMap::new();
     let engine_all: Vec<crate::features::rks::engine::RksRecord> = all.iter().filter_map(to_engine_record).collect();
@@ -212,6 +238,8 @@ pub async fn render_bn(
             push_acc_map.insert(key, v);
         }
     }
+    let push_acc_duration = t_push_start.elapsed();
+    tracing::info!(target: "bestn_performance", "推分ACC计算完成，计算数量: {}, 耗时: {:?}ms", push_acc_map.len(), push_acc_duration.as_millis());
 
     let flatten_ms = t_flatten.elapsed().as_millis() as i64;
 
@@ -220,8 +248,12 @@ pub async fn render_bn(
     let ap_scores: Vec<_> = all.iter().filter(|r| r.acc >= 100.0).take(3).collect();
     let ap_top_3_avg = if ap_scores.len() == 3 { Some(ap_scores.iter().map(|r| r.rks).sum::<f64>()/3.0) } else { None };
     let best_27_avg = if all.is_empty() { None } else { Some(all.iter().take(27).map(|r| r.rks).sum::<f64>() / (all.len().min(27) as f64)) };
+    let stats_duration = t_stats_start.elapsed();
+    tracing::info!(target: "bestn_performance", "统计数据计算完成，精确RKS: {:?}, AP Top3: {:?}, Best27: {:?}, 耗时: {:?}ms", 
+                   exact_rks, ap_top_3_avg, best_27_avg, stats_duration.as_millis());
 
     // 课题模式等级（优先使用 summaryParsed，其次使用 gameProgress.challengeModeRank）
+    let t_challenge_start = Instant::now();
     let challenge_rank = if let Some(sum) = parsed.summary_parsed.as_ref() {
         Some(sum.challenge_mode_rank as i64)
     } else {
@@ -245,7 +277,10 @@ pub async fn render_bn(
         };
         Some((color.to_string(), level_str.to_string()))
     });
+    let challenge_duration = t_challenge_start.elapsed();
+    tracing::info!(target: "bestn_performance", "挑战等级解析完成: {:?}, 耗时: {:?}ms", challenge_rank, challenge_duration.as_millis());
 
+    let t_data_string_start = Instant::now();
     // Data 数（money）展示
     let data_string = parsed
         .game_progress
@@ -261,14 +296,20 @@ pub async fn render_bn(
             parts.reverse();
             if parts.is_empty() { None } else { Some(format!("Data: {}", parts.join(", "))) }
         });
+    let data_string_duration = t_data_string_start.elapsed();
+    tracing::info!(target: "bestn_performance", "Data字符串解析完成: {:?}, 耗时: {:?}ms", data_string, data_string_duration.as_millis());
 
+    let t_time_start = Instant::now();
     let update_time: DateTime<Utc> = parsed
         .updated_at
         .as_deref()
         .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
         .map(|dt| dt.with_timezone(&Utc))
         .unwrap_or_else(Utc::now);
+    let time_parse_duration = t_time_start.elapsed();
+    tracing::info!(target: "bestn_performance", "更新时间解析完成, 耗时: {:?}ms", time_parse_duration.as_millis());
 
+    let t_nickname_start = Instant::now();
     // 优先级：请求体昵称 > users/me 昵称 > 默认
     let mut nickname_ms: i64 = 0;
     let display_name = if let Some(n) = req.nickname.clone() {
@@ -281,6 +322,8 @@ pub async fn render_bn(
     } else {
         "Phigros Player".into()
     };
+    let nickname_duration = t_nickname_start.elapsed();
+    tracing::info!(target: "bestn_performance", "昵称获取完成: {}, 耗时: {:?}ms", display_name, nickname_duration.as_millis());
 
     let stats = PlayerStats {
         ap_top_3_avg,
@@ -297,6 +340,7 @@ pub async fn render_bn(
     };
 
     // 等待许可与渲染分段计时
+    let t_semaphore_start = Instant::now();
     let sem = state.render_semaphore.clone();
     let permits_avail = sem.available_permits() as i64;
     let t_wait = Instant::now();
@@ -305,8 +349,17 @@ pub async fn render_bn(
         .await
         .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
     let wait_ms = t_wait.elapsed().as_millis() as i64;
-    let t_render = Instant::now();
+    let semaphore_duration = t_semaphore_start.elapsed();
+    tracing::info!(target: "bestn_performance", "信号量获取完成，可用许可: {}, 等待时间: {:?}ms, 总获取时间: {:?}ms", 
+                   permits_avail, wait_ms, semaphore_duration.as_millis());
+
+    let t_svg_start = Instant::now();
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, req.embed_images)?;
+    let svg_duration = t_svg_start.elapsed();
+    let svg_size = svg.len();
+    tracing::info!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
+
+    let t_render_start = Instant::now();
     // 输出格式与宽度处理
     let (bytes, content_type) = renderer::render_svg_unified_async(
         svg,
@@ -316,8 +369,13 @@ pub async fn render_bn(
         q.webp_quality,
         q.webp_lossless,
     ).await?;
-    let render_ms = t_render.elapsed().as_millis() as i64;
+    let render_duration = t_render_start.elapsed();
+    let render_ms = render_duration.as_millis() as i64;
+    let bytes_len = bytes.len();
+    tracing::info!(target: "bestn_performance", "图片渲染完成，输出格式: {}, 字节大小: {}, 耗时: {:?}ms", 
+                   content_type, bytes_len, render_duration.as_millis());
 
+    let t_cache_start = Instant::now();
     // 统计：BestN 图片生成（带用户去敏哈希 + 榜单歌曲ID列表 + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
         let salt = crate::config::AppConfig::global().stats.user_hash_salt.as_deref();
@@ -331,10 +389,12 @@ pub async fn render_bn(
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
 
     // Cache put
+    let mut cache_put_duration = None;
     if AppConfig::global().image.cache_enabled {
         let salt = AppConfig::global().stats.user_hash_salt.as_deref();
         let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         if let Some(user_hash) = uh.as_ref() {
+            let t_cache_put = Instant::now();
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let theme_code = match req.theme { super::types::Theme::White => "w", super::types::Theme::Black => "b" };
             let fmt_code = match q.format.as_deref() {
@@ -347,7 +407,11 @@ pub async fn render_bn(
             let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
             let key = format!("{}:bn:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, n, updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
             state.bn_image_cache.insert(key, std::sync::Arc::new(bytes.clone())).await;
+            cache_put_duration = Some(t_cache_put.elapsed());
         }
+    }
+    if let Some(cache_dur) = cache_put_duration {
+        tracing::info!(target: "bestn_performance", "缓存存储完成，耗时: {:?}ms", cache_dur.as_millis());
     }
 
     // Basic render metrics (total time and key阶段耗时)
