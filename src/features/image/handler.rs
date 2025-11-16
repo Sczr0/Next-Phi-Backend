@@ -10,6 +10,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use std::time::Instant;
+use tracing::debug;
 
 use crate::{
     error::AppError,
@@ -65,10 +66,14 @@ pub async fn render_bn(
     Query(q): Query<ImageQueryOpts>,
     Json(req): Json<RenderBnRequest>,
 ) -> Result<impl IntoResponse, AppError> {
-    let t_total = std::time::Instant::now();
+    // 全流程计时：从请求进入到返回响应
+    let t_total = Instant::now();
+    // 存档获取耗时（含认证源构造 + 解密）
+    let t_save = Instant::now();
     let source = to_save_source(&req.auth)?;
     let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
+    let save_ms = t_save.elapsed().as_millis() as i64;
 
     // 参数验证：webp_quality 范围
     if let Some(quality) = q.webp_quality {
@@ -96,6 +101,7 @@ pub async fn render_bn(
             let key = format!("{}:bn:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, req.n.max(1), updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
             if let Some(p) = state.bn_image_cache.get(&key).await {
                 if let Some(h) = state.stats.as_ref() {
+                    let total_ms = t_total.elapsed().as_millis() as i64;
                     let evt = crate::features::stats::models::EventInsert {
                         ts_utc: chrono::Utc::now(),
                         route: Some("/image/bn".into()),
@@ -103,13 +109,28 @@ pub async fn render_bn(
                         action: Some("bn_hit".into()),
                         method: Some("POST".into()),
                         status: None,
-                        duration_ms: None,
+                        duration_ms: Some(total_ms),
                         user_hash: Some(user_hash.clone()),
                         client_ip_hash: None,
                         instance: None,
-                        extra_json: Some(serde_json::json!({ "cached": true, "user_kind": user_kind_for_cache })),
+                        extra_json: Some(serde_json::json!({
+                            "cached": true,
+                            "user_kind": user_kind_for_cache,
+                            "fmt": fmt_code,
+                            "width": width_code,
+                            "webp_quality": webp_quality_code,
+                            "webp_lossless": webp_lossless_code
+                        })),
                     };
                     h.track(evt).await;
+                    // 日志：BestN 缓存命中耗时
+                    debug!(
+                        target: "phi_backend::image::bn",
+                        total_ms,
+                        fmt = fmt_code,
+                        width = width_code,
+                        "BestN 图片缓存命中，整体耗时 {total_ms}ms"
+                    );
                 }
                 let mut headers = axum::http::HeaderMap::new();
                 let content_type = match fmt_code {
@@ -138,7 +159,8 @@ pub async fn render_bn(
         }
     }
 
-    // 扁平化为渲染记录
+    // 扁平化为渲染记录 + 排序与推分预计算耗时
+    let t_flatten = Instant::now();
     let mut all: Vec<RenderRecord> = Vec::new();
     for (song_id, diffs) in parsed.game_record.iter() {
         // 查定数与曲名
@@ -191,7 +213,9 @@ pub async fn render_bn(
         }
     }
 
-    // 统计
+    let flatten_ms = t_flatten.elapsed().as_millis() as i64;
+
+    // 统计计算：RKS 详情与平均值
     let (exact_rks, _rounded) = crate::features::rks::engine::calculate_player_rks_details(&engine_all);
     let ap_scores: Vec<_> = all.iter().filter(|r| r.acc >= 100.0).take(3).collect();
     let ap_top_3_avg = if ap_scores.len() == 3 { Some(ap_scores.iter().map(|r| r.rks).sum::<f64>()/3.0) } else { None };
@@ -246,10 +270,14 @@ pub async fn render_bn(
         .unwrap_or_else(Utc::now);
 
     // 优先级：请求体昵称 > users/me 昵称 > 默认
+    let mut nickname_ms: i64 = 0;
     let display_name = if let Some(n) = req.nickname.clone() {
         n
     } else if let Some(token) = req.auth.session_token.clone() {
-        fetch_nickname(&token).await.unwrap_or_else(|| "Phigros Player".into())
+        let t_nick = Instant::now();
+        let name = fetch_nickname(&token).await.unwrap_or_else(|| "Phigros Player".into());
+        nickname_ms = t_nick.elapsed().as_millis() as i64;
+        name
     } else {
         "Phigros Player".into()
     };
@@ -322,9 +350,10 @@ pub async fn render_bn(
         }
     }
 
-    // Basic render metrics (total time and permits)
+    // Basic render metrics (total time and key阶段耗时)
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
+        let logic_ms = total_ms.saturating_sub(save_ms).saturating_sub(render_ms);
         let fmt_str = match q.format.as_deref() {
             Some("jpeg") | Some("jpg") => "jpg",
             Some("webp") => "webp",
@@ -341,9 +370,34 @@ pub async fn render_bn(
             user_hash: None,
             client_ip_hash: None,
             instance: None,
-            extra_json: Some(serde_json::json!({"permits_avail": permits_avail, "wait_ms": wait_ms, "render_ms": render_ms, "bytes": bytes.len(), "fmt": fmt_str, "width": q.width})),
+            extra_json: Some(serde_json::json!({
+                "permits_avail": permits_avail,
+                "save_ms": save_ms,
+                "flatten_ms": flatten_ms,
+                "logic_ms": logic_ms,
+                "nickname_ms": nickname_ms,
+                "wait_ms": wait_ms,
+                "render_ms": render_ms,
+                "bytes": bytes.len(),
+                "fmt": fmt_str,
+                "width": q.width,
+            })),
         };
         h.track(evt).await;
+        // 日志：BestN 渲染全过程耗时
+        debug!(
+            target: "phi_backend::image::bn",
+            total_ms,
+            save_ms,
+            flatten_ms,
+            logic_ms,
+            nickname_ms,
+            wait_ms,
+            render_ms,
+            fmt = fmt_str,
+            width = ?q.width,
+            "BestN 渲染耗时统计：total={total_ms}ms, save={save_ms}ms, flatten={flatten_ms}ms, logic={logic_ms}ms, wait={wait_ms}ms, render={render_ms}ms"
+        );
     }
     Ok((StatusCode::OK, headers, bytes))
 }
