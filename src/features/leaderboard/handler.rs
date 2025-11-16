@@ -462,7 +462,11 @@ pub async fn get_public_profile(State(state): State<AppState>, Path(alias): Path
 // ============ Admin endpoints (X-Admin-Token) ============
 
 pub(crate) fn require_admin(headers: &HeaderMap) -> Result<String, AppError> {
-    let provided = headers.get("x-admin-token").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let provided = headers
+        .get("x-admin-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .trim();
     if provided.is_empty() { return Err(AppError::Auth("缺少管理员令牌".into())); }
     let cfg = crate::config::AppConfig::global();
     let ok = cfg.leaderboard.admin_tokens.iter().any(|t| t.trim() == provided);
@@ -613,7 +617,10 @@ mod tests {
 
     #[test]
     fn test_require_admin_env() {
+        // 使用环境变量配置管理员令牌，并初始化全局配置，避免未初始化导致的 panic
         unsafe { std::env::set_var("APP_LEADERBOARD_ADMIN_TOKENS", "t1,t2"); }
+        let _ = crate::config::AppConfig::init_global();
+
         let mut headers = HeaderMap::new();
         headers.insert("x-admin-token", axum::http::HeaderValue::from_static("t2"));
         assert!(require_admin(&headers).is_ok());

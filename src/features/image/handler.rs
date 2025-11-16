@@ -70,11 +70,11 @@ pub async fn render_bn(
     let t_total = Instant::now();
     // 存档获取耗时（含认证源构造 + 解密）
     let t_save = Instant::now();
+    let t_auth_start = Instant::now();
     let source = to_save_source(&req.auth)?;
     let auth_duration = t_auth_start.elapsed();
     tracing::info!(target: "bestn_performance", "用户凭证验证完成，耗时: {:?}ms", auth_duration.as_millis());
     
-    let t_save_start = Instant::now();
     let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
     let save_ms = t_save.elapsed().as_millis() as i64;
@@ -215,7 +215,7 @@ pub async fn render_bn(
         }
     }
 
-    let data_process_duration = t_data_start.elapsed();
+    let data_process_duration = t_flatten.elapsed();
     let data_record_count = all.len();
     tracing::info!(target: "bestn_performance", "数据扁平化完成，记录数: {}, 耗时: {:?}ms", data_record_count, data_process_duration.as_millis());
 
@@ -242,6 +242,7 @@ pub async fn render_bn(
     tracing::info!(target: "bestn_performance", "推分ACC计算完成，计算数量: {}, 耗时: {:?}ms", push_acc_map.len(), push_acc_duration.as_millis());
 
     let flatten_ms = t_flatten.elapsed().as_millis() as i64;
+    let t_stats_start = Instant::now();
 
     // 统计计算：RKS 详情与平均值
     let (exact_rks, _rounded) = crate::features::rks::engine::calculate_player_rks_details(&engine_all);

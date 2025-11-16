@@ -507,7 +507,16 @@ impl LeaderboardConfig {
     fn default_show_rc() -> bool { true }
     fn default_show_b3() -> bool { true }
     fn default_show_ap3() -> bool { true }
-    fn default_admin_tokens() -> Vec<String> { Vec::new() }
+    fn default_admin_tokens() -> Vec<String> {
+        if let Ok(raw) = std::env::var("APP_LEADERBOARD_ADMIN_TOKENS") {
+            return raw
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        Vec::new()
+    }
 }
 
 impl Default for LeaderboardConfig {
