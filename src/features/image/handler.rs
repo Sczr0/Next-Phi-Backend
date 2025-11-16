@@ -280,14 +280,14 @@ pub async fn render_bn(
     let t_render = Instant::now();
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, req.embed_images)?;
     // 输出格式与宽度处理
-    let (bytes, content_type) = renderer::render_svg_unified(
+    let (bytes, content_type) = renderer::render_svg_unified_async(
         svg,
         false,
         q.format.as_deref(),
         q.width,
         q.webp_quality,
         q.webp_lossless,
-    )?;
+    ).await?;
     let render_ms = t_render.elapsed().as_millis() as i64;
 
     // 统计：BestN 图片生成（带用户去敏哈希 + 榜单歌曲ID列表 + 用户凭证类型）
@@ -555,14 +555,14 @@ pub async fn render_song(
     let wait_ms2 = t_wait2.elapsed().as_millis() as i64;
     let t_render2 = Instant::now();
     let svg = renderer::generate_song_svg_string(&render_data, req.embed_images)?;
-    let (bytes, content_type) = renderer::render_svg_unified(
+    let (bytes, content_type) = renderer::render_svg_unified_async(
         svg,
         false,
         q.format.as_deref(),
         q.width,
         q.webp_quality,
         q.webp_lossless,
-    )?;
+    ).await?;
     let render_ms2 = t_render2.elapsed().as_millis() as i64;
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
@@ -786,14 +786,14 @@ pub async fn render_bn_user(
     };
 
     let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, false)?;
-    let (bytes, content_type) = renderer::render_svg_unified(
+    let (bytes, content_type) = renderer::render_svg_unified_async(
         svg,
         implicit,
         q.format.as_deref(),
         q.width,
         q.webp_quality,
         q.webp_lossless,
-    )?;
+    ).await?;
 
     // 统计：用户自报 BestN 图片生成
     if let Some(stats_handle) = state.stats.as_ref() {

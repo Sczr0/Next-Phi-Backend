@@ -16,6 +16,7 @@ use resvg::{
 use image::codecs::jpeg::JpegEncoder;
 use image::ColorType;
 use image::imageops::FilterType;
+use tokio::task::spawn_blocking;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
@@ -202,85 +203,104 @@ pub fn get_global_font_db() -> Arc<fontdb::Database> {
 
 /// 初始化背景图片缓存和封面文件列表
 fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
-    tracing::info!("初始化背景图片缓存和封面文件列表");
+      tracing::info!("初始化背景图片缓存和封面文件列表");
 
-    // 初始化 LRU 缓存
-    let cache = std::sync::Mutex::new(LruCache::new(
-        NonZeroUsize::new(BACKGROUND_CACHE_SIZE).unwrap(),
-    ));
+      // 初始 LRU 缓存（用于缓存背景图 data URI）
+      let cache = std::sync::Mutex::new(LruCache::new(
+          NonZeroUsize::new(BACKGROUND_CACHE_SIZE).unwrap(),
+      ));
 
-    // 初始化封面元数据缓存
-    let _metadata_cache = std::sync::Mutex::new(HashMap::<String, String>::with_capacity(
-        COVER_METADATA_CACHE_SIZE,
-    ));
+      // 封面元数据缓存：song_id -> 封面绝对路径
+      let mut metadata_map =
+          HashMap::<String, String>::with_capacity(COVER_METADATA_CACHE_SIZE);
 
-    // 读取封面目录下的所有图片文件（包括 ill 和 illBlur 目录）
-    let mut cover_files = Vec::new();
+      // 读取封面目录下的所有图片文件（包括 ill / illLow / illBlur 目录）
+      let mut cover_files = Vec::new();
 
-    // 读取 ill 目录
-    let cover_base_path = cover_loader::covers_dir().join("ill");
-    match fs::read_dir(&cover_base_path) {
-        Ok(entries) => {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if path.is_file()
-                    && (path.extension() == Some("png".as_ref())
-                        || path.extension() == Some("jpg".as_ref()))
-                {
-                    cover_files.push(path);
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!("读取封面目录失败 '{}': {}", cover_base_path.display(), e);
-        }
-    }
+      // 读取 ill 目录（标准封面）
+      let cover_base_path = cover_loader::covers_dir().join("ill");
+      match fs::read_dir(&cover_base_path) {
+          Ok(entries) => {
+              for entry in entries.flatten() {
+                  let path = entry.path();
+                  if path.is_file()
+                      && (path.extension() == Some("png".as_ref())
+                          || path.extension() == Some("jpg".as_ref()))
+                  {
+                      if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                          // 先记录标准封面，后续 illLow 可按需覆盖
+                          metadata_map
+                              .entry(stem.to_string())
+                              .or_insert_with(|| path.to_string_lossy().to_string());
+                      }
+                      cover_files.push(path);
+                  }
+              }
+          }
+          Err(e) => {
+              tracing::error!("读取封面目录失败 '{}': {}", cover_base_path.display(), e);
+          }
+      }
 
-    // 读取 illBlur 目录（背景图片）
-    let background_base_path = cover_loader::covers_dir().join("illBlur");
-    match fs::read_dir(&background_base_path) {
-        Ok(entries) => {
-            for entry in entries.filter_map(|e| e.ok()) {
-                let path = entry.path();
-                if path.is_file()
-                    && (path.extension() == Some("png".as_ref())
-                        || path.extension() == Some("jpg".as_ref()))
-                {
-                    cover_files.push(path);
-                }
-            }
-        }
-        Err(e) => {
-            tracing::error!(
-                "读取背景目录失败 '{}': {}",
-                background_base_path.display(),
-                e
-            );
-        }
-    }
+      // 读取 illLow 目录（低分辨率封面，优先级更高：覆盖 ill）
+      let cover_low_base_path = cover_loader::covers_dir().join("illLow");
+      match fs::read_dir(&cover_low_base_path) {
+          Ok(entries) => {
+              for entry in entries.flatten() {
+                  let path = entry.path();
+                  if path.is_file()
+                      && (path.extension() == Some("png".as_ref())
+                          || path.extension() == Some("jpg".as_ref()))
+                  {
+                      if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                          metadata_map.insert(
+                              stem.to_string(),
+                              path.to_string_lossy().to_string(),
+                          );
+                      }
+                      cover_files.push(path);
+                  }
+              }
+          }
+          Err(e) => {
+              tracing::warn!(
+                  "读取低分辨率封面目录失败 '{}': {}",
+                  cover_low_base_path.display(),
+                  e
+              );
+          }
+      }
 
-    tracing::info!("初始化完成，共找到 {} 个封面文件", cover_files.len());
+      // 读取 illBlur 目录（背景图片，只参与随机背景，不写入 metadata_map）
+      let background_base_path = cover_loader::covers_dir().join("illBlur");
+      match fs::read_dir(&background_base_path) {
+          Ok(entries) => {
+              for entry in entries.flatten() {
+                  let path = entry.path();
+                  if path.is_file()
+                      && (path.extension() == Some("png".as_ref())
+                          || path.extension() == Some("jpg".as_ref()))
+                  {
+                      cover_files.push(path);
+                  }
+              }
+          }
+          Err(e) => {
+              tracing::error!(
+                  "读取背景目录失败 '{}': {}",
+                  background_base_path.display(),
+                  e
+              );
+          }
+      }
 
-    // 预构建封面元数据，避免运行时文件系统调用
-    let mut metadata_map = HashMap::new();
-    for cover_path in &cover_files {
-        if let Some(song_id) = cover_path.file_name().and_then(|name| name.to_str()) {
-            if let Some(song_id) = song_id.split('.').next() {
-                metadata_map.insert(
-                    song_id.to_string(),
-                    cover_path.to_string_lossy().to_string(),
-                );
-            }
-        }
-    }
+      tracing::info!("初始化完成，共找到 {} 个封面文件", cover_files.len());
 
-    // 不再创建 HashSet，直接使用 metadata_map 进行查找以节省内存
-
-    (
-        cache,
-        cover_files,
-        std::sync::Mutex::new(metadata_map),
-    )
+      (
+          cache,
+          cover_files,
+          std::sync::Mutex::new(metadata_map),
+      )
 }
 
 /// 背景和封面缓存的类型别名
@@ -396,14 +416,12 @@ fn to_engine_record(record: &RenderRecord) -> Option<engine::RksRecord> {
 fn calculate_push_acc(
     target_chart_id: &str,
     difficulty_value: f64,
-    records: &[RenderRecord],
+    engine_records: &[engine::RksRecord],
 ) -> Option<f64> {
-    let engine_records: Vec<engine::RksRecord> =
-        records.iter().filter_map(to_engine_record).collect();
     if engine_records.is_empty() {
         return None;
     }
-    engine::calculate_target_chart_push_acc(target_chart_id, difficulty_value, &engine_records)
+    engine::calculate_target_chart_push_acc(target_chart_id, difficulty_value, engine_records)
 }
 
 // Helper function to generate a single score card SVG group
@@ -417,7 +435,7 @@ struct CardRenderInfo<'a> {
     is_ap_card: bool,
     is_ap_score: bool,
     pre_calculated_push_acc: Option<f64>,
-    all_sorted_records: &'a [RenderRecord],
+    all_engine_records: &'a [engine::RksRecord],
     theme: &'a Theme,
     is_user_generated: bool, // 新增
     embed_images: bool,
@@ -437,7 +455,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         is_ap_card,
         is_ap_score,
         pre_calculated_push_acc,
-        all_sorted_records,
+        all_engine_records,
         theme: _theme,
         is_user_generated,
         embed_images,
@@ -491,38 +509,10 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
     // Cover Image or Placeholder
     // 使用预构建的封面元数据缓存，避免运行时文件系统调用
     let metadata_cache = get_cover_metadata_cache();
-    let cover_href = metadata_cache
-        .lock()
-        .unwrap()
-        .get(&score.song_id)
-        .cloned()
-        .or_else(|| {
-            // 回退检查：尝试从缓存文件列表中查找（直接使用文件系统检查，避免HashSet内存占用）
-            let cover_path_low_png = cover_loader::covers_dir()
-                .join("illLow")
-                .join(format!("{}.png", score.song_id));
-            let cover_path_low_jpg = cover_loader::covers_dir()
-                .join("illLow")
-                .join(format!("{}.jpg", score.song_id));
-            let cover_path_std_png = cover_loader::covers_dir()
-                .join("ill")
-                .join(format!("{}.png", score.song_id));
-            let cover_path_std_jpg = cover_loader::covers_dir()
-                .join("ill")
-                .join(format!("{}.jpg", score.song_id));
-
-            if cover_path_low_png.exists() {
-                Some(cover_path_low_png.to_string_lossy().into_owned())
-            } else if cover_path_low_jpg.exists() {
-                Some(cover_path_low_jpg.to_string_lossy().into_owned())
-            } else if cover_path_std_png.exists() {
-                Some(cover_path_std_png.to_string_lossy().into_owned())
-            } else if cover_path_std_jpg.exists() {
-                Some(cover_path_std_jpg.to_string_lossy().into_owned())
-            } else {
-                None
-            }
-        });
+    let cover_href = {
+        let cache = metadata_cache.lock().unwrap();
+        cache.get(&score.song_id).cloned()
+    };
 
     if let Some(href) = cover_href {
         let final_href = if embed_images {
@@ -627,7 +617,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         } else {
             // 否则使用新算法计算
             let target_chart_id = format!("{}-{}", score.song_id, score.difficulty);
-            calculate_push_acc(&target_chart_id, score.difficulty_value, all_sorted_records)
+            calculate_push_acc(&target_chart_id, score.difficulty_value, all_engine_records)
                 .unwrap_or(100.0) // 如果计算失败（比如格式错误），则默认为100
         };
 
@@ -780,6 +770,10 @@ pub fn generate_svg_string(
     let rows = (scores.len() as u32).div_ceil(columns);
     let content_height = (calculated_card_height + main_card_padding_outer) * rows.max(1);
     let total_height = header_height + ap_section_height + content_height + footer_height + 10;
+
+    // 预先构建用于推分计算的 engine 记录，避免在每张卡片中重复转换
+    let engine_records_for_scores: Vec<engine::RksRecord> =
+        scores.iter().filter_map(to_engine_record).collect();
 
     // 根据主题定义颜色变量
     let (
@@ -1153,8 +1147,8 @@ pub fn generate_svg_string(
                 card_width: main_card_width,
                 is_ap_card: true,
                 is_ap_score: true,
-                pre_calculated_push_acc: push_acc,
-                all_sorted_records: scores,
+            pre_calculated_push_acc: push_acc,
+            all_engine_records: engine_records_for_scores.as_slice(),
                 theme,
                 is_user_generated: stats.is_user_generated,
                 embed_images,
@@ -1191,7 +1185,7 @@ pub fn generate_svg_string(
             is_ap_card: false,
             is_ap_score,
             pre_calculated_push_acc: push_acc,
-            all_sorted_records: scores,
+            all_engine_records: engine_records_for_scores.as_slice(),
             theme,
             is_user_generated: stats.is_user_generated,
             embed_images,
@@ -1589,6 +1583,36 @@ pub fn render_svg_unified(
             Ok((bytes, "image/png"))
         }
     }
+}
+
+/// 异步版本的统一图片编码入口
+///
+/// 将整个 SVG 解析、栅格化与编码流程放入 Tokio 的阻塞线程池中，避免阻塞异步运行时线程。
+pub async fn render_svg_unified_async(
+    svg: String,
+    is_user_generated: bool,
+    format: Option<&str>,
+    width: Option<u32>,
+    webp_quality: Option<u8>,
+    webp_lossless: Option<bool>,
+) -> Result<(Vec<u8>, &'static str), AppError> {
+    let format_owned = format.map(|s| s.to_string());
+    let handle = spawn_blocking(move || {
+        render_svg_unified(
+            svg,
+            is_user_generated,
+            format_owned.as_deref(),
+            width,
+            webp_quality,
+            webp_lossless,
+        )
+    });
+
+    let result = handle
+        .await
+        .map_err(|e| AppError::Internal(format!("阻塞渲染任务执行失败: {e}")))?;
+
+    result
 }
 
 // ... (escape_xml function - unchanged) ...
