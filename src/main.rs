@@ -203,7 +203,7 @@ async fn main() {
     });
 
     // Shared state
-    let taptap_client = match TapTapClient::new() {
+    let taptap_client = match TapTapClient::new(&config.taptap) {
         Ok(c) => Arc::new(c),
         Err(e) => {
             tracing::error!("TapTap client init failed: {}", e);

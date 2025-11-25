@@ -44,15 +44,17 @@ impl SaveSource {
 pub async fn get_decrypted_save(
     source: SaveSource,
     chart_constants: &ChartConstantsMap,
+    taptap_config: &crate::config::TapTapMultiConfig,
+    version: Option<&str>,
 ) -> Result<ParsedSave, SaveProviderError> {
     let (download_url, meta, summary_b64_opt, updated_at_opt) = match source {
         SaveSource::Official { session_token } => {
-            client::fetch_from_official(&session_token).await?
+            client::fetch_from_official(&session_token, taptap_config, version).await?
         }
         SaveSource::ExternalApi { credentials } => {
             if let Some(s) = credentials.sessiontoken.clone() {
                 // 外部凭证若包含 sessiontoken，则直接走官方路径以获取 updatedAt/summary
-                client::fetch_from_official(&s).await?
+                client::fetch_from_official(&s, taptap_config, version).await?
             } else {
                 let (url, ext_updated_at) = client::fetch_from_external(&credentials).await?;
                 (url, DecryptionMeta::default(), None, ext_updated_at)

@@ -10,18 +10,18 @@ use crate::error::AppError;
 
 use super::models::{Account, DeviceCodeResponse, SessionData, Token, Wrap};
 
-const LC_APP_ID: &str = "rAK3FfdieFob2Nn8Am";
-const LC_APP_KEY: &str = "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0";
+use crate::config::{TapTapConfig, TapTapMultiConfig, TapTapVersion};
 
 #[derive(Clone)]
 pub struct TapTapClient {
     pub client: reqwest::Client,
     tap_headers: HeaderMap,
     phi_headers: HeaderMap,
+    config: TapTapMultiConfig,
 }
 
 impl TapTapClient {
-    pub fn new() -> Result<Self, AppError> {
+    pub fn new(config: &TapTapMultiConfig) -> Result<Self, AppError> {
         let client = reqwest::Client::builder()
             .http1_title_case_headers()
             .user_agent("TapTapUnitySDK/1.0 UnityPlayer/2021.3.40f1c1")
@@ -38,40 +38,62 @@ impl TapTapClient {
             HeaderValue::from_static("TapTapAndroidSDK/3.16.5"),
         );
 
+        // 使用大陆版配置初始化phi_headers，后续会根据请求动态调整
+        let cn_config = &config.cn;
         let mut phi_headers = HeaderMap::new();
         phi_headers.insert(
             "User-Agent",
             HeaderValue::from_static("LeanCloud-CSharp-SDK/1.0.3"),
         );
-        phi_headers.insert("X-LC-Id", HeaderValue::from_static(LC_APP_ID));
-        phi_headers.insert("X-LC-Key", HeaderValue::from_static(LC_APP_KEY));
+        phi_headers.insert("X-LC-Id", HeaderValue::from_str(&cn_config.leancloud_app_id).map_err(|e| AppError::Internal(format!("无效的 Header 值: {e}")))?);
+        phi_headers.insert("X-LC-Key", HeaderValue::from_str(&cn_config.leancloud_app_key).map_err(|e| AppError::Internal(format!("无效的 Header 值: {e}")))?);
         phi_headers.insert("Content-Type", HeaderValue::from_static("application/json"));
 
         Ok(Self {
             client,
             tap_headers,
             phi_headers,
+            config: config.clone(),
         })
+    }
+    
+    /// 根据版本获取对应的配置
+    fn get_config(&self, version: Option<&str>) -> &TapTapConfig {
+        match version {
+            Some("global") => &self.config.global,
+            Some("cn") | None => &self.config.cn,
+            _ => &self.config.cn,
+        }
+    }
+    
+    /// 根据版本获取对应的配置，使用TapTapVersion枚举
+    fn get_config_by_enum(&self, version: TapTapVersion) -> &TapTapConfig {
+        match version {
+            TapTapVersion::Global => &self.config.global,
+            TapTapVersion::CN => &self.config.cn,
+        }
     }
 
     pub async fn request_device_code(
         &self,
         device_id: &str,
+        version: Option<&str>,
     ) -> Result<DeviceCodeResponse, AppError> {
         let info = serde_json::json!({ "device_id": device_id }).to_string();
+        let config = self.get_config(version);
 
         let form = [
-            ("client_id", LC_APP_ID),
+            ("client_id", config.leancloud_app_id.as_str()),
             ("response_type", "device_code"),
             ("scope", "basic_info"),
             ("version", "1.2.0"),
             ("platform", "unity"),
-            ("info", &info),
+            ("info", info.as_str()),
         ];
 
         let resp = self
             .client
-            .post("https://www.taptap.com/oauth2/v1/device/code")
+            .post(&config.device_code_endpoint)
             .headers(self.tap_headers.clone())
             .form(&form)
             .send()
@@ -102,22 +124,25 @@ impl TapTapClient {
         &self,
         device_code: &str,
         device_id: &str,
+        version: Option<&str>,
     ) -> Result<SessionData, AppError> {
         // 交换 token
         let info = serde_json::json!({ "device_id": device_id }).to_string();
+        let config = self.get_config(version);
+        
         let form = [
             ("grant_type", "device_token"),
-            ("client_id", LC_APP_ID),
+            ("client_id", config.leancloud_app_id.as_str()),
             ("secret_type", "hmac-sha-1"),
             ("code", device_code),
             ("version", "1.0"),
             ("platform", "unity"),
-            ("info", &info),
+            ("info", info.as_str()),
         ];
 
         let resp = self
             .client
-            .post("https://www.taptap.cn/oauth2/v1/token")
+            .post(&config.token_endpoint)
             .headers(self.tap_headers.clone())
             .form(&form)
             .send()
@@ -174,11 +199,13 @@ impl TapTapClient {
             .map_err(|e| AppError::Json(format!("Token 数据解析失败: {e}")))?;
 
         // 查询基本信息
-        let auth_header = self.build_mac_authorization(&token)?;
+        let auth_header = self.build_mac_authorization(&token, config.leancloud_app_id.as_str())?;
         let account_resp = self
             .client
             .get(format!(
-                "https://open.tapapis.cn/account/basic-info/v1?client_id={LC_APP_ID}"
+                "{}?client_id={}",
+                config.user_info_endpoint,
+                config.leancloud_app_id
             ))
             .headers(self.tap_headers.clone())
             .header("Authorization", auth_header)
@@ -207,10 +234,15 @@ impl TapTapClient {
             }
         });
 
+        // 动态调整phi_headers的X-LC-Id和X-LC-Key
+        let mut phi_headers = self.phi_headers.clone();
+        phi_headers.insert("X-LC-Id", HeaderValue::from_str(&config.leancloud_app_id).map_err(|e| AppError::Internal(format!("无效的 Header 值: {e}")))?);
+        phi_headers.insert("X-LC-Key", HeaderValue::from_str(&config.leancloud_app_key).map_err(|e| AppError::Internal(format!("无效的 Header 值: {e}")))?);
+
         let lc_resp = self
             .client
-            .post("https://rak3ffdi.cloud.tds1.tapapis.cn/1.1/users")
-            .headers(self.phi_headers.clone())
+            .post(format!("{}/users", config.leancloud_base_url))
+            .headers(phi_headers)
             .json(&auth_data)
             .send()
             .await
@@ -243,7 +275,7 @@ impl TapTapClient {
         })
     }
 
-    fn build_mac_authorization(&self, token: &Token) -> Result<String, AppError> {
+    fn build_mac_authorization(&self, token: &Token, leancloud_app_id: &str) -> Result<String, AppError> {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| AppError::Internal(format!("时间计算失败: {e}")))?
@@ -253,7 +285,8 @@ impl TapTapClient {
         let nonce: u32 = rng.next_u32();
 
         let input = format!(
-            "{ts}\n{nonce}\nGET\n/account/basic-info/v1?client_id={LC_APP_ID}\nopen.tapapis.cn\n443\n\n"
+            "{ts}\n{nonce}\nGET\n/account/basic-info/v1?client_id={}\nopen.tapapis.cn\n443\n\n",
+            leancloud_app_id
         );
 
         let mut mac = hmac::Hmac::<sha1::Sha1>::new_from_slice(token.mac_key.as_bytes())

@@ -75,7 +75,8 @@ pub async fn render_bn(
     let auth_duration = t_auth_start.elapsed();
     tracing::info!(target: "bestn_performance", "用户凭证验证完成，耗时: {:?}ms", auth_duration.as_millis());
     
-    let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
+    let taptap_version = req.auth.taptap_version.as_deref();
+    let parsed = provider::get_decrypted_save(source, &state.chart_constants, &crate::config::AppConfig::global().taptap, taptap_version).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
     let save_ms = t_save.elapsed().as_millis() as i64;
 
@@ -493,7 +494,8 @@ pub async fn render_song(
 ) -> Result<impl IntoResponse, AppError> {
     let t_total = std::time::Instant::now();
     let source = to_save_source(&req.auth)?;
-    let parsed = provider::get_decrypted_save(source, &state.chart_constants).await
+    let taptap_version = req.auth.taptap_version.as_deref();
+    let parsed = provider::get_decrypted_save(source, &state.chart_constants, &crate::config::AppConfig::global().taptap, taptap_version).await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
 
     let song = state

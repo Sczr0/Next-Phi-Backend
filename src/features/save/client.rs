@@ -2,11 +2,9 @@ use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
 
 use super::decryptor::{CipherSuite, DEFAULT_IV, DecryptionMeta, KdfSpec};
+
 use crate::error::SaveProviderError;
 
-const LEANCLOUD_BASE_URL: &str = "https://rak3ffdi.cloud.tds1.tapapis.cn/1.1";
-const LC_APP_ID: &str = "rAK3FfdieFob2Nn8Am";
-const LC_APP_KEY: &str = "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0";
 const USER_AGENT: &str = "LeanCloud-CSharp-SDK/1.0.3";
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
@@ -112,17 +110,26 @@ struct KdfFields {
 
 pub async fn fetch_from_official(
     session_token: &str,
+    config: &crate::config::TapTapMultiConfig,
+    version: Option<&str>,
 ) -> Result<(String, DecryptionMeta, Option<String>, Option<String>), SaveProviderError> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
+    
+    // 根据版本选择配置
+    let tap_config = match version {
+        Some("global") => &config.global,
+        Some("cn") | None => &config.cn,
+        _ => &config.cn,
+    };
 
-    let url = format!("{LEANCLOUD_BASE_URL}/classes/_GameSave?limit=1");
+    let url = format!("{}/classes/_GameSave?limit=1", tap_config.leancloud_base_url);
 
     let response = client
         .get(&url)
-        .header("X-LC-Id", LC_APP_ID)
-        .header("X-LC-Key", LC_APP_KEY)
+        .header("X-LC-Id", &tap_config.leancloud_app_id)
+        .header("X-LC-Key", &tap_config.leancloud_app_key)
         .header("X-LC-Session", session_token)
         .header("User-Agent", USER_AGENT)
         .send()

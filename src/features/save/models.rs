@@ -22,7 +22,7 @@ mod float_serialize {
 }
 
 /// 统一的存档请求结构
-#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema)]
+#[derive(Debug, Deserialize, Serialize, Clone, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UnifiedSaveRequest {
     /// 官方 LeanCloud 会话令牌
@@ -34,6 +34,10 @@ pub struct UnifiedSaveRequest {
     /// 三选一：platform+platformId / sessiontoken / apiUserId
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_credentials: Option<ExternalApiCredentials>,
+    
+    /// TapTap 版本选择：cn（大陆版，默认）或 global（国际版）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub taptap_version: Option<String>,
 }
 
 /// 存档响应结构

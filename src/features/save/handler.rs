@@ -43,8 +43,9 @@ pub async fn get_save_data(
     let salt = crate::config::AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash, user_kind) = crate::features::stats::derive_user_identity_from_auth(salt, &payload);
 
-    let source = validate_and_create_source(payload)?;
-    let parsed = provider::get_decrypted_save(source, &state.chart_constants).await?;
+    let source = validate_and_create_source(payload.clone())?;
+    let taptap_version = payload.taptap_version.as_deref();
+    let parsed = provider::get_decrypted_save(source, &state.chart_constants, &crate::config::AppConfig::global().taptap, taptap_version).await?;
 
     // 业务打点：成功获取存档
     if let Some(stats) = state.stats.as_ref() {

@@ -1,10 +1,11 @@
 use axum::{
     Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::Json,
     routing::get,
 };
+use std::collections::HashMap;
 use base64::Engine;
 use qrcode::{QrCode, render::svg};
 use serde::Serialize;
@@ -50,6 +51,9 @@ pub struct QrCodeStatusResponse {
     path = "/auth/qrcode",
     summary = "生成登录二维码",
     description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。客户端需保存返回的 qr_id 以轮询授权状态。",
+    params(
+        ("version" = Option<String>, Query, description = "TapTap 版本：cn（大陆版，默认）或 global（国际版）")
+    ),
     responses(
         (status = 200, description = "生成二维码成功", body = QrCodeCreateResponse),
         (status = 500, description = "服务器内部错误", body = AppError)
@@ -58,13 +62,17 @@ pub struct QrCodeStatusResponse {
 )]
 pub async fn get_qrcode(
     State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<(StatusCode, Json<QrCodeCreateResponse>), AppError> {
     // 生成 device_id 与 qr_id
     let device_id = Uuid::new_v4().to_string();
     let qr_id = Uuid::new_v4().to_string();
+    
+    // 获取版本参数
+    let version = params.get("version").map(|v| v.as_str());
 
     // 请求 TapTap 设备码
-    let device = state.taptap_client.request_device_code(&device_id).await?;
+    let device = state.taptap_client.request_device_code(&device_id, version).await?;
 
     let device_code = device
         .device_code
@@ -183,9 +191,10 @@ pub async fn get_qrcode_status(
                 ));
             }
             // 轮询 TapTap，判断授权状态
+            // 目前二维码状态中没有存储版本信息，默认使用大陆版
             match state
                 .taptap_client
-                .poll_for_token(&device_code, &device_id)
+                .poll_for_token(&device_code, &device_id, None)
                 .await
             {
                 Ok(session) => {

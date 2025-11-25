@@ -99,3 +99,36 @@ cache_ttl_secs = 60
 cache_tti_secs = 30
 # 并发渲染许可数（0 = 自动 = CPU 核心数）
 max_parallel = 0
+
+# TapTap API 配置
+[taptap.cn]
+# 大陆版 - 设备码请求端点 (保持不变)
+device_code_endpoint = "https://www.taptap.com/oauth2/v1/device/code"
+# 大陆版 - Token交换端点 (保持不变)
+token_endpoint = "https://www.taptap.cn/oauth2/v1/token"
+# 大陆版 - 用户基本信息端点 (保持不变)
+user_info_endpoint = "https://open.tapapis.cn/account/basic-info/v1"
+# 大陆版 - LeanCloud API Base URL (保持不变)
+leancloud_base_url = "https://rak3ffdi.cloud.tds1.tapapis.cn/1.1"
+# 大陆版 - LeanCloud App ID (保持不变)
+leancloud_app_id = "rAK3FfdieFob2Nn8Am"
+# 大陆版 - LeanCloud App Key (保持不变)
+leancloud_app_key = "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0"
+
+[taptap.global]
+# 国际版 - 设备码请求端点 (.io 是国际版标准域名)
+device_code_endpoint = "https://www.taptap.io/oauth2/v1/device/code"
+# 国际版 - Token交换端点
+token_endpoint = "https://www.taptap.io/oauth2/v1/token"
+# 国际版 - 用户基本信息端点
+user_info_endpoint = "https://open.tapapis.io/account/basic-info/v1"
+# 国际版 - LeanCloud API Base URL 
+leancloud_base_url = "https://kviehlel.cloud.ap-sg.tapapis.com/1.1"
+# 国际版 - LeanCloud App ID 
+leancloud_app_id = "kviehleldgxsagpozb"
+# 国际版 - LeanCloud App Key 
+leancloud_app_key = "tG9CTm0LDD736k9HMM9lBZrbeBGRmUkjSfNLDNib"
+
+[taptap]
+# 默认版本：cn 或 global
+default_version = "cn"

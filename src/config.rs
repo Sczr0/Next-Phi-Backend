@@ -45,6 +45,50 @@ pub struct ApiConfig {
     pub prefix: String,
 }
 
+/// TapTap 版本枚举
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum TapTapVersion {
+    /// 大陆版
+    CN,
+    /// 国际版
+    Global,
+}
+
+impl Default for TapTapVersion {
+    fn default() -> Self {
+        Self::CN
+    }
+}
+
+/// TapTap API 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TapTapConfig {
+    /// 设备码请求端点
+    pub device_code_endpoint: String,
+    /// Token交换端点
+    pub token_endpoint: String,
+    /// 用户基本信息端点
+    pub user_info_endpoint: String,
+    /// LeanCloud API Base URL
+    pub leancloud_base_url: String,
+    /// LeanCloud App ID
+    pub leancloud_app_id: String,
+    /// LeanCloud App Key
+    pub leancloud_app_key: String,
+}
+
+/// 多版本 TapTap 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TapTapMultiConfig {
+    /// 大陆版配置
+    pub cn: TapTapConfig,
+    /// 国际版配置
+    pub global: TapTapConfig,
+    /// 默认版本
+    pub default_version: TapTapVersion,
+}
+
 /// 品牌/展示配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BrandingConfig {
@@ -60,6 +104,9 @@ pub struct AppConfig {
     pub resources: ResourcesConfig,
     pub logging: LoggingConfig,
     pub api: ApiConfig,
+    /// TapTap API 配置（多版本）
+    #[serde(default)]
+    pub taptap: TapTapMultiConfig,
     /// 统计配置
     #[serde(default)]
     pub stats: StatsConfig,
@@ -150,6 +197,36 @@ impl AppConfig {
     }
 }
 
+impl Default for TapTapConfig {
+    fn default() -> Self {
+        Self {
+            device_code_endpoint: "https://www.taptap.com/oauth2/v1/device/code".to_string(),
+            token_endpoint: "https://www.taptap.cn/oauth2/v1/token".to_string(),
+            user_info_endpoint: "https://open.tapapis.cn/account/basic-info/v1".to_string(),
+            leancloud_base_url: "https://rak3ffdi.cloud.tds1.tapapis.cn/1.1".to_string(),
+            leancloud_app_id: "rAK3FfdieFob2Nn8Am".to_string(),
+            leancloud_app_key: "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0".to_string(),
+        }
+    }
+}
+
+impl Default for TapTapMultiConfig {
+    fn default() -> Self {
+        Self {
+            cn: TapTapConfig::default(),
+            global: TapTapConfig {
+                device_code_endpoint: "https://www.taptap.io/oauth2/v1/device/code".to_string(),
+                token_endpoint: "https://www.taptap.io/oauth2/v1/token".to_string(),
+                user_info_endpoint: "https://open.tapapis.io/account/basic-info/v1".to_string(),
+                leancloud_base_url: "https://rak3ffdi.cloud.tds1.tapapis.io/1.1".to_string(),
+                leancloud_app_id: "rAK3FfdieFob2Nn8Am".to_string(),
+                leancloud_app_key: "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0".to_string(),
+            },
+            default_version: TapTapVersion::default(),
+        }
+    }
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -170,6 +247,7 @@ impl Default for AppConfig {
             api: ApiConfig {
                 prefix: "/api/v1".to_string(),
             },
+            taptap: TapTapMultiConfig::default(),
             stats: StatsConfig::default(),
             branding: BrandingConfig::default(),
             watermark: WatermarkConfig::default(),
