@@ -11,6 +11,7 @@ pub enum QrCodeStatus {
         device_id: String,
         interval_secs: u64,
         next_poll_at: Instant,
+        version: Option<String>, // 添加版本信息以确保轮询时使用正确的API
     },
     Scanned,
     Confirmed {
@@ -44,6 +45,7 @@ impl QrCodeService {
         device_code: String,
         device_id: String,
         interval_secs: u64,
+        version: Option<String>,
     ) {
         let next_poll_at = Instant::now();
         self.cache
@@ -54,6 +56,7 @@ impl QrCodeService {
                     device_id,
                     interval_secs,
                     next_poll_at,
+                    version,
                 },
             )
             .await;
@@ -79,6 +82,7 @@ impl QrCodeService {
         device_code: String,
         device_id: String,
         interval_secs: u64,
+        version: Option<String>,
     ) {
         let next_poll_at = Instant::now() + Duration::from_secs(interval_secs);
         self.cache
@@ -89,6 +93,7 @@ impl QrCodeService {
                     device_id,
                     interval_secs,
                     next_poll_at,
+                    version,
                 },
             )
             .await;

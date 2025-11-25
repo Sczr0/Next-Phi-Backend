@@ -113,7 +113,7 @@ pub async fn get_qrcode(
     let interval_secs = device.interval.unwrap_or(5);
     state
         .qrcode_service
-        .set_pending(qr_id.clone(), device_code, device_id, interval_secs)
+        .set_pending(qr_id.clone(), device_code, device_id, interval_secs, version.map(|v| v.to_string()))
         .await;
 
     let resp = QrCodeCreateResponse {
@@ -175,6 +175,7 @@ pub async fn get_qrcode_status(
             device_id,
             interval_secs,
             next_poll_at,
+            version,
         } => {
             // 频率限制：遵循 TapTap 建议的 interval
             let now = std::time::Instant::now();
@@ -191,10 +192,10 @@ pub async fn get_qrcode_status(
                 ));
             }
             // 轮询 TapTap，判断授权状态
-            // 目前二维码状态中没有存储版本信息，默认使用大陆版
+            // 使用生成二维码时保存的版本信息
             match state
                 .taptap_client
-                .poll_for_token(&device_code, &device_id, None)
+                .poll_for_token(&device_code, &device_id, version.as_deref())
                 .await
             {
                 Ok(session) => {
@@ -218,7 +219,7 @@ pub async fn get_qrcode_status(
                     // 按 interval 延后下一次轮询
                     state
                         .qrcode_service
-                        .set_pending_next_poll(&qr_id, device_code, device_id, interval_secs)
+                        .set_pending_next_poll(&qr_id, device_code, device_id, interval_secs, version)
                         .await;
                     Ok((
                         StatusCode::OK,

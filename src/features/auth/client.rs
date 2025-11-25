@@ -100,10 +100,17 @@ impl TapTapClient {
             .await
             .map_err(|e| AppError::Network(format!("设备码请求失败: {e}")))?;
 
-        let body: Value = resp
-            .json()
+        // 添加状态码检查和响应日志
+        let status = resp.status();
+        let body_text = resp
+            .text()
             .await
-            .map_err(|e| AppError::Json(format!("解析设备码响应失败: {e}")))?;
+            .map_err(|e| AppError::Network(format!("读取设备码响应体失败: {e}")))?;
+            
+        tracing::warn!("TapTap device code response - Status: {}, Body: {}", status, body_text);
+
+        let body: Value = serde_json::from_str(&body_text)
+            .map_err(|e| AppError::Json(format!("解析设备码响应失败: {} - 原始响应: {}", e, body_text)))?;
 
         let success = body
             .get("success")
