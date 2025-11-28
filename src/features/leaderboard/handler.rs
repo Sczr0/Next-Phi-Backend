@@ -38,7 +38,21 @@ pub struct RankQuery {
 
 fn mask_user_prefix(hash: &str) -> String {
     let p = hash.chars().take(4).collect::<String>();
-    format!("{}****", p)
+    format!("{p}****")
+}
+
+/// 检查字符是否为中日韩（CJK）字符
+/// 包括：CJK统一汉字、扩展区A/B、兼容汉字、日文平假名/片假名、韩文音节
+fn is_cjk_char(c: char) -> bool {
+    matches!(c,
+        '\u{4E00}'..='\u{9FFF}'   // CJK 统一汉字
+        | '\u{3400}'..='\u{4DBF}' // CJK 扩展 A
+        | '\u{20000}'..='\u{2A6DF}' // CJK 扩展 B
+        | '\u{F900}'..='\u{FAFF}' // CJK 兼容汉字
+        | '\u{3040}'..='\u{309F}' // 日文平假名
+        | '\u{30A0}'..='\u{30FF}' // 日文片假名
+        | '\u{AC00}'..='\u{D7AF}' // 韩文音节
+    )
 }
 
 #[utoipa::path(
@@ -398,14 +412,17 @@ pub async fn put_alias(
 
     // 校验别名
     let alias = req.alias.trim();
-    if alias.len() < 2 || alias.len() > 20 {
-        return Err(AppError::Validation("别名长度需在 2~20 之间".into()));
+    let char_count = alias.chars().count();
+    if !(2..=20).contains(&char_count) {
+        return Err(AppError::Validation("别名长度需在 2~20 字符之间".into()));
     }
     if !alias
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-' || is_cjk_char(c))
     {
-        return Err(AppError::Validation("别名仅允许字母数字和 . _ -".into()));
+        return Err(AppError::Validation(
+            "别名仅允许字母、数字、中日韩文字和 . _ -".into(),
+        ));
     }
     let reserved = ["admin", "system", "null", "undefined", "root"];
     if reserved.iter().any(|&w| w.eq_ignore_ascii_case(alias)) {
@@ -449,7 +466,7 @@ pub async fn put_alias(
     match res {
         Ok(_) => Ok(Json(serde_json::json!({"ok": true, "alias": alias }))),
         Err(e) => {
-            if format!("{}", e).to_lowercase().contains("unique") {
+            if format!("{e}").to_lowercase().contains("unique") {
                 return Err(AppError::Conflict("别名已被占用".into()));
             }
             Err(AppError::Internal(format!("设置别名失败: {e}")))
@@ -795,14 +812,17 @@ pub async fn post_alias_force(
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
     let now = chrono::Utc::now().to_rfc3339();
     let alias = req.alias.trim();
-    if alias.len() < 2 || alias.len() > 20 {
-        return Err(AppError::Validation("别名长度需在 2~20 之间".into()));
+    let char_count = alias.chars().count();
+    if !(2..=20).contains(&char_count) {
+        return Err(AppError::Validation("别名长度需在 2~20 字符之间".into()));
     }
     if !alias
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+        .all(|c| c.is_alphanumeric() || c == '.' || c == '_' || c == '-' || is_cjk_char(c))
     {
-        return Err(AppError::Validation("别名仅允许字母数字和 . _ -".into()));
+        return Err(AppError::Validation(
+            "别名仅允许字母、数字、中日韩文字和 . _ -".into(),
+        ));
     }
     let mut tx = storage
         .pool
@@ -856,6 +876,76 @@ mod tests {
         assert_eq!(mask_user_prefix("abcd1234"), "abcd****");
         assert_eq!(mask_user_prefix("ab"), "ab****");
         assert_eq!(mask_user_prefix(""), "****");
+    }
+
+    #[test]
+    fn test_is_cjk_char() {
+        // 中文字符
+        assert!(is_cjk_char('中'));
+        assert!(is_cjk_char('文'));
+        assert!(is_cjk_char('测'));
+        assert!(is_cjk_char('试'));
+
+        // 日文平假名
+        assert!(is_cjk_char('あ'));
+        assert!(is_cjk_char('い'));
+
+        // 日文片假名
+        assert!(is_cjk_char('ア'));
+        assert!(is_cjk_char('イ'));
+
+        // 韩文
+        assert!(is_cjk_char('한'));
+        assert!(is_cjk_char('글'));
+
+        // 非 CJK 字符
+        assert!(!is_cjk_char('a'));
+        assert!(!is_cjk_char('Z'));
+        assert!(!is_cjk_char('1'));
+        assert!(!is_cjk_char('.'));
+        assert!(!is_cjk_char('_'));
+        assert!(!is_cjk_char('-'));
+    }
+
+    #[test]
+    fn test_alias_validation_with_chinese() {
+        // 测试别名验证逻辑（模拟）
+        let valid_aliases = vec![
+            "测试用户",
+            "Alice测试",
+            "用户123",
+            "test_用户",
+            "玩家.名",
+            "日本語テスト",
+            "한글테스트",
+        ];
+
+        for alias in valid_aliases {
+            let char_count = alias.chars().count();
+            let is_valid = (2..=20).contains(&char_count)
+                && alias.chars().all(|c| {
+                    c.is_alphanumeric() || c == '.' || c == '_' || c == '-' || is_cjk_char(c)
+                });
+            assert!(is_valid, "别名 '{alias}' 应该有效");
+        }
+
+        // 无效别名
+        let invalid_aliases = vec![
+            "a",          // 太短
+            "测",         // 太短
+            "test@user",  // 包含非法字符 @
+            "user#name",  // 包含非法字符 #
+            "name space", // 包含空格
+        ];
+
+        for alias in invalid_aliases {
+            let char_count = alias.chars().count();
+            let is_valid = (2..=20).contains(&char_count)
+                && alias.chars().all(|c| {
+                    c.is_alphanumeric() || c == '.' || c == '_' || c == '-' || is_cjk_char(c)
+                });
+            assert!(!is_valid, "别名 '{alias}' 应该无效");
+        }
     }
 
     #[test]

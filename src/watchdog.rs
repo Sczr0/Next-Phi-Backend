@@ -140,7 +140,7 @@ impl SystemdWatchdog {
         #[cfg(target_os = "linux")]
         {
             use tracing::warn;
-            
+
             let watchdog_timeout_us = systemd_impl::get_watchdog_timeout_us();
             if watchdog_timeout_us.is_none() {
                 warn!("systemd看门狗未启用或不在systemd环境下运行");
