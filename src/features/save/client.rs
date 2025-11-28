@@ -19,7 +19,7 @@ pub struct ExternalApiCredentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub platform_id: Option<String>,
     /// 外部平台会话令牌（某些平台以此直连）
-    #[schema(example = "ext-session-abcdef")] 
+    #[schema(example = "ext-session-abcdef")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sessiontoken: Option<String>,
     /// 外部 API 的用户 ID（直连方式之一）
@@ -27,7 +27,7 @@ pub struct ExternalApiCredentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_user_id: Option<String>,
     /// 外部 API 的访问令牌（如需）
-    #[schema(example = "token-xyz")] 
+    #[schema(example = "token-xyz")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_token: Option<String>,
 }
@@ -116,7 +116,7 @@ pub async fn fetch_from_official(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
-    
+
     // 根据版本选择配置
     let tap_config = match version {
         Some("global") => &config.global,
@@ -124,7 +124,10 @@ pub async fn fetch_from_official(
         _ => &config.cn,
     };
 
-    let url = format!("{}/classes/_GameSave?limit=1", tap_config.leancloud_base_url);
+    let url = format!(
+        "{}/classes/_GameSave?limit=1",
+        tap_config.leancloud_base_url
+    );
 
     let response = client
         .get(&url)

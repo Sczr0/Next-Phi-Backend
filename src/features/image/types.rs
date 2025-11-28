@@ -28,7 +28,6 @@ pub enum Theme {
     Black,
 }
 
-
 /// BN 渲染请求体
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct RenderBnRequest {
@@ -63,7 +62,7 @@ pub struct RenderSongRequest {
     #[serde(flatten)]
     pub auth: UnifiedSaveRequest,
     /// 歌曲 ID 或名称
-    #[schema(example = "Arcahv")] 
+    #[schema(example = "Arcahv")]
     pub song: String,
     /// 是否将封面等资源内嵌到 PNG（默认为 false）
     #[serde(default)]

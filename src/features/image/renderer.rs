@@ -4,25 +4,25 @@ use crate::error::AppError;
 use crate::features::image::Theme;
 use crate::features::rks::engine;
 use crate::features::save::models::Difficulty;
-use base64::{engine::general_purpose::STANDARD as base64_engine, Engine as _}; // Added
+use base64::{Engine as _, engine::general_purpose::STANDARD as base64_engine}; // Added
 use chrono::{DateTime, FixedOffset, Utc};
+use image::ColorType;
+use image::codecs::jpeg::JpegEncoder;
+use image::imageops::FilterType;
 use lru::LruCache;
 use rand::prelude::*;
-use resvg::usvg::{self, fontdb, Options as UsvgOptions};
+use resvg::usvg::{self, Options as UsvgOptions, fontdb};
 use resvg::{
     render,
     tiny_skia::{Pixmap, Transform},
 };
-use image::codecs::jpeg::JpegEncoder;
-use image::ColorType;
-use image::imageops::FilterType;
-use tokio::task::spawn_blocking;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
+use tokio::task::spawn_blocking;
 
 #[allow(dead_code)]
 pub struct PlayerStats {
@@ -32,7 +32,7 @@ pub struct PlayerStats {
     pub player_name: Option<String>,
     pub update_time: DateTime<Utc>,
     pub n: u32,                                   // 请求的 Best N 数量
-    pub ap_top_3_scores: Vec<RenderRecord>,          // 添加 AP Top 3 的具体成绩
+    pub ap_top_3_scores: Vec<RenderRecord>,       // 添加 AP Top 3 的具体成绩
     pub challenge_rank: Option<(String, String)>, // 新增：课题等级 (颜色, 等级)
     pub data_string: Option<String>,              // 新增：格式化后的Data字符串
     pub custom_footer_text: Option<String>,
@@ -117,9 +117,8 @@ const COVER_METADATA_CACHE_SIZE: usize = 10000; // 缓存封面元数据
 static INVERSE_COLOR_CACHE: OnceLock<std::sync::Mutex<LruCache<PathBuf, String>>> = OnceLock::new();
 
 fn get_inverse_color_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, String>> {
-    INVERSE_COLOR_CACHE.get_or_init(|| {
-        std::sync::Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap()))
-    })
+    INVERSE_COLOR_CACHE
+        .get_or_init(|| std::sync::Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap())))
 }
 
 // 预缩放图片 Data URI 缓存（键包含源路径与目标尺寸）
@@ -130,12 +129,15 @@ struct ScaledImageKey {
     h: u32,
 }
 
-static SCALED_IMAGE_CACHE: OnceLock<std::sync::Mutex<LruCache<ScaledImageKey, String>>> = OnceLock::new();
+static SCALED_IMAGE_CACHE: OnceLock<std::sync::Mutex<LruCache<ScaledImageKey, String>>> =
+    OnceLock::new();
 const SCALED_IMAGE_CACHE_SIZE: usize = 256;
 
 fn get_scaled_image_cache() -> &'static std::sync::Mutex<LruCache<ScaledImageKey, String>> {
     SCALED_IMAGE_CACHE.get_or_init(|| {
-        std::sync::Mutex::new(LruCache::new(NonZeroUsize::new(SCALED_IMAGE_CACHE_SIZE).unwrap()))
+        std::sync::Mutex::new(LruCache::new(
+            NonZeroUsize::new(SCALED_IMAGE_CACHE_SIZE).unwrap(),
+        ))
     })
 }
 
@@ -145,7 +147,11 @@ fn get_scaled_image_data_uri(path: &Path, target_w: u32, target_h: u32) -> Optio
     if target_w == 0 || target_h == 0 {
         return None;
     }
-    let key = ScaledImageKey { path: path.to_path_buf(), w: target_w, h: target_h };
+    let key = ScaledImageKey {
+        path: path.to_path_buf(),
+        w: target_w,
+        h: target_h,
+    };
     if let Ok(mut cache) = get_scaled_image_cache().lock() {
         if let Some(uri) = cache.get(&key) {
             return Some(uri.clone());
@@ -153,13 +159,20 @@ fn get_scaled_image_data_uri(path: &Path, target_w: u32, target_h: u32) -> Optio
     }
 
     let speed = AppConfig::global().image.optimize_speed;
-    let filter = if speed { FilterType::Triangle } else { FilterType::Lanczos3 };
+    let filter = if speed {
+        FilterType::Triangle
+    } else {
+        FilterType::Lanczos3
+    };
     let img = image::open(path).ok()?;
     let rgb = img.resize_to_fill(target_w, target_h, filter).to_rgb8();
 
     let mut out = Vec::new();
     let mut enc = JpegEncoder::new_with_quality(&mut out, 85);
-    if enc.encode(&rgb, target_w, target_h, ColorType::Rgb8.into()).is_err() {
+    if enc
+        .encode(&rgb, target_w, target_h, ColorType::Rgb8.into())
+        .is_err()
+    {
         return None;
     }
     let b64 = base64_engine.encode(out);
@@ -203,104 +216,96 @@ pub fn get_global_font_db() -> Arc<fontdb::Database> {
 
 /// 初始化背景图片缓存和封面文件列表
 fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
-      tracing::info!("初始化背景图片缓存和封面文件列表");
+    tracing::info!("初始化背景图片缓存和封面文件列表");
 
-      // 初始 LRU 缓存（用于缓存背景图 data URI）
-      let cache = std::sync::Mutex::new(LruCache::new(
-          NonZeroUsize::new(BACKGROUND_CACHE_SIZE).unwrap(),
-      ));
+    // 初始 LRU 缓存（用于缓存背景图 data URI）
+    let cache = std::sync::Mutex::new(LruCache::new(
+        NonZeroUsize::new(BACKGROUND_CACHE_SIZE).unwrap(),
+    ));
 
-      // 封面元数据缓存：song_id -> 封面绝对路径
-      let mut metadata_map =
-          HashMap::<String, String>::with_capacity(COVER_METADATA_CACHE_SIZE);
+    // 封面元数据缓存：song_id -> 封面绝对路径
+    let mut metadata_map = HashMap::<String, String>::with_capacity(COVER_METADATA_CACHE_SIZE);
 
-      // 读取封面目录下的所有图片文件（包括 ill / illLow / illBlur 目录）
-      let mut cover_files = Vec::new();
+    // 读取封面目录下的所有图片文件（包括 ill / illLow / illBlur 目录）
+    let mut cover_files = Vec::new();
 
-      // 读取 ill 目录（标准封面）
-      let cover_base_path = cover_loader::covers_dir().join("ill");
-      match fs::read_dir(&cover_base_path) {
-          Ok(entries) => {
-              for entry in entries.flatten() {
-                  let path = entry.path();
-                  if path.is_file()
-                      && (path.extension() == Some("png".as_ref())
-                          || path.extension() == Some("jpg".as_ref()))
-                  {
-                      if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                          // 先记录标准封面，后续 illLow 可按需覆盖
-                          metadata_map
-                              .entry(stem.to_string())
-                              .or_insert_with(|| path.to_string_lossy().to_string());
-                      }
-                      cover_files.push(path);
-                  }
-              }
-          }
-          Err(e) => {
-              tracing::error!("读取封面目录失败 '{}': {}", cover_base_path.display(), e);
-          }
-      }
+    // 读取 ill 目录（标准封面）
+    let cover_base_path = cover_loader::covers_dir().join("ill");
+    match fs::read_dir(&cover_base_path) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && (path.extension() == Some("png".as_ref())
+                        || path.extension() == Some("jpg".as_ref()))
+                {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        // 先记录标准封面，后续 illLow 可按需覆盖
+                        metadata_map
+                            .entry(stem.to_string())
+                            .or_insert_with(|| path.to_string_lossy().to_string());
+                    }
+                    cover_files.push(path);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("读取封面目录失败 '{}': {}", cover_base_path.display(), e);
+        }
+    }
 
-      // 读取 illLow 目录（低分辨率封面，优先级更高：覆盖 ill）
-      let cover_low_base_path = cover_loader::covers_dir().join("illLow");
-      match fs::read_dir(&cover_low_base_path) {
-          Ok(entries) => {
-              for entry in entries.flatten() {
-                  let path = entry.path();
-                  if path.is_file()
-                      && (path.extension() == Some("png".as_ref())
-                          || path.extension() == Some("jpg".as_ref()))
-                  {
-                      if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                          metadata_map.insert(
-                              stem.to_string(),
-                              path.to_string_lossy().to_string(),
-                          );
-                      }
-                      cover_files.push(path);
-                  }
-              }
-          }
-          Err(e) => {
-              tracing::warn!(
-                  "读取低分辨率封面目录失败 '{}': {}",
-                  cover_low_base_path.display(),
-                  e
-              );
-          }
-      }
+    // 读取 illLow 目录（低分辨率封面，优先级更高：覆盖 ill）
+    let cover_low_base_path = cover_loader::covers_dir().join("illLow");
+    match fs::read_dir(&cover_low_base_path) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && (path.extension() == Some("png".as_ref())
+                        || path.extension() == Some("jpg".as_ref()))
+                {
+                    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                        metadata_map.insert(stem.to_string(), path.to_string_lossy().to_string());
+                    }
+                    cover_files.push(path);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                "读取低分辨率封面目录失败 '{}': {}",
+                cover_low_base_path.display(),
+                e
+            );
+        }
+    }
 
-      // 读取 illBlur 目录（背景图片，只参与随机背景，不写入 metadata_map）
-      let background_base_path = cover_loader::covers_dir().join("illBlur");
-      match fs::read_dir(&background_base_path) {
-          Ok(entries) => {
-              for entry in entries.flatten() {
-                  let path = entry.path();
-                  if path.is_file()
-                      && (path.extension() == Some("png".as_ref())
-                          || path.extension() == Some("jpg".as_ref()))
-                  {
-                      cover_files.push(path);
-                  }
-              }
-          }
-          Err(e) => {
-              tracing::error!(
-                  "读取背景目录失败 '{}': {}",
-                  background_base_path.display(),
-                  e
-              );
-          }
-      }
+    // 读取 illBlur 目录（背景图片，只参与随机背景，不写入 metadata_map）
+    let background_base_path = cover_loader::covers_dir().join("illBlur");
+    match fs::read_dir(&background_base_path) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && (path.extension() == Some("png".as_ref())
+                        || path.extension() == Some("jpg".as_ref()))
+                {
+                    cover_files.push(path);
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                "读取背景目录失败 '{}': {}",
+                background_base_path.display(),
+                e
+            );
+        }
+    }
 
-      tracing::info!("初始化完成，共找到 {} 个封面文件", cover_files.len());
+    tracing::info!("初始化完成，共找到 {} 个封面文件", cover_files.len());
 
-      (
-          cache,
-          cover_files,
-          std::sync::Mutex::new(metadata_map),
-      )
+    (cache, cover_files, std::sync::Mutex::new(metadata_map))
 }
 
 /// 背景和封面缓存的类型别名
@@ -335,8 +340,6 @@ pub fn get_cover_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, S
     metadata
 }
 
-
-
 /// 从缓存或磁盘加载背景图片
 /// 注意：现在只缓存小图（<256KB），大图直接返回路径
 fn get_background_image(path: &PathBuf) -> Option<String> {
@@ -350,7 +353,7 @@ fn get_background_image(path: &PathBuf) -> Option<String> {
     // 缓存未命中，从磁盘加载
     if let Ok(data) = fs::read(path) {
         let file_size = data.len();
-        
+
         // 只对小于 256KB 的图片进行 Base64 编码并缓存
         // 大图片直接返回路径，避免内存膨胀
         if file_size <= 256 * 1024 {
@@ -364,7 +367,7 @@ fn get_background_image(path: &PathBuf) -> Option<String> {
             cache.put(path.clone(), image_data.clone());
             return Some(image_data);
         }
-        
+
         // 大图片直接返回文件路径
         return Some(path.to_string_lossy().into_owned());
     }
@@ -601,7 +604,8 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         // 序号的 x 坐标是 card_width - card_padding
         // 我们将 U 标签放在序号左边，并留出一些间距
         let rank_text_approx_width = 30.0; // 估算 "#10" 这种文本的宽度
-        let u_badge_x = (card_width as f64) - card_padding - rank_text_approx_width - u_badge_width - 5.0;
+        let u_badge_x =
+            (card_width as f64) - card_padding - rank_text_approx_width - u_badge_width - 5.0;
         let u_badge_y = level_y - u_badge_height + 4.0; // 与序号的基线对齐 (向下微调2px)
 
         writeln!(svg, r#"<rect x='{u_badge_x}' y='{u_badge_y}' width='{u_badge_width}' height='{u_badge_height}' rx='{u_badge_radius}' ry='{u_badge_radius}' fill='#888888' />"#).map_err(fmt_err)?;
@@ -738,7 +742,7 @@ pub fn generate_svg_string(
     scores: &[RenderRecord],
     stats: &PlayerStats,
     push_acc_map: Option<&HashMap<String, f64>>, // 新增：预先计算的推分ACC映射，键为"曲目ID-难度"
-    theme: &Theme,    // 新增：主题参数
+    theme: &Theme,                               // 新增：主题参数
     embed_images: bool,
 ) -> Result<String, AppError> {
     let _start_time = std::time::Instant::now();
@@ -809,9 +813,7 @@ pub fn generate_svg_string(
     };
     let (ap_card_fill, fc_card_fill) = match theme {
         Theme::White => ("#FFFBEB".to_string(), "#E6F2FF".to_string()),
-        Theme::Black => {
-            (card_bg_color.to_string(), card_bg_color.to_string())
-        }
+        Theme::Black => (card_bg_color.to_string(), card_bg_color.to_string()),
     };
 
     let mut normal_card_stroke_color = match theme {
@@ -860,7 +862,11 @@ pub fn generate_svg_string(
                 if embed_images {
                     if let Some(ref href_str) = background_image_href {
                         if !href_str.starts_with("data:") {
-                            if let Some(uri) = get_scaled_image_data_uri(random_path, width as u32, total_height as u32) {
+                            if let Some(uri) = get_scaled_image_data_uri(
+                                random_path,
+                                width as u32,
+                                total_height as u32,
+                            ) {
                                 background_image_href = Some(uri);
                             }
                         }
@@ -1006,7 +1012,9 @@ pub fn generate_svg_string(
         let href = if embed_images && !href.starts_with("data:") {
             let p = Path::new(&href);
             get_scaled_image_data_uri(p, width as u32, total_height as u32).unwrap_or(href)
-        } else { href };
+        } else {
+            href
+        };
         writeln!(svg,
             // 使用 href (Base64 data URI), preserveAspectRatio 保证图片覆盖并居中裁剪, filter 应用模糊
             r#"<image href="{href}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" filter="url(#bg-blur)" />"#
@@ -1150,8 +1158,8 @@ pub fn generate_svg_string(
                 card_width: main_card_width,
                 is_ap_card: true,
                 is_ap_score: true,
-            pre_calculated_push_acc: push_acc,
-            all_engine_records: engine_records_for_scores.as_slice(),
+                pre_calculated_push_acc: push_acc,
+                all_engine_records: engine_records_for_scores.as_slice(),
                 theme,
                 is_user_generated: stats.is_user_generated,
                 embed_images,
@@ -1248,17 +1256,28 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
 
     let speed = AppConfig::global().image.optimize_speed;
     let opts = UsvgOptions {
-        resources_dir: Some(
-            std::env::current_dir()
-                .map_err(|e| AppError::ImageRendererError(format!("Failed to get current dir: {e}")))?,
-        ),
+        resources_dir: Some(std::env::current_dir().map_err(|e| {
+            AppError::ImageRendererError(format!("Failed to get current dir: {e}"))
+        })?),
         fontdb: font_db,
         font_family: MAIN_FONT_NAME.to_string(),
         font_size: 16.0,
         languages: vec!["zh-CN".to_string(), "en".to_string()],
-        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
-        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
-        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
+        shape_rendering: if speed {
+            usvg::ShapeRendering::OptimizeSpeed
+        } else {
+            usvg::ShapeRendering::GeometricPrecision
+        },
+        text_rendering: if speed {
+            usvg::TextRendering::OptimizeSpeed
+        } else {
+            usvg::TextRendering::OptimizeLegibility
+        },
+        image_rendering: if speed {
+            usvg::ImageRendering::OptimizeSpeed
+        } else {
+            usvg::ImageRendering::OptimizeQuality
+        },
         ..Default::default()
     };
 
@@ -1297,9 +1316,9 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
         let mut writer = encoder
             .write_header()
             .map_err(|e| AppError::ImageRendererError(format!("PNG write_header error: {e}")))?;
-        writer
-            .write_image_data(pixmap.data())
-            .map_err(|e| AppError::ImageRendererError(format!("PNG write_image_data error: {e}")))?;
+        writer.write_image_data(pixmap.data()).map_err(|e| {
+            AppError::ImageRendererError(format!("PNG write_image_data error: {e}"))
+        })?;
         writer
             .finish()
             .map_err(|e| AppError::ImageRendererError(format!("PNG finish error: {e}")))?;
@@ -1327,17 +1346,28 @@ pub fn render_svg_to_png_scaled(
     let font_db = get_global_font_db();
     let speed = AppConfig::global().image.optimize_speed;
     let opts = UsvgOptions {
-        resources_dir: Some(
-            std::env::current_dir()
-                .map_err(|e| AppError::ImageRendererError(format!("Failed to get current dir: {e}")))?,
-        ),
+        resources_dir: Some(std::env::current_dir().map_err(|e| {
+            AppError::ImageRendererError(format!("Failed to get current dir: {e}"))
+        })?),
         fontdb: font_db,
         font_family: MAIN_FONT_NAME.to_string(),
         font_size: 16.0,
         languages: vec!["zh-CN".to_string(), "en".to_string()],
-        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
-        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
-        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
+        shape_rendering: if speed {
+            usvg::ShapeRendering::OptimizeSpeed
+        } else {
+            usvg::ShapeRendering::GeometricPrecision
+        },
+        text_rendering: if speed {
+            usvg::TextRendering::OptimizeSpeed
+        } else {
+            usvg::TextRendering::OptimizeLegibility
+        },
+        image_rendering: if speed {
+            usvg::ImageRendering::OptimizeSpeed
+        } else {
+            usvg::ImageRendering::OptimizeQuality
+        },
         ..Default::default()
     };
 
@@ -1348,15 +1378,25 @@ pub fn render_svg_to_png_scaled(
     let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
         if tw > 0 && tw != src_size.width() {
             let s = tw as f32 / src_size.width() as f32;
-            ((src_size.width() as f32 * s).round() as u32, (src_size.height() as f32 * s).round() as u32, s)
+            (
+                (src_size.width() as f32 * s).round() as u32,
+                (src_size.height() as f32 * s).round() as u32,
+                s,
+            )
         } else {
             (src_size.width(), src_size.height(), 1.0)
         }
-    } else { (src_size.width(), src_size.height(), 1.0) };
+    } else {
+        (src_size.width(), src_size.height(), 1.0)
+    };
 
     let mut pixmap = Pixmap::new(dst_w, dst_h)
         .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
-    render(&tree, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    render(
+        &tree,
+        Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
 
     // 隐式水印
     if is_user_generated {
@@ -1381,9 +1421,9 @@ pub fn render_svg_to_png_scaled(
         let mut writer = encoder
             .write_header()
             .map_err(|e| AppError::ImageRendererError(format!("PNG write_header error: {e}")))?;
-        writer
-            .write_image_data(pixmap.data())
-            .map_err(|e| AppError::ImageRendererError(format!("PNG write_image_data error: {e}")))?;
+        writer.write_image_data(pixmap.data()).map_err(|e| {
+            AppError::ImageRendererError(format!("PNG write_image_data error: {e}"))
+        })?;
         writer
             .finish()
             .map_err(|e| AppError::ImageRendererError(format!("PNG finish error: {e}")))?;
@@ -1402,17 +1442,28 @@ pub fn render_svg_to_jpeg(
     let font_db = get_global_font_db();
     let speed = AppConfig::global().image.optimize_speed;
     let opts = UsvgOptions {
-        resources_dir: Some(
-            std::env::current_dir()
-                .map_err(|e| AppError::ImageRendererError(format!("Failed to get current dir: {e}")))?,
-        ),
+        resources_dir: Some(std::env::current_dir().map_err(|e| {
+            AppError::ImageRendererError(format!("Failed to get current dir: {e}"))
+        })?),
         fontdb: font_db,
         font_family: MAIN_FONT_NAME.to_string(),
         font_size: 16.0,
         languages: vec!["zh-CN".to_string(), "en".to_string()],
-        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
-        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
-        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
+        shape_rendering: if speed {
+            usvg::ShapeRendering::OptimizeSpeed
+        } else {
+            usvg::ShapeRendering::GeometricPrecision
+        },
+        text_rendering: if speed {
+            usvg::TextRendering::OptimizeSpeed
+        } else {
+            usvg::TextRendering::OptimizeLegibility
+        },
+        image_rendering: if speed {
+            usvg::ImageRendering::OptimizeSpeed
+        } else {
+            usvg::ImageRendering::OptimizeQuality
+        },
         ..Default::default()
     };
 
@@ -1423,15 +1474,25 @@ pub fn render_svg_to_jpeg(
     let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
         if tw > 0 && tw != src_size.width() {
             let s = tw as f32 / src_size.width() as f32;
-            ((src_size.width() as f32 * s).round() as u32, (src_size.height() as f32 * s).round() as u32, s)
+            (
+                (src_size.width() as f32 * s).round() as u32,
+                (src_size.height() as f32 * s).round() as u32,
+                s,
+            )
         } else {
             (src_size.width(), src_size.height(), 1.0)
         }
-    } else { (src_size.width(), src_size.height(), 1.0) };
+    } else {
+        (src_size.width(), src_size.height(), 1.0)
+    };
 
     let mut pixmap = Pixmap::new(dst_w, dst_h)
         .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
-    render(&tree, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    render(
+        &tree,
+        Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
 
     // 隐式水印
     if is_user_generated {
@@ -1486,17 +1547,28 @@ pub fn render_svg_to_webp(
     let font_db = get_global_font_db();
     let speed = AppConfig::global().image.optimize_speed;
     let opts = UsvgOptions {
-        resources_dir: Some(
-            std::env::current_dir()
-                .map_err(|e| AppError::ImageRendererError(format!("Failed to get current dir: {e}")))?,
-        ),
+        resources_dir: Some(std::env::current_dir().map_err(|e| {
+            AppError::ImageRendererError(format!("Failed to get current dir: {e}"))
+        })?),
         fontdb: font_db,
         font_family: MAIN_FONT_NAME.to_string(),
         font_size: 16.0,
         languages: vec!["zh-CN".to_string(), "en".to_string()],
-        shape_rendering: if speed { usvg::ShapeRendering::OptimizeSpeed } else { usvg::ShapeRendering::GeometricPrecision },
-        text_rendering: if speed { usvg::TextRendering::OptimizeSpeed } else { usvg::TextRendering::OptimizeLegibility },
-        image_rendering: if speed { usvg::ImageRendering::OptimizeSpeed } else { usvg::ImageRendering::OptimizeQuality },
+        shape_rendering: if speed {
+            usvg::ShapeRendering::OptimizeSpeed
+        } else {
+            usvg::ShapeRendering::GeometricPrecision
+        },
+        text_rendering: if speed {
+            usvg::TextRendering::OptimizeSpeed
+        } else {
+            usvg::TextRendering::OptimizeLegibility
+        },
+        image_rendering: if speed {
+            usvg::ImageRendering::OptimizeSpeed
+        } else {
+            usvg::ImageRendering::OptimizeQuality
+        },
         ..Default::default()
     };
 
@@ -1507,15 +1579,25 @@ pub fn render_svg_to_webp(
     let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
         if tw > 0 && tw != src_size.width() {
             let s = tw as f32 / src_size.width() as f32;
-            ((src_size.width() as f32 * s).round() as u32, (src_size.height() as f32 * s).round() as u32, s)
+            (
+                (src_size.width() as f32 * s).round() as u32,
+                (src_size.height() as f32 * s).round() as u32,
+                s,
+            )
         } else {
             (src_size.width(), src_size.height(), 1.0)
         }
-    } else { (src_size.width(), src_size.height(), 1.0) };
+    } else {
+        (src_size.width(), src_size.height(), 1.0)
+    };
 
     let mut pixmap = Pixmap::new(dst_w, dst_h)
         .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
-    render(&tree, Transform::from_scale(scale, scale), &mut pixmap.as_mut());
+    render(
+        &tree,
+        Transform::from_scale(scale, scale),
+        &mut pixmap.as_mut(),
+    );
 
     // 隐式水印
     if is_user_generated {
@@ -1526,31 +1608,15 @@ pub fn render_svg_to_webp(
 
     // WebP 支持透明度通道，直接使用 RGBA 像素数据
     let _rgba = pixmap.data();
+    
+    // 使用 image crate 的 WebPEncoder
+    use image::codecs::webp::WebPEncoder;
 
-    #[cfg(feature = "webp")]
-    {
-        // 如果启用了 webp feature，使用 image crate 的 WebPEncoder
-        use image::codecs::webp::WebPEncoder;
-
-        let mut out = Vec::new();
-        let mut enc = WebPEncoder::new(&mut out);
-        if lossless {
-            enc = enc.with_lossless_quality(100.0);
-        } else {
-            enc = enc.with_lossy_quality(quality.max(1).min(100) as f32);
-        }
-        enc.encode(_rgba, dst_w, dst_h, ColorType::Rgba8.into())
-            .map_err(|e| AppError::ImageRendererError(format!("WebP encode error: {e}")))?;
-        Ok(out)
-    }
-
-    #[cfg(not(feature = "webp"))]
-    {
-        // 如果没有启用 webp feature，返回错误提示
-        Err(AppError::ImageRendererError(
-            "WebP encoding is not available. Please enable the 'webp' feature for the image crate in Cargo.toml: image = { version = \"0.25\", features = [\"webp\"] }".to_string()
-        ))
-    }
+    let mut out = Vec::new();
+    let enc = WebPEncoder::new_lossless(&mut out);
+    enc.encode(_rgba, dst_w, dst_h, ColorType::Rgba8.into())
+        .map_err(|e| AppError::ImageRendererError(format!("WebP encode error: {e}")))?;
+    Ok(out)
 }
 
 /// 统一的图片编码入口：根据 `format` 选择编码器，并返回字节与 Content-Type。
@@ -1633,7 +1699,7 @@ fn escape_xml(input: &str) -> String {
 fn calculate_inverse_color_from_path(path: &Path) -> Option<String> {
     // 使用 image crate 打开图片
     let img = image::open(path).ok()?;
-    
+
     // 缩小到 100x100 计算颜色，大幅减少内存使用和计算时间
     let thumbnail = img.thumbnail(100, 100);
     let pixels = thumbnail.to_rgba8().into_raw();
@@ -1688,7 +1754,10 @@ fn get_inverse_color_from_path_cached(path: &Path) -> Option<String> {
 }
 
 // --- 新增：生成单曲成绩 SVG ---
-pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Result<String, AppError> {
+pub fn generate_song_svg_string(
+    data: &SongRenderData,
+    embed_images: bool,
+) -> Result<String, AppError> {
     let fmt_err = |e| AppError::ImageRendererError(format!("SVG formatting error: {e}"));
     let t0 = std::time::Instant::now();
 
@@ -1908,8 +1977,11 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
         // 预缩放并内嵌曲绘，减少 resvg 的解码与缩放开销
         let final_href = if embed_images && !href.starts_with("data:") {
             let pb = PathBuf::from(&href);
-            get_scaled_image_data_uri(&pb, illust_width as u32, illust_height as u32).unwrap_or(href)
-        } else { href };
+            get_scaled_image_data_uri(&pb, illust_width as u32, illust_height as u32)
+                .unwrap_or(href)
+        } else {
+            href
+        };
         let href = final_href;
         writeln!(svg, r#"<image href="{}" x="{}" y="{}" width="{}" height="{}" clip-path="url(#{})" preserveAspectRatio="xMidYMid slice" />"#,
                  escape_xml(&href), illust_x, illust_y, illust_width, illust_height, illust_clip_id).map_err(fmt_err)?;
@@ -1991,7 +2063,7 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
         if let Some(Some(score_data)) = data.difficulty_scores.get(diff_key) {
             if let Some(dv) = score_data.difficulty_value {
                 let constant_text_x = label_x; // 与难度标签X轴对齐
-                                               // 调整Y坐标，让它位于难度标签下方
+                // 调整Y坐标，让它位于难度标签下方
                 let constant_text_y = label_y + 20.0;
                 writeln!(svg, r#"<text x="{constant_text_x}" y="{constant_text_y}" class="text-constants" text-anchor="middle">Lv. {dv:.1}</text>"#).map_err(fmt_err)?;
             }
@@ -2072,9 +2144,19 @@ pub fn generate_song_svg_string(data: &SongRenderData, embed_images: bool) -> Re
     let footer_x = width as f64 - padding;
     let time_str = local_time.format("%Y-%m-%d %H:%M:%S UTC+8").to_string(); // 使用UTC+8表示时区
     let right_text = if let Some(txt) = &data.custom_footer_text {
-        if !txt.is_empty() { escape_xml(txt) } else { format!("Generated by Phi-Backend | {time_str}") }
-    } else { format!("Generated by Phi-Backend | {time_str}") };
-    writeln!(svg, r#"<text x="{footer_x}" y="{footer_y}" class="text text-footer">{right_text}</text>"#).map_err(fmt_err)?;
+        if !txt.is_empty() {
+            escape_xml(txt)
+        } else {
+            format!("Generated by Phi-Backend | {time_str}")
+        }
+    } else {
+        format!("Generated by Phi-Backend | {time_str}")
+    };
+    writeln!(
+        svg,
+        r#"<text x="{footer_x}" y="{footer_y}" class="text text-footer">{right_text}</text>"#
+    )
+    .map_err(fmt_err)?;
 
     // --- End SVG ---
     writeln!(svg, "</svg>").map_err(fmt_err)?;

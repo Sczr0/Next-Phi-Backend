@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use sqlx::{sqlite::SqliteConnectOptions, ConnectOptions, Row, SqlitePool};
+use sqlx::{ConnectOptions, Row, SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::error::AppError;
 
@@ -18,12 +18,23 @@ impl StatsStorage {
             .filename(Path::new(path))
             .create_if_missing(true)
             .log_statements(tracing::log::LevelFilter::Off);
-        let pool = SqlitePool::connect_with(opt).await.map_err(|e| AppError::Internal(format!("sqlite connect: {e}")))?;
+        let pool = SqlitePool::connect_with(opt)
+            .await
+            .map_err(|e| AppError::Internal(format!("sqlite connect: {e}")))?;
         if wal {
-            sqlx::query("PRAGMA journal_mode=WAL;").execute(&pool).await.ok();
+            sqlx::query("PRAGMA journal_mode=WAL;")
+                .execute(&pool)
+                .await
+                .ok();
         }
-        sqlx::query("PRAGMA synchronous=NORMAL;").execute(&pool).await.ok();
-        sqlx::query("PRAGMA foreign_keys=ON;").execute(&pool).await.ok();
+        sqlx::query("PRAGMA synchronous=NORMAL;")
+            .execute(&pool)
+            .await
+            .ok();
+        sqlx::query("PRAGMA foreign_keys=ON;")
+            .execute(&pool)
+            .await
+            .ok();
         Ok(Self { pool })
     }
 
@@ -104,14 +115,24 @@ impl StatsStorage {
             updated_at TEXT NOT NULL
         );
         "#;
-        sqlx::query(ddl).execute(&self.pool).await.map_err(|e| AppError::Internal(format!("init schema: {e}")))?;
+        sqlx::query(ddl)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("init schema: {e}")))?;
         Ok(())
     }
 
     pub async fn insert_events(&self, events: &[EventInsert]) -> Result<(), AppError> {
-        let mut tx = self.pool.begin().await.map_err(|e| AppError::Internal(format!("begin tx: {e}")))?;
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Internal(format!("begin tx: {e}")))?;
         for e in events {
-            let extra = e.extra_json.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+            let extra = e
+                .extra_json
+                .as_ref()
+                .map(|v| serde_json::to_string(v).unwrap_or_default());
             sqlx::query("INSERT INTO events(ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(e.ts_utc.to_rfc3339())
                 .bind(&e.route)
@@ -126,14 +147,21 @@ impl StatsStorage {
                 .bind(extra)
                 .execute(&mut *tx).await.map_err(|er| AppError::Internal(format!("insert event: {er}")))?;
         }
-        tx.commit().await.map_err(|e| AppError::Internal(format!("commit: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Internal(format!("commit: {e}")))?;
         Ok(())
     }
 
-    pub async fn query_daily(&self, start: NaiveDate, end: NaiveDate, feature: Option<String>) -> Result<Vec<DailyAggRow>, AppError> {
+    pub async fn query_daily(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+        feature: Option<String>,
+    ) -> Result<Vec<DailyAggRow>, AppError> {
         // 若 daily_agg 尚未生成，临时从 events 动态聚合
-        let start_dt = NaiveDateTime::new(start, NaiveTime::from_hms_opt(0,0,0).unwrap());
-        let end_dt = NaiveDateTime::new(end, NaiveTime::from_hms_opt(23,59,59).unwrap());
+        let start_dt = NaiveDateTime::new(start, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let end_dt = NaiveDateTime::new(end, NaiveTime::from_hms_opt(23, 59, 59).unwrap());
         let start_s = DateTime::<Utc>::from_naive_utc_and_offset(start_dt, Utc).to_rfc3339();
         let end_s = DateTime::<Utc>::from_naive_utc_and_offset(end_dt, Utc).to_rfc3339();
 
@@ -175,19 +203,24 @@ impl StatsStorage {
 
 impl StatsStorage {
     pub async fn get_prev_rks(&self, user_hash: &str) -> Result<Option<(f64, String)>, AppError> {
-        let row = sqlx::query("SELECT total_rks, updated_at FROM leaderboard_rks WHERE user_hash = ?")
-            .bind(user_hash)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("get prev rks: {e}")))?;
+        let row =
+            sqlx::query("SELECT total_rks, updated_at FROM leaderboard_rks WHERE user_hash = ?")
+                .bind(user_hash)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("get prev rks: {e}")))?;
         if let Some(r) = row {
-            Ok(Some((r.get::<f64, _>("total_rks"), r.get::<String, _>("updated_at"))))
+            Ok(Some((
+                r.get::<f64, _>("total_rks"),
+                r.get::<String, _>("updated_at"),
+            )))
         } else {
             Ok(None)
         }
     }
 
-    pub async fn insert_submission(&self,
+    pub async fn insert_submission(
+        &self,
         user_hash: &str,
         total_rks: f64,
         rks_jump: f64,
@@ -213,7 +246,8 @@ impl StatsStorage {
         Ok(())
     }
 
-    pub async fn upsert_leaderboard_rks(&self,
+    pub async fn upsert_leaderboard_rks(
+        &self,
         user_hash: &str,
         total_rks: f64,
         user_kind: Option<&str>,
@@ -244,7 +278,8 @@ impl StatsStorage {
         Ok(())
     }
 
-    pub async fn upsert_details(&self,
+    pub async fn upsert_details(
+        &self,
         user_hash: &str,
         rks_comp_json: Option<&str>,
         best3_json: Option<&str>,

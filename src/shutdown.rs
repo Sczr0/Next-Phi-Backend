@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{broadcast, Notify};
+use tokio::sync::{Notify, broadcast};
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
@@ -89,7 +89,10 @@ impl ShutdownManager {
     /// # Returns
     ///
     /// 退出原因或超时错误
-    pub async fn wait_for_shutdown_with_timeout(&self, duration: Duration) -> Result<ShutdownReason, ShutdownError> {
+    pub async fn wait_for_shutdown_with_timeout(
+        &self,
+        duration: Duration,
+    ) -> Result<ShutdownReason, ShutdownError> {
         match timeout(duration, self.wait_for_shutdown()).await {
             Ok(reason) => Ok(reason),
             Err(_) => {
@@ -106,12 +109,16 @@ impl ShutdownManager {
     /// * `reason` - 退出原因
     pub fn trigger_shutdown(&self, reason: ShutdownReason) {
         // 使用原子操作确保只触发一次
-        let was_shutting_down = self.inner.shutting_down.compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        ).unwrap_or(true);
+        let was_shutting_down = self
+            .inner
+            .shutting_down
+            .compare_exchange(
+                false,
+                true,
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+            )
+            .unwrap_or(true);
 
         if !was_shutting_down {
             info!("触发优雅退出: {:?}", reason);
@@ -135,7 +142,9 @@ impl ShutdownManager {
 
     /// 检查是否正在关闭
     pub fn is_shutting_down(&self) -> bool {
-        self.inner.shutting_down.load(std::sync::atomic::Ordering::SeqCst)
+        self.inner
+            .shutting_down
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// 创建退出原因接收器
@@ -163,7 +172,7 @@ impl ShutdownManager {
 
     #[cfg(unix)]
     async fn start_unix_signal_handler(&self) -> Result<(), ShutdownError> {
-        use tokio::signal::unix::{signal, SignalKind};
+        use tokio::signal::unix::{SignalKind, signal};
 
         info!("启动Unix信号处理器");
 
@@ -256,7 +265,6 @@ impl ShutdownHandle {
         }
     }
 
-
     /// 等待退出信号
     ///
     /// # Returns
@@ -281,7 +289,11 @@ impl ShutdownHandle {
     /// # Returns
     ///
     /// 清理操作结果
-    pub async fn cleanup_with_timeout<F, T>(&self, cleanup_fn: F, timeout_duration: Duration) -> Result<T, ShutdownError>
+    pub async fn cleanup_with_timeout<F, T>(
+        &self,
+        cleanup_fn: F,
+        timeout_duration: Duration,
+    ) -> Result<T, ShutdownError>
     where
         F: std::future::Future<Output = T>,
     {
@@ -353,7 +365,9 @@ mod tests {
         let manager = ShutdownManager::new();
 
         // 等待超时（没有触发退出）
-        let result = manager.wait_for_shutdown_with_timeout(Duration::from_millis(100)).await;
+        let result = manager
+            .wait_for_shutdown_with_timeout(Duration::from_millis(100))
+            .await;
         assert!(result.is_err());
         matches!(result.unwrap_err(), ShutdownError::Timeout);
     }

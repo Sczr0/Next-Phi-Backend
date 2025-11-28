@@ -47,9 +47,7 @@ pub fn parse_game_record(
             } else if let Some(v) = chunk[1].as_i64() {
                 v as f32
             } else {
-                return Err(format!(
-                    "accuracy at '{song_id}'[{idx}] is not a number"
-                ));
+                return Err(format!("accuracy at '{song_id}'[{idx}] is not a number"));
             };
 
             // fc: 1 为 true, 0 为 false
@@ -64,14 +62,14 @@ pub fn parse_game_record(
                 .map_err(|_| format!("invalid difficulty index {idx} for '{song_id}'"))?;
 
             // 查询定数
-            let chart_constant = chart_constants.get(song_id).and_then(|consts| {
-                match difficulty {
+            let chart_constant = chart_constants
+                .get(song_id)
+                .and_then(|consts| match difficulty {
                     Difficulty::EZ => consts.ez,
                     Difficulty::HD => consts.hd,
                     Difficulty::IN => consts.in_level,
                     Difficulty::AT => consts.at,
-                }
-            });
+                });
 
             records.push(DifficultyRecord {
                 difficulty,

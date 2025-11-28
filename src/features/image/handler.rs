@@ -1,26 +1,28 @@
 use std::collections::HashMap;
 
 use axum::{
-    Router,
-    extract::{State, Query},
-    http::{header, HeaderValue, StatusCode},
+    Json, Router,
+    extract::{Query, State},
+    http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::post,
-    Json,
 };
 use chrono::{DateTime, Utc};
 use std::time::Instant;
 use tracing::debug;
 
+use crate::config::AppConfig;
 use crate::{
     error::AppError,
     features::{
         image::renderer::{self, PlayerStats, RenderRecord, SongDifficultyScore, SongRenderData},
-        save::{models::Difficulty, provider::{self, SaveSource}},
+        save::{
+            models::Difficulty,
+            provider::{self, SaveSource},
+        },
     },
     state::AppState,
 };
-use crate::config::AppConfig;
 
 use super::types::{RenderBnRequest, RenderSongRequest, RenderUserBnRequest};
 use serde::Deserialize;
@@ -74,43 +76,67 @@ pub async fn render_bn(
     let source = to_save_source(&req.auth)?;
     let auth_duration = t_auth_start.elapsed();
     tracing::info!(target: "bestn_performance", "用户凭证验证完成，耗时: {:?}ms", auth_duration.as_millis());
-    
+
     let taptap_version = req.auth.taptap_version.as_deref();
-    let parsed = provider::get_decrypted_save(source, &state.chart_constants, &crate::config::AppConfig::global().taptap, taptap_version).await
-        .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
+    let parsed = provider::get_decrypted_save(
+        source,
+        &state.chart_constants,
+        &crate::config::AppConfig::global().taptap,
+        taptap_version,
+    )
+    .await
+    .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
     let save_ms = t_save.elapsed().as_millis() as i64;
 
     // 参数验证：webp_quality 范围
     if let Some(quality) = q.webp_quality {
         if quality > 100 {
-            return Err(AppError::Validation("webp_quality 必须在 1-100 范围内".to_string()));
+            return Err(AppError::Validation(
+                "webp_quality 必须在 1-100 范围内".to_string(),
+            ));
         }
     }
 
     // Cache hit/miss 事件 + 快速返回
-    let t_cache_start = Instant::now();
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
-    let (user_hash_for_cache, user_kind_for_cache) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-    let mut cache_hit = false;
+    let (user_hash_for_cache, user_kind_for_cache) =
+        crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
     if cache_enabled {
         if let Some(user_hash) = user_hash_for_cache.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let theme_code = match req.theme { super::types::Theme::White => "w", super::types::Theme::Black => "b" };
+            let theme_code = match req.theme {
+                super::types::Theme::White => "w",
+                super::types::Theme::Black => "b",
+            };
             let fmt_code = match q.format.as_deref() {
                 Some("jpeg") | Some("jpg") => "jpg",
                 Some("webp") => "webp",
-                _ => "png"
+                _ => "png",
             };
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
-            let key = format!("{}:bn:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, req.n.max(1), updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
+                1
+            } else {
+                0
+            };
+            let key = format!(
+                "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
+                user_hash,
+                req.n.max(1),
+                updated,
+                theme_code,
+                if req.embed_images { 1 } else { 0 },
+                fmt_code,
+                width_code,
+                webp_quality_code,
+                webp_lossless_code
+            );
             if let Some(p) = state.bn_image_cache.get(&key).await {
-                cache_hit = true;
-                let cache_duration = t_cache_start.elapsed();
-                tracing::info!(target: "bestn_performance", "缓存命中，缓存键: {}, 耗时: {:?}ms", key, cache_duration.as_millis());
-                
+                let _cache_duration = Instant::now().elapsed();
+                tracing::info!(target: "bestn_performance", "缓存命中，缓存键: {}", key);
+
                 if let Some(h) = state.stats.as_ref() {
                     let total_ms = t_total.elapsed().as_millis() as i64;
                     let evt = crate::features::stats::models::EventInsert {
@@ -147,16 +173,16 @@ pub async fn render_bn(
                 let content_type = match fmt_code {
                     "jpg" => "image/jpeg",
                     "webp" => "image/webp",
-                    _ => "image/png"
+                    _ => "image/png",
                 };
                 headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-                
+
                 let total_duration = t_total.elapsed();
                 tracing::info!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
                 return Ok((StatusCode::OK, headers, (*p).clone()));
             } else {
-                let cache_duration = t_cache_start.elapsed();
-                tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}, 耗时: {:?}ms", key, cache_duration.as_millis());
+                let _cache_duration = Instant::now().elapsed();
+                tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
             }
             if let Some(h) = state.stats.as_ref() {
                 let evt = crate::features::stats::models::EventInsert {
@@ -170,7 +196,9 @@ pub async fn render_bn(
                     user_hash: Some(user_hash.clone()),
                     client_ip_hash: None,
                     instance: None,
-                    extra_json: Some(serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache })),
+                    extra_json: Some(
+                        serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache }),
+                    ),
                 };
                 h.track(evt).await;
             }
@@ -200,7 +228,9 @@ pub async fn render_bn(
             let Some(dv) = dv_opt else { continue };
 
             let mut acc_percent = rec.accuracy as f64;
-            if acc_percent <= 1.5 { acc_percent *= 100.0; }
+            if acc_percent <= 1.5 {
+                acc_percent *= 100.0;
+            }
             let rks = crate::features::rks::engine::calculate_chart_rks(acc_percent, dv);
 
             all.push(RenderRecord {
@@ -222,9 +252,13 @@ pub async fn render_bn(
 
     let t_sort_start = Instant::now();
     // 按 RKS 降序
-    all.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
+    all.sort_by(|a, b| {
+        b.rks
+            .partial_cmp(&a.rks)
+            .unwrap_or(core::cmp::Ordering::Equal)
+    });
     let sort_duration = t_sort_start.elapsed();
-    
+
     let n = req.n.max(1);
     let top: Vec<RenderRecord> = all.iter().take(n as usize).cloned().collect();
     tracing::info!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
@@ -232,10 +266,18 @@ pub async fn render_bn(
     let t_push_start = Instant::now();
     // 预计算推分 ACC
     let mut push_acc_map: HashMap<String, f64> = HashMap::new();
-    let engine_all: Vec<crate::features::rks::engine::RksRecord> = all.iter().filter_map(to_engine_record).collect();
-    for s in top.iter().filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0) {
+    let engine_all: Vec<crate::features::rks::engine::RksRecord> =
+        all.iter().filter_map(to_engine_record).collect();
+    for s in top
+        .iter()
+        .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
+    {
         let key = format!("{}-{}", s.song_id, s.difficulty);
-        if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(&key, s.difficulty_value, &engine_all) {
+        if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(
+            &key,
+            s.difficulty_value,
+            &engine_all,
+        ) {
             push_acc_map.insert(key, v);
         }
     }
@@ -246,10 +288,19 @@ pub async fn render_bn(
     let t_stats_start = Instant::now();
 
     // 统计计算：RKS 详情与平均值
-    let (exact_rks, _rounded) = crate::features::rks::engine::calculate_player_rks_details(&engine_all);
+    let (exact_rks, _rounded) =
+        crate::features::rks::engine::calculate_player_rks_details(&engine_all);
     let ap_scores: Vec<_> = all.iter().filter(|r| r.acc >= 100.0).take(3).collect();
-    let ap_top_3_avg = if ap_scores.len() == 3 { Some(ap_scores.iter().map(|r| r.rks).sum::<f64>()/3.0) } else { None };
-    let best_27_avg = if all.is_empty() { None } else { Some(all.iter().take(27).map(|r| r.rks).sum::<f64>() / (all.len().min(27) as f64)) };
+    let ap_top_3_avg = if ap_scores.len() == 3 {
+        Some(ap_scores.iter().map(|r| r.rks).sum::<f64>() / 3.0)
+    } else {
+        None
+    };
+    let best_27_avg = if all.is_empty() {
+        None
+    } else {
+        Some(all.iter().take(27).map(|r| r.rks).sum::<f64>() / (all.len().min(27) as f64))
+    };
     let stats_duration = t_stats_start.elapsed();
     tracing::info!(target: "bestn_performance", "统计数据计算完成，精确RKS: {:?}, AP Top3: {:?}, Best27: {:?}, 耗时: {:?}ms", 
                    exact_rks, ap_top_3_avg, best_27_avg, stats_duration.as_millis());
@@ -265,9 +316,13 @@ pub async fn render_bn(
             .and_then(|v| v.as_i64())
     }
     .and_then(|rank_num| {
-        if rank_num <= 0 { return None; }
+        if rank_num <= 0 {
+            return None;
+        }
         let s = rank_num.to_string();
-        if s.is_empty() { return None; }
+        if s.is_empty() {
+            return None;
+        }
         let (color_char, level_str) = s.split_at(1);
         let color = match color_char {
             "1" => "Green",
@@ -293,10 +348,22 @@ pub async fn render_bn(
             let mut parts: Vec<String> = arr
                 .iter()
                 .zip(units.iter())
-                .filter_map(|(val, unit)| val.as_i64().and_then(|u| if u > 0 { Some(format!("{u} {unit}")) } else { None }))
+                .filter_map(|(val, unit)| {
+                    val.as_i64().and_then(|u| {
+                        if u > 0 {
+                            Some(format!("{u} {unit}"))
+                        } else {
+                            None
+                        }
+                    })
+                })
                 .collect();
             parts.reverse();
-            if parts.is_empty() { None } else { Some(format!("Data: {}", parts.join(", "))) }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(format!("Data: {}", parts.join(", ")))
+            }
         });
     let data_string_duration = t_data_string_start.elapsed();
     tracing::info!(target: "bestn_performance", "Data字符串解析完成: {:?}, 耗时: {:?}ms", data_string, data_string_duration.as_millis());
@@ -318,7 +385,9 @@ pub async fn render_bn(
         n
     } else if let Some(token) = req.auth.session_token.clone() {
         let t_nick = Instant::now();
-        let name = fetch_nickname(&token).await.unwrap_or_else(|| "Phigros Player".into());
+        let name = fetch_nickname(&token)
+            .await
+            .unwrap_or_else(|| "Phigros Player".into());
         nickname_ms = t_nick.elapsed().as_millis() as i64;
         name
     } else {
@@ -334,7 +403,12 @@ pub async fn render_bn(
         player_name: Some(display_name),
         update_time,
         n,
-        ap_top_3_scores: all.iter().filter(|r| r.acc >= 100.0).take(3).cloned().collect(),
+        ap_top_3_scores: all
+            .iter()
+            .filter(|r| r.acc >= 100.0)
+            .take(3)
+            .cloned()
+            .collect(),
         challenge_rank,
         data_string,
         custom_footer_text: Some(AppConfig::global().branding.footer_text.clone()),
@@ -356,7 +430,13 @@ pub async fn render_bn(
                    permits_avail, wait_ms, semaphore_duration.as_millis());
 
     let t_svg_start = Instant::now();
-    let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, req.embed_images)?;
+    let svg = renderer::generate_svg_string(
+        &top,
+        &stats,
+        Some(&push_acc_map),
+        &req.theme,
+        req.embed_images,
+    )?;
     let svg_duration = t_svg_start.elapsed();
     let svg_size = svg.len();
     tracing::info!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
@@ -370,21 +450,27 @@ pub async fn render_bn(
         q.width,
         q.webp_quality,
         q.webp_lossless,
-    ).await?;
+    )
+    .await?;
     let render_duration = t_render_start.elapsed();
     let render_ms = render_duration.as_millis() as i64;
     let bytes_len = bytes.len();
     tracing::info!(target: "bestn_performance", "图片渲染完成，输出格式: {}, 字节大小: {}, 耗时: {:?}ms", 
                    content_type, bytes_len, render_duration.as_millis());
 
-    let t_cache_start = Instant::now();
     // 统计：BestN 图片生成（带用户去敏哈希 + 榜单歌曲ID列表 + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
-        let salt = crate::config::AppConfig::global().stats.user_hash_salt.as_deref();
-        let (user_hash, user_kind) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+        let salt = crate::config::AppConfig::global()
+            .stats
+            .user_hash_salt
+            .as_deref();
+        let (user_hash, user_kind) =
+            crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         let bestn_song_ids: Vec<String> = top.iter().map(|r| r.song_id.clone()).collect();
         let extra = serde_json::json!({ "bestn_song_ids": bestn_song_ids, "user_kind": user_kind });
-        stats.track_feature("bestn", "generate_image", user_hash, Some(extra)).await;
+        stats
+            .track_feature("bestn", "generate_image", user_hash, Some(extra))
+            .await;
     }
 
     let mut headers = axum::http::HeaderMap::new();
@@ -398,7 +484,10 @@ pub async fn render_bn(
         if let Some(user_hash) = uh.as_ref() {
             let t_cache_put = Instant::now();
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let theme_code = match req.theme { super::types::Theme::White => "w", super::types::Theme::Black => "b" };
+            let theme_code = match req.theme {
+                super::types::Theme::White => "w",
+                super::types::Theme::Black => "b",
+            };
             let fmt_code = match q.format.as_deref() {
                 Some("jpeg") | Some("jpg") => "jpg",
                 Some("webp") => "webp",
@@ -406,9 +495,27 @@ pub async fn render_bn(
             };
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
-            let key = format!("{}:bn:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, n, updated, theme_code, if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
-            state.bn_image_cache.insert(key, std::sync::Arc::new(bytes.clone())).await;
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
+                1
+            } else {
+                0
+            };
+            let key = format!(
+                "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
+                user_hash,
+                n,
+                updated,
+                theme_code,
+                if req.embed_images { 1 } else { 0 },
+                fmt_code,
+                width_code,
+                webp_quality_code,
+                webp_lossless_code
+            );
+            state
+                .bn_image_cache
+                .insert(key, std::sync::Arc::new(bytes.clone()))
+                .await;
             cache_put_duration = Some(t_cache_put.elapsed());
         }
     }
@@ -425,7 +532,7 @@ pub async fn render_bn(
             Some("webp") => "webp",
             _ => "png",
         };
-        let evt = crate::features::stats::models::EventInsert{
+        let evt = crate::features::stats::models::EventInsert {
             ts_utc: chrono::Utc::now(),
             route: Some("/image/bn".into()),
             feature: Some("image_render".into()),
@@ -495,8 +602,14 @@ pub async fn render_song(
     let t_total = std::time::Instant::now();
     let source = to_save_source(&req.auth)?;
     let taptap_version = req.auth.taptap_version.as_deref();
-    let parsed = provider::get_decrypted_save(source, &state.chart_constants, &crate::config::AppConfig::global().taptap, taptap_version).await
-        .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
+    let parsed = provider::get_decrypted_save(
+        source,
+        &state.chart_constants,
+        &crate::config::AppConfig::global().taptap,
+        taptap_version,
+    )
+    .await
+    .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
 
     let song = state
         .song_catalog
@@ -506,29 +619,47 @@ pub async fn render_song(
     // 参数验证：webp_quality 范围
     if let Some(quality) = q.webp_quality {
         if quality > 100 {
-            return Err(AppError::Validation("webp_quality 必须在 1-100 范围内".to_string()));
+            return Err(AppError::Validation(
+                "webp_quality 必须在 1-100 范围内".to_string(),
+            ));
         }
     }
 
     // Cache hit/miss 事件 + 快速返回
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
-    let (user_hash_for_cache, user_kind_for_cache) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+    let (user_hash_for_cache, user_kind_for_cache) =
+        crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
     if cache_enabled {
         if let Some(user_hash) = user_hash_for_cache.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let fmt_code = match q.format.as_deref() {
                 Some("jpeg") | Some("jpg") => "jpg",
                 Some("webp") => "webp",
-                _ => "png"
+                _ => "png",
             };
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
-            let key = format!("{}:song:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, song.id, updated, "d", if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
+                1
+            } else {
+                0
+            };
+            let key = format!(
+                "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
+                user_hash,
+                song.id,
+                updated,
+                "d",
+                if req.embed_images { 1 } else { 0 },
+                fmt_code,
+                width_code,
+                webp_quality_code,
+                webp_lossless_code
+            );
             if let Some(p) = state.song_image_cache.get(&key).await {
                 if let Some(h) = state.stats.as_ref() {
-                    let evt = crate::features::stats::models::EventInsert{
+                    let evt = crate::features::stats::models::EventInsert {
                         ts_utc: chrono::Utc::now(),
                         route: Some("/image/song".into()),
                         feature: Some("image_cache".into()),
@@ -539,7 +670,9 @@ pub async fn render_song(
                         user_hash: Some(user_hash.clone()),
                         client_ip_hash: None,
                         instance: None,
-                        extra_json: Some(serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id})),
+                        extra_json: Some(
+                            serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id}),
+                        ),
                     };
                     h.track(evt).await;
                 }
@@ -547,12 +680,12 @@ pub async fn render_song(
                 let content_type = match fmt_code {
                     "jpg" => "image/jpeg",
                     "webp" => "image/webp",
-                    _ => "image/png"
+                    _ => "image/png",
                 };
                 headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
                 return Ok((StatusCode::OK, headers, (*p).clone()));
             } else if let Some(h) = state.stats.as_ref() {
-                let evt = crate::features::stats::models::EventInsert{
+                let evt = crate::features::stats::models::EventInsert {
                     ts_utc: chrono::Utc::now(),
                     route: Some("/image/song".into()),
                     feature: Some("image_cache".into()),
@@ -563,7 +696,9 @@ pub async fn render_song(
                     user_hash: Some(user_hash.clone()),
                     client_ip_hash: None,
                     instance: None,
-                    extra_json: Some(serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id})),
+                    extra_json: Some(
+                        serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id}),
+                    ),
                 };
                 h.track(evt).await;
             }
@@ -582,8 +717,11 @@ pub async fn render_song(
                 Difficulty::AT => chart.and_then(|c| c.at),
             };
             let Some(cc) = cc else { continue };
-            let mut acc_percent = rec.accuracy as f64; if acc_percent <= 1.5 { acc_percent *= 100.0; }
-            engine_all.push(crate::features::rks::engine::RksRecord{
+            let mut acc_percent = rec.accuracy as f64;
+            if acc_percent <= 1.5 {
+                acc_percent *= 100.0;
+            }
+            engine_all.push(crate::features::rks::engine::RksRecord {
                 song_id: sid.clone(),
                 difficulty: rec.difficulty.clone(),
                 score: rec.score,
@@ -593,51 +731,91 @@ pub async fn render_song(
             });
         }
     }
-    engine_all.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
+    engine_all.sort_by(|a, b| {
+        b.rks
+            .partial_cmp(&a.rks)
+            .unwrap_or(core::cmp::Ordering::Equal)
+    });
 
     // 单曲四难度数据
     let mut difficulty_scores: HashMap<String, Option<SongDifficultyScore>> = HashMap::new();
-    let song_records = parsed.game_record.get(&song.id).cloned().unwrap_or_default();
+    let song_records = parsed
+        .game_record
+        .get(&song.id)
+        .cloned()
+        .unwrap_or_default();
 
     let levels = &song.chart_constants;
     let map_level = |d: &str| -> Option<f64> {
-        match d {"EZ"=>levels.ez, "HD"=>levels.hd, "IN"=>levels.in_level, "AT"=>levels.at, _=>None}.map(|v| v as f64)
+        match d {
+            "EZ" => levels.ez,
+            "HD" => levels.hd,
+            "IN" => levels.in_level,
+            "AT" => levels.at,
+            _ => None,
+        }
+        .map(|v| v as f64)
     };
-    for diff in ["EZ","HD","IN","AT"] {
+    for diff in ["EZ", "HD", "IN", "AT"] {
         let dv = map_level(diff);
         let rec = song_records.iter().find(|r| match (&r.difficulty, diff) {
-            (Difficulty::EZ, "EZ")|(Difficulty::HD, "HD")|(Difficulty::IN, "IN")|(Difficulty::AT, "AT") => true,
+            (Difficulty::EZ, "EZ")
+            | (Difficulty::HD, "HD")
+            | (Difficulty::IN, "IN")
+            | (Difficulty::AT, "AT") => true,
             _ => false,
         });
-        let (score, acc, rks, is_fc) = if let Some(r) = rec { 
-            let mut ap = r.accuracy as f64; if ap <= 1.5 { ap *= 100.0; }
+        let (score, acc, rks, is_fc) = if let Some(r) = rec {
+            let mut ap = r.accuracy as f64;
+            if ap <= 1.5 {
+                ap *= 100.0;
+            }
             let rks = dv.map(|v| crate::features::rks::engine::calculate_chart_rks(ap, v));
             (Some(r.score as f64), Some(ap), rks, Some(r.is_full_combo))
-        } else { (None, None, None, None) };
+        } else {
+            (None, None, None, None)
+        };
 
         // 推分 acc
         let player_push_acc = if let (Some(dv), Some(a)) = (dv, acc) {
-            if a >= 100.0 { Some(100.0) } else {
+            if a >= 100.0 {
+                Some(100.0)
+            } else {
                 let key = format!("{}-{}", song.id, diff);
                 crate::features::rks::engine::calculate_target_chart_push_acc(&key, dv, &engine_all)
             }
-        } else { None };
+        } else {
+            None
+        };
 
-        difficulty_scores.insert(diff.to_string(), Some(SongDifficultyScore{
-            score,
-            acc,
-            rks,
-            difficulty_value: dv,
-            is_fc,
-            is_phi: acc.map(|a| a>=100.0),
-            player_push_acc,
-        }));
+        difficulty_scores.insert(
+            diff.to_string(),
+            Some(SongDifficultyScore {
+                score,
+                acc,
+                rks,
+                difficulty_value: dv,
+                is_fc,
+                is_phi: acc.map(|a| a >= 100.0),
+                player_push_acc,
+            }),
+        );
     }
 
     // 插画路径
-    let ill_png = super::cover_loader::covers_dir().join("ill").join(format!("{}.png", song.id));
-    let ill_jpg = super::cover_loader::covers_dir().join("ill").join(format!("{}.jpg", song.id));
-    let illustration_path = if ill_png.exists() { Some(ill_png) } else if ill_jpg.exists() { Some(ill_jpg) } else { None };
+    let ill_png = super::cover_loader::covers_dir()
+        .join("ill")
+        .join(format!("{}.png", song.id));
+    let ill_jpg = super::cover_loader::covers_dir()
+        .join("ill")
+        .join(format!("{}.jpg", song.id));
+    let illustration_path = if ill_png.exists() {
+        Some(ill_png)
+    } else if ill_jpg.exists() {
+        Some(ill_jpg)
+    } else {
+        None
+    };
 
     let update_time: DateTime<Utc> = parsed
         .updated_at
@@ -650,7 +828,9 @@ pub async fn render_song(
     let display_name = if let Some(n) = req.nickname.clone() {
         n
     } else if let Some(token) = req.auth.session_token.clone() {
-        fetch_nickname(&token).await.unwrap_or_else(|| "Phigros Player".into())
+        fetch_nickname(&token)
+            .await
+            .unwrap_or_else(|| "Phigros Player".into())
     } else {
         "Phigros Player".into()
     };
@@ -683,14 +863,21 @@ pub async fn render_song(
         q.width,
         q.webp_quality,
         q.webp_lossless,
-    ).await?;
+    )
+    .await?;
     let render_ms2 = t_render2.elapsed().as_millis() as i64;
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
-        let salt = crate::config::AppConfig::global().stats.user_hash_salt.as_deref();
-        let (user_hash, user_kind) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+        let salt = crate::config::AppConfig::global()
+            .stats
+            .user_hash_salt
+            .as_deref();
+        let (user_hash, user_kind) =
+            crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         let extra = serde_json::json!({ "song_id": song.id, "user_kind": user_kind });
-        stats.track_feature("single_query", "generate_image", user_hash, Some(extra)).await;
+        stats
+            .track_feature("single_query", "generate_image", user_hash, Some(extra))
+            .await;
     }
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -708,9 +895,27 @@ pub async fn render_song(
             };
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) { 1 } else { 0 };
-            let key = format!("{}:song:{}:{}:{}:{}:{}:{}:{}:{}", user_hash, song.id, updated, "d", if req.embed_images { 1 } else { 0 }, fmt_code, width_code, webp_quality_code, webp_lossless_code);
-            state.song_image_cache.insert(key, std::sync::Arc::new(bytes.clone())).await;
+            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
+                1
+            } else {
+                0
+            };
+            let key = format!(
+                "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
+                user_hash,
+                song.id,
+                updated,
+                "d",
+                if req.embed_images { 1 } else { 0 },
+                fmt_code,
+                width_code,
+                webp_quality_code,
+                webp_lossless_code
+            );
+            state
+                .song_image_cache
+                .insert(key, std::sync::Arc::new(bytes.clone()))
+                .await;
         }
     }
 
@@ -722,7 +927,7 @@ pub async fn render_song(
             Some("webp") => "webp",
             _ => "png",
         };
-        let evt = crate::features::stats::models::EventInsert{
+        let evt = crate::features::stats::models::EventInsert {
             ts_utc: chrono::Utc::now(),
             route: Some("/image/song".into()),
             feature: Some("image_render".into()),
@@ -733,7 +938,9 @@ pub async fn render_song(
             user_hash: None,
             client_ip_hash: None,
             instance: None,
-            extra_json: Some(serde_json::json!({"permits_avail": permits_avail2, "wait_ms": wait_ms2, "render_ms": render_ms2, "bytes": bytes.len(), "fmt": fmt_str, "width": q.width, "song_id": song.id})),
+            extra_json: Some(
+                serde_json::json!({"permits_avail": permits_avail2, "wait_ms": wait_ms2, "render_ms": render_ms2, "bytes": bytes.len(), "fmt": fmt_str, "width": q.width, "song_id": song.id}),
+            ),
         };
         h.track(evt).await;
     }
@@ -741,8 +948,14 @@ pub async fn render_song(
 }
 
 fn to_engine_record(r: &RenderRecord) -> Option<crate::features::rks::engine::RksRecord> {
-    let diff = match r.difficulty.as_str() {"EZ"=>Difficulty::EZ, "HD"=>Difficulty::HD, "IN"=>Difficulty::IN, "AT"=>Difficulty::AT, _=>return None};
-    Some(crate::features::rks::engine::RksRecord{
+    let diff = match r.difficulty.as_str() {
+        "EZ" => Difficulty::EZ,
+        "HD" => Difficulty::HD,
+        "IN" => Difficulty::IN,
+        "AT" => Difficulty::AT,
+        _ => return None,
+    };
+    Some(crate::features::rks::engine::RksRecord {
         song_id: r.song_id.clone(),
         difficulty: diff,
         score: r.score.unwrap_or(0.0) as u32,
@@ -752,13 +965,18 @@ fn to_engine_record(r: &RenderRecord) -> Option<crate::features::rks::engine::Rk
     })
 }
 
-fn to_save_source(req: &crate::features::save::models::UnifiedSaveRequest) -> Result<SaveSource, AppError> {
-    
+fn to_save_source(
+    req: &crate::features::save::models::UnifiedSaveRequest,
+) -> Result<SaveSource, AppError> {
     match (&req.session_token, &req.external_credentials) {
         (Some(token), None) => Ok(SaveSource::official(token.clone())),
         (None, Some(creds)) => Ok(SaveSource::external(creds.clone())),
-        (Some(_), Some(_)) => Err(AppError::SaveHandlerError("不能同时提供 sessionToken 和 externalCredentials".into())),
-        (None, None) => Err(AppError::SaveHandlerError("必须提供 sessionToken 或 externalCredentials 中的一项".into())),
+        (Some(_), Some(_)) => Err(AppError::SaveHandlerError(
+            "不能同时提供 sessionToken 和 externalCredentials".into(),
+        )),
+        (None, None) => Err(AppError::SaveHandlerError(
+            "必须提供 sessionToken 或 externalCredentials 中的一项".into(),
+        )),
     }
 }
 
@@ -772,7 +990,9 @@ pub fn create_image_router() -> Router<AppState> {
 /// 从 LeanCloud users/me 获取昵称（复用 phigros.cxx 的请求头部）
 async fn fetch_nickname(session_token: &str) -> Option<String> {
     #[derive(serde::Deserialize)]
-    struct UserMe { nickname: Option<String> }
+    struct UserMe {
+        nickname: Option<String>,
+    }
     const LC_ID: &str = "rAK3FfdieFob2Nn8Am";
     const LC_KEY: &str = "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0";
     let url = "https://rak3ffdi.cloud.tds1.tapapis.cn/1.1/users/me";
@@ -785,7 +1005,9 @@ async fn fetch_nickname(session_token: &str) -> Option<String> {
         .send()
         .await
         .ok()?;
-    if !resp.status().is_success() { return None; }
+    if !resp.status().is_success() {
+        return None;
+    }
     let me: UserMe = resp.json().await.ok()?;
     me.nickname
 }
@@ -817,7 +1039,9 @@ pub async fn render_bn_user(
     // 参数验证：webp_quality 范围
     if let Some(quality) = q.webp_quality {
         if quality > 100 {
-            return Err(AppError::Validation("webp_quality 必须在 1-100 范围内".to_string()));
+            return Err(AppError::Validation(
+                "webp_quality 必须在 1-100 范围内".to_string(),
+            ));
         }
     }
 
@@ -831,14 +1055,19 @@ pub async fn render_bn_user(
             .map_err(AppError::Search)?;
         // 定数
         let dv_opt = match item.difficulty.as_str() {
-            "EZ"|"ez" => info.chart_constants.ez,
-            "HD"|"hd" => info.chart_constants.hd,
-            "IN"|"in" => info.chart_constants.in_level,
-            "AT"|"at" => info.chart_constants.at,
+            "EZ" | "ez" => info.chart_constants.ez,
+            "HD" | "hd" => info.chart_constants.hd,
+            "IN" | "in" => info.chart_constants.in_level,
+            "AT" | "at" => info.chart_constants.at,
             _ => None,
         };
         let Some(dv) = dv_opt.map(|v| v as f64) else {
-            return Err(AppError::ImageRendererError(format!("第{}条成绩难度无效或无定数: {} {}", idx+1, info.name, item.difficulty)));
+            return Err(AppError::ImageRendererError(format!(
+                "第{}条成绩难度无效或无定数: {} {}",
+                idx + 1,
+                info.name,
+                item.difficulty
+            )));
         };
         // ACC 统一百分比
         let acc = item.acc;
@@ -857,40 +1086,86 @@ pub async fn render_bn_user(
     }
 
     // 排序、截取 N（按传入成绩数量）
-    records.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
+    records.sort_by(|a, b| {
+        b.rks
+            .partial_cmp(&a.rks)
+            .unwrap_or(core::cmp::Ordering::Equal)
+    });
     let n = records.len().max(1);
     let top: Vec<RenderRecord> = records.iter().take(n).cloned().collect();
 
     // 推分 ACC
     let mut push_acc_map: HashMap<String, f64> = HashMap::new();
-    let engine_all: Vec<crate::features::rks::engine::RksRecord> = records.iter().filter_map(|r| {
-        let diff = match r.difficulty.as_str() {"EZ"=>Difficulty::EZ, "HD"=>Difficulty::HD, "IN"=>Difficulty::IN, "AT"=>Difficulty::AT, _=>return None};
-        Some(crate::features::rks::engine::RksRecord{
-            song_id: r.song_id.clone(), difficulty: diff, score: r.score.unwrap_or(0.0) as u32,
-            acc: r.acc, rks: r.rks, chart_constant: r.difficulty_value,
+    let engine_all: Vec<crate::features::rks::engine::RksRecord> = records
+        .iter()
+        .filter_map(|r| {
+            let diff = match r.difficulty.as_str() {
+                "EZ" => Difficulty::EZ,
+                "HD" => Difficulty::HD,
+                "IN" => Difficulty::IN,
+                "AT" => Difficulty::AT,
+                _ => return None,
+            };
+            Some(crate::features::rks::engine::RksRecord {
+                song_id: r.song_id.clone(),
+                difficulty: diff,
+                score: r.score.unwrap_or(0.0) as u32,
+                acc: r.acc,
+                rks: r.rks,
+                chart_constant: r.difficulty_value,
+            })
         })
-    }).collect();
-    for r in top.iter().filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0) {
+        .collect();
+    for r in top
+        .iter()
+        .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
+    {
         let key = format!("{}-{}", r.song_id, r.difficulty);
-        if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(&key, r.difficulty_value, &engine_all) {
+        if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(
+            &key,
+            r.difficulty_value,
+            &engine_all,
+        ) {
             push_acc_map.insert(key, v);
         }
     }
 
     // 统计项
-    let (exact_rks, _rounded) = crate::features::rks::engine::calculate_player_rks_details(&engine_all);
+    let (exact_rks, _rounded) =
+        crate::features::rks::engine::calculate_player_rks_details(&engine_all);
     let ap_scores: Vec<_> = records.iter().filter(|r| r.acc >= 100.0).take(3).collect();
-    let ap_top_3_avg = if ap_scores.len() == 3 { Some(ap_scores.iter().map(|r| r.rks).sum::<f64>()/3.0) } else { None };
-    let best_27_avg = if records.is_empty() { None } else { Some(records.iter().take(27).map(|r| r.rks).sum::<f64>() / (records.len().min(27) as f64)) };
+    let ap_top_3_avg = if ap_scores.len() == 3 {
+        Some(ap_scores.iter().map(|r| r.rks).sum::<f64>() / 3.0)
+    } else {
+        None
+    };
+    let best_27_avg = if records.is_empty() {
+        None
+    } else {
+        Some(records.iter().take(27).map(|r| r.rks).sum::<f64>() / (records.len().min(27) as f64))
+    };
 
     // 昵称
-    let display_name = req.nickname.clone().unwrap_or_else(|| "Phigros Player".into());
+    let display_name = req
+        .nickname
+        .clone()
+        .unwrap_or_else(|| "Phigros Player".into());
 
     // 水印控制：默认启用配置中的显式/隐式；若提供了正确的解除口令，则同时关闭二者
     let cfg = AppConfig::global();
-    let unlocked = cfg.watermark.is_unlock_valid(req.unlock_password.as_deref());
-    let explicit = if unlocked { false } else { cfg.watermark.explicit_badge };
-    let implicit = if unlocked { false } else { cfg.watermark.implicit_pixel };
+    let unlocked = cfg
+        .watermark
+        .is_unlock_valid(req.unlock_password.as_deref());
+    let explicit = if unlocked {
+        false
+    } else {
+        cfg.watermark.explicit_badge
+    };
+    let implicit = if unlocked {
+        false
+    } else {
+        cfg.watermark.implicit_pixel
+    };
 
     let stats = PlayerStats {
         ap_top_3_avg,
@@ -899,7 +1174,12 @@ pub async fn render_bn_user(
         player_name: Some(display_name),
         update_time: Utc::now(),
         n: n as u32,
-        ap_top_3_scores: records.iter().filter(|r| r.acc >= 100.0).take(3).cloned().collect(),
+        ap_top_3_scores: records
+            .iter()
+            .filter(|r| r.acc >= 100.0)
+            .take(3)
+            .cloned()
+            .collect(),
         challenge_rank: None,
         data_string: None,
         custom_footer_text: Some(cfg.branding.footer_text.clone()),
@@ -914,7 +1194,8 @@ pub async fn render_bn_user(
         q.width,
         q.webp_quality,
         q.webp_lossless,
-    ).await?;
+    )
+    .await?;
 
     // 统计：用户自报 BestN 图片生成
     if let Some(stats_handle) = state.stats.as_ref() {

@@ -1,7 +1,7 @@
 use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration};
 
 use arrow_array::builder::{Int64Builder, StringBuilder, UInt16Builder};
-use arrow_array::{builder::TimestampMillisecondBuilder, ArrayRef, RecordBatch};
+use arrow_array::{ArrayRef, RecordBatch, builder::TimestampMillisecondBuilder};
 use arrow_schema::{DataType, Field, Schema};
 use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use parquet::arrow::ArrowWriter;
@@ -35,23 +35,42 @@ pub async fn run_daily_archiver(storage: Arc<StatsStorage>, cfg: StatsConfig) {
 
 fn parse_today_time(s: &str) -> Option<(u32, u32)> {
     let parts: Vec<_> = s.split(':').collect();
-    if parts.len() != 2 { return None; }
+    if parts.len() != 2 {
+        return None;
+    }
     let h = u32::from_str(parts[0]).ok()?;
     let m = u32::from_str(parts[1]).ok()?;
     Some((h.min(23), m.min(59)))
 }
 
-fn next_occurrence(now: chrono::DateTime<chrono::Local>, hh: u32, mm: u32) -> chrono::DateTime<chrono::Local> {
+fn next_occurrence(
+    now: chrono::DateTime<chrono::Local>,
+    hh: u32,
+    mm: u32,
+) -> chrono::DateTime<chrono::Local> {
     let today = now.date_naive();
     let target = NaiveDateTime::new(today, NaiveTime::from_hms_opt(hh, mm, 0).unwrap());
-    let candidate = chrono::Local.from_local_datetime(&target).single().unwrap_or(now);
-    if candidate > now { candidate } else { candidate + chrono::Duration::days(1) }
+    let candidate = chrono::Local
+        .from_local_datetime(&target)
+        .single()
+        .unwrap_or(now);
+    if candidate > now {
+        candidate
+    } else {
+        candidate + chrono::Duration::days(1)
+    }
 }
 
-pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig, day: NaiveDate) -> Result<(), AppError> {
-    if !arcfg.parquet { return Ok(()); }
-    let start = Utc.from_utc_datetime(&day.and_hms_opt(0,0,0).unwrap());
-    let end = Utc.from_utc_datetime(&day.and_hms_opt(23,59,59).unwrap());
+pub async fn archive_one_day(
+    storage: &StatsStorage,
+    arcfg: &StatsArchiveConfig,
+    day: NaiveDate,
+) -> Result<(), AppError> {
+    if !arcfg.parquet {
+        return Ok(());
+    }
+    let start = Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).unwrap());
+    let end = Utc.from_utc_datetime(&day.and_hms_opt(23, 59, 59).unwrap());
     let rows = sqlx::query(r#"SELECT ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json FROM events WHERE ts_utc BETWEEN ? AND ? ORDER BY ts_utc ASC"#)
         .bind(start.to_rfc3339())
         .bind(end.to_rfc3339())
@@ -79,16 +98,28 @@ pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig,
 
     for r in rows {
         let ts_s: String = r.try_get("ts_utc").unwrap_or_default();
-        let ts = chrono::DateTime::parse_from_rfc3339(&ts_s).ok().map(|dt| dt.with_timezone(&Utc));
-        if let Some(t) = ts { tsb.append_value(t.timestamp_millis()); } else { tsb.append_null(); }
+        let ts = chrono::DateTime::parse_from_rfc3339(&ts_s)
+            .ok()
+            .map(|dt| dt.with_timezone(&Utc));
+        if let Some(t) = ts {
+            tsb.append_value(t.timestamp_millis());
+        } else {
+            tsb.append_null();
+        }
 
         append_opt_string(&mut route_b, r.try_get("route").ok());
         append_opt_string(&mut feature_b, r.try_get("feature").ok());
         append_opt_string(&mut action_b, r.try_get("action").ok());
         append_opt_string(&mut method_b, r.try_get("method").ok());
 
-        match r.try_get::<i64, _>("status").ok().map(|v| v as u16) { Some(v) => status_b.append_value(v), None => status_b.append_null() }
-        match r.try_get::<i64, _>("duration_ms").ok() { Some(v) => dur_b.append_value(v), None => dur_b.append_null() }
+        match r.try_get::<i64, _>("status").ok().map(|v| v as u16) {
+            Some(v) => status_b.append_value(v),
+            None => status_b.append_null(),
+        }
+        match r.try_get::<i64, _>("duration_ms").ok() {
+            Some(v) => dur_b.append_value(v),
+            None => dur_b.append_null(),
+        }
 
         append_opt_string(&mut user_b, r.try_get("user_hash").ok());
         append_opt_string(&mut ip_b, r.try_get("client_ip_hash").ok());
@@ -97,7 +128,11 @@ pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig,
     }
 
     let schema = Schema::new(vec![
-        Field::new("ts_utc", DataType::Timestamp(arrow_schema::TimeUnit::Millisecond, None), true),
+        Field::new(
+            "ts_utc",
+            DataType::Timestamp(arrow_schema::TimeUnit::Millisecond, None),
+            true,
+        ),
         Field::new("route", DataType::Utf8, true),
         Field::new("feature", DataType::Utf8, true),
         Field::new("action", DataType::Utf8, true),
@@ -125,13 +160,15 @@ pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig,
             std::sync::Arc::new(inst_b.finish()),
             std::sync::Arc::new(extra_b.finish()),
         ],
-    ).map_err(|e| AppError::Internal(format!("build record batch: {e}")))?;
+    )
+    .map_err(|e| AppError::Internal(format!("build record batch: {e}")))?;
 
     // 输出路径
     let out_dir = partition_dir(&arcfg.dir, day);
     tokio::fs::create_dir_all(&out_dir).await.ok();
     let file = unique_file_in(&out_dir);
-    let f = std::fs::File::create(&file).map_err(|e| AppError::Internal(format!("create parquet: {e}")))?;
+    let f = std::fs::File::create(&file)
+        .map_err(|e| AppError::Internal(format!("create parquet: {e}")))?;
 
     // 压缩设置
     let compression = match arcfg.compress.to_ascii_lowercase().as_str() {
@@ -139,11 +176,22 @@ pub async fn archive_one_day(storage: &StatsStorage, arcfg: &StatsArchiveConfig,
         "zstd" => Compression::ZSTD(ZstdLevel::default()),
         _ => Compression::UNCOMPRESSED,
     };
-    let props = WriterProperties::builder().set_compression(compression).build();
-    let mut writer = ArrowWriter::try_new(f, std::sync::Arc::new(schema), Some(props)).map_err(|e| AppError::Internal(format!("arrow writer: {e}")))?;
-    writer.write(&batch).map_err(|e| AppError::Internal(format!("write batch: {e}")))?;
-    writer.close().map_err(|e| AppError::Internal(format!("close parquet: {e}")))?;
-    tracing::info!("统计归档完成: {} (rows={})", file.display(), batch.num_rows());
+    let props = WriterProperties::builder()
+        .set_compression(compression)
+        .build();
+    let mut writer = ArrowWriter::try_new(f, std::sync::Arc::new(schema), Some(props))
+        .map_err(|e| AppError::Internal(format!("arrow writer: {e}")))?;
+    writer
+        .write(&batch)
+        .map_err(|e| AppError::Internal(format!("write batch: {e}")))?;
+    writer
+        .close()
+        .map_err(|e| AppError::Internal(format!("close parquet: {e}")))?;
+    tracing::info!(
+        "统计归档完成: {} (rows={})",
+        file.display(),
+        batch.num_rows()
+    );
     Ok(())
 }
 
@@ -163,5 +211,8 @@ fn unique_file_in(dir: &PathBuf) -> PathBuf {
 }
 
 fn append_opt_string(b: &mut StringBuilder, v: Option<String>) {
-    match v { Some(s) => b.append_value(s), None => b.append_null() }
+    match v {
+        Some(s) => b.append_value(s),
+        None => b.append_null(),
+    }
 }

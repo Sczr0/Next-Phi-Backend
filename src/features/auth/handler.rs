@@ -5,10 +5,10 @@ use axum::{
     response::Json,
     routing::get,
 };
-use std::collections::HashMap;
 use base64::Engine;
 use qrcode::{QrCode, render::svg};
 use serde::Serialize;
+use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -67,12 +67,15 @@ pub async fn get_qrcode(
     // 生成 device_id 与 qr_id
     let device_id = Uuid::new_v4().to_string();
     let qr_id = Uuid::new_v4().to_string();
-    
+
     // 获取版本参数
     let version = params.get("version").map(|v| v.as_str());
 
     // 请求 TapTap 设备码
-    let device = state.taptap_client.request_device_code(&device_id, version).await?;
+    let device = state
+        .taptap_client
+        .request_device_code(&device_id, version)
+        .await?;
 
     let device_code = device
         .device_code
@@ -113,7 +116,13 @@ pub async fn get_qrcode(
     let interval_secs = device.interval.unwrap_or(5);
     state
         .qrcode_service
-        .set_pending(qr_id.clone(), device_code, device_id, interval_secs, version.map(|v| v.to_string()))
+        .set_pending(
+            qr_id.clone(),
+            device_code,
+            device_id,
+            interval_secs,
+            version.map(|v| v.to_string()),
+        )
         .await;
 
     let resp = QrCodeCreateResponse {
@@ -219,7 +228,13 @@ pub async fn get_qrcode_status(
                     // 按 interval 延后下一次轮询
                     state
                         .qrcode_service
-                        .set_pending_next_poll(&qr_id, device_code, device_id, interval_secs, version)
+                        .set_pending_next_poll(
+                            &qr_id,
+                            device_code,
+                            device_id,
+                            interval_secs,
+                            version,
+                        )
                         .await;
                     Ok((
                         StatusCode::OK,

@@ -1,8 +1,8 @@
 use config::{Config as ConfigBuilder, ConfigError, Environment, File};
 use once_cell::sync::OnceCell;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 
 /// 全局配置单例
 static CONFIG: OnceCell<AppConfig> = OnceCell::new();
@@ -146,13 +146,17 @@ impl AppConfig {
             .build()?;
 
         let config: Self = builder.try_deserialize()?;
-        
+
         // 调试：打印 user_hash_salt 配置状态
         tracing::debug!(
             "配置加载完成: user_hash_salt = {:?}",
-            config.stats.user_hash_salt.as_deref().map(|s| format!("{}...", &s[..s.len().min(4)]))
+            config
+                .stats
+                .user_hash_salt
+                .as_deref()
+                .map(|s| format!("{}...", &s[..s.len().min(4)]))
         );
-        
+
         Ok(config)
     }
 
@@ -282,35 +286,53 @@ pub struct ImageRenderConfig {
 }
 
 impl ImageRenderConfig {
-    fn default_cache_enabled() -> bool { true }
-    fn default_cache_max_bytes() -> u64 { 100 * 1024 * 1024 }
-    fn default_cache_ttl() -> u64 { 60 }
-    fn default_cache_tti() -> u64 { 30 }
+    fn default_cache_enabled() -> bool {
+        true
+    }
+    fn default_cache_max_bytes() -> u64 {
+        100 * 1024 * 1024
+    }
+    fn default_cache_ttl() -> u64 {
+        60
+    }
+    fn default_cache_tti() -> u64 {
+        30
+    }
 }
 
 /// 统计归档配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsArchiveConfig {
     /// 是否启用 Parquet 归档
-    #[serde(default = "StatsArchiveConfig::default_parquet")] 
+    #[serde(default = "StatsArchiveConfig::default_parquet")]
     pub parquet: bool,
     /// 归档目录
-    #[serde(default = "StatsArchiveConfig::default_dir")] 
+    #[serde(default = "StatsArchiveConfig::default_dir")]
     pub dir: String,
     /// 压缩算法：none|zstd|snappy（仅对 Parquet 生效）
-    #[serde(default = "StatsArchiveConfig::default_compress")] 
+    #[serde(default = "StatsArchiveConfig::default_compress")]
     pub compress: String,
 }
 
 impl StatsArchiveConfig {
-    fn default_parquet() -> bool { true }
-    fn default_dir() -> String { "./resources/stats/v1/events".to_string() }
-    fn default_compress() -> String { "zstd".to_string() }
+    fn default_parquet() -> bool {
+        true
+    }
+    fn default_dir() -> String {
+        "./resources/stats/v1/events".to_string()
+    }
+    fn default_compress() -> String {
+        "zstd".to_string()
+    }
 }
 
 impl Default for StatsArchiveConfig {
     fn default() -> Self {
-        Self { parquet: true, dir: Self::default_dir(), compress: Self::default_compress() }
+        Self {
+            parquet: true,
+            dir: Self::default_dir(),
+            compress: Self::default_compress(),
+        }
     }
 }
 
@@ -318,28 +340,28 @@ impl Default for StatsArchiveConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatsConfig {
     /// 是否启用统计
-    #[serde(default = "StatsConfig::default_enabled")] 
+    #[serde(default = "StatsConfig::default_enabled")]
     pub enabled: bool,
     /// 起始统计时间（ISO8601 可选），早于此时间的事件可忽略
     #[serde(default)]
     pub start_at: Option<String>,
     /// 存储类型：sqlite
-    #[serde(default = "StatsConfig::default_storage")] 
+    #[serde(default = "StatsConfig::default_storage")]
     pub storage: String,
     /// SQLite 文件路径
-    #[serde(default = "StatsConfig::default_sqlite_path")] 
+    #[serde(default = "StatsConfig::default_sqlite_path")]
     pub sqlite_path: String,
     /// 是否启用 WAL
-    #[serde(default = "StatsConfig::default_sqlite_wal")] 
+    #[serde(default = "StatsConfig::default_sqlite_wal")]
     pub sqlite_wal: bool,
     /// 批量大小
-    #[serde(default = "StatsConfig::default_batch_size")] 
+    #[serde(default = "StatsConfig::default_batch_size")]
     pub batch_size: usize,
     /// 刷新间隔（毫秒）
-    #[serde(default = "StatsConfig::default_flush_ms")] 
+    #[serde(default = "StatsConfig::default_flush_ms")]
     pub flush_interval_ms: u64,
     /// 热数据保留天数
-    #[serde(default = "StatsConfig::default_retention_days")] 
+    #[serde(default = "StatsConfig::default_retention_days")]
     pub retention_hot_days: u32,
     /// 归档配置
     #[serde(default)]
@@ -348,23 +370,41 @@ pub struct StatsConfig {
     #[serde(default, alias = "user-hash-salt", alias = "userHashSalt")]
     pub user_hash_salt: Option<String>,
     /// 展示统计的时区（IANA 名称，如 Asia/Shanghai）
-    #[serde(default = "StatsConfig::default_timezone")] 
+    #[serde(default = "StatsConfig::default_timezone")]
     pub timezone: String,
     /// 每日聚合与归档时间（本地时区，如 "03:00"）
-    #[serde(default = "StatsConfig::default_daily_time")] 
+    #[serde(default = "StatsConfig::default_daily_time")]
     pub daily_aggregate_time: String,
 }
 
 impl StatsConfig {
-    fn default_enabled() -> bool { true }
-    fn default_storage() -> String { "sqlite".to_string() }
-    fn default_sqlite_path() -> String { "./resources/usage_stats.db".to_string() }
-    fn default_sqlite_wal() -> bool { true }
-    fn default_batch_size() -> usize { 100 }
-    fn default_flush_ms() -> u64 { 1000 }
-    fn default_retention_days() -> u32 { 180 }
-    fn default_timezone() -> String { "Asia/Shanghai".to_string() }
-    fn default_daily_time() -> String { "03:00".to_string() }
+    fn default_enabled() -> bool {
+        true
+    }
+    fn default_storage() -> String {
+        "sqlite".to_string()
+    }
+    fn default_sqlite_path() -> String {
+        "./resources/usage_stats.db".to_string()
+    }
+    fn default_sqlite_wal() -> bool {
+        true
+    }
+    fn default_batch_size() -> usize {
+        100
+    }
+    fn default_flush_ms() -> u64 {
+        1000
+    }
+    fn default_retention_days() -> u32 {
+        180
+    }
+    fn default_timezone() -> String {
+        "Asia/Shanghai".to_string()
+    }
+    fn default_daily_time() -> String {
+        "03:00".to_string()
+    }
 }
 
 impl Default for StatsConfig {
@@ -414,21 +454,37 @@ pub struct WatermarkConfig {
 }
 
 impl WatermarkConfig {
-    fn default_explicit() -> bool { true }
-    fn default_implicit() -> bool { true }
-    fn default_salt() -> String { "phi".to_string() }
-    fn default_ttl() -> u64 { 600 }
-    fn default_code_len() -> usize { 8 }
+    fn default_explicit() -> bool {
+        true
+    }
+    fn default_implicit() -> bool {
+        true
+    }
+    fn default_salt() -> String {
+        "phi".to_string()
+    }
+    fn default_ttl() -> u64 {
+        600
+    }
+    fn default_code_len() -> usize {
+        8
+    }
 
     /// 校验解除口令（静态或动态）
     pub fn is_unlock_valid(&self, input: Option<&str>) -> bool {
-        let Some(pwd) = input else { return false; };
+        let Some(pwd) = input else {
+            return false;
+        };
         if let Some(st) = &self.unlock_static {
-            if !st.is_empty() && pwd == st { return true; }
+            if !st.is_empty() && pwd == st {
+                return true;
+            }
         }
         if self.unlock_dynamic {
             if let Some(cur) = self.current_dynamic_code() {
-                if pwd.eq_ignore_ascii_case(&cur) { return true; }
+                if pwd.eq_ignore_ascii_case(&cur) {
+                    return true;
+                }
             }
         }
         false
@@ -436,12 +492,18 @@ impl WatermarkConfig {
 
     /// 计算当前窗口的动态口令
     pub fn current_dynamic_code(&self) -> Option<String> {
-        if !self.unlock_dynamic { return None; }
+        if !self.unlock_dynamic {
+            return None;
+        }
         use std::time::{SystemTime, UNIX_EPOCH};
         let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
         let ttl = self.dynamic_ttl_secs.max(1);
         let window = now / ttl;
-        let salt = if self.dynamic_salt.is_empty() { "phi" } else { &self.dynamic_salt };
+        let salt = if self.dynamic_salt.is_empty() {
+            "phi"
+        } else {
+            &self.dynamic_salt
+        };
         let secret = self.dynamic_secret.as_deref().unwrap_or("");
         // 通过 盐值 + 时间窗口 + 可选密钥 计算 SHA-256 哈希，并截取前缀作为口令
         let input = format!("{salt}:{window}:{secret}");
@@ -485,9 +547,15 @@ pub struct ShutdownConfig {
 }
 
 impl ShutdownConfig {
-    fn default_timeout() -> u64 { 30 }
-    fn default_force() -> bool { true }
-    fn default_force_delay() -> u64 { 10 }
+    fn default_timeout() -> u64 {
+        30
+    }
+    fn default_force() -> bool {
+        true
+    }
+    fn default_force_delay() -> u64 {
+        10
+    }
 
     /// 获取优雅退出超时时间
     pub fn timeout_duration(&self) -> std::time::Duration {
@@ -526,9 +594,15 @@ pub struct WatchdogConfig {
 }
 
 impl WatchdogConfig {
-    fn default_enabled() -> bool { false }
-    fn default_timeout() -> u64 { 60 }
-    fn default_interval() -> u64 { 10 }
+    fn default_enabled() -> bool {
+        false
+    }
+    fn default_timeout() -> u64 {
+        60
+    }
+    fn default_interval() -> u64 {
+        10
+    }
 
     /// 获取看门狗超时时间
     pub fn timeout_duration(&self) -> std::time::Duration {
@@ -575,16 +649,30 @@ pub struct LeaderboardConfig {
     #[serde(default = "LeaderboardConfig::default_show_ap3")]
     pub default_show_ap_top3: bool,
     /// 管理员令牌列表（Header: X-Admin-Token）
-    #[serde(default = "LeaderboardConfig::default_admin_tokens", alias = "admin-tokens", alias = "adminTokens")]
+    #[serde(
+        default = "LeaderboardConfig::default_admin_tokens",
+        alias = "admin-tokens",
+        alias = "adminTokens"
+    )]
     pub admin_tokens: Vec<String>,
 }
 
 impl LeaderboardConfig {
-    fn default_enabled() -> bool { true }
-    fn default_allow_public() -> bool { true }
-    fn default_show_rc() -> bool { true }
-    fn default_show_b3() -> bool { true }
-    fn default_show_ap3() -> bool { true }
+    fn default_enabled() -> bool {
+        true
+    }
+    fn default_allow_public() -> bool {
+        true
+    }
+    fn default_show_rc() -> bool {
+        true
+    }
+    fn default_show_b3() -> bool {
+        true
+    }
+    fn default_show_ap3() -> bool {
+        true
+    }
     fn default_admin_tokens() -> Vec<String> {
         if let Ok(raw) = std::env::var("APP_LEADERBOARD_ADMIN_TOKENS") {
             return raw

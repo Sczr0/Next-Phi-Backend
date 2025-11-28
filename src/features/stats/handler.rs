@@ -1,4 +1,9 @@
-use axum::{extract::{Query, State}, response::Json, routing::{get, post}, Router};
+use axum::{
+    Router,
+    extract::{Query, State},
+    response::Json,
+    routing::{get, post},
+};
 use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
@@ -28,16 +33,26 @@ pub struct DailyQuery {
     responses((status = 200, body = [DailyAggRow])),
     tag = "Stats"
 )]
-pub async fn get_daily_stats(State(state): State<AppState>, Query(q): Query<DailyQuery>) -> Result<Json<Vec<DailyAggRow>>, AppError> {
-    let start = NaiveDate::parse_from_str(&q.start, "%Y-%m-%d").map_err(|e| AppError::Internal(format!("start 日期无效: {e}")))?;
-    let end = NaiveDate::parse_from_str(&q.end, "%Y-%m-%d").map_err(|e| AppError::Internal(format!("end 日期无效: {e}")))?;
-    let storage = state.stats_storage.as_ref().ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+pub async fn get_daily_stats(
+    State(state): State<AppState>,
+    Query(q): Query<DailyQuery>,
+) -> Result<Json<Vec<DailyAggRow>>, AppError> {
+    let start = NaiveDate::parse_from_str(&q.start, "%Y-%m-%d")
+        .map_err(|e| AppError::Internal(format!("start 日期无效: {e}")))?;
+    let end = NaiveDate::parse_from_str(&q.end, "%Y-%m-%d")
+        .map_err(|e| AppError::Internal(format!("end 日期无效: {e}")))?;
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
     let rows = storage.query_daily(start, end, q.feature).await?;
     Ok(Json(rows))
 }
 
 #[derive(Deserialize)]
-pub struct ArchiveQuery { date: Option<String> }
+pub struct ArchiveQuery {
+    date: Option<String>,
+}
 
 #[utoipa::path(
     post,
@@ -48,11 +63,24 @@ pub struct ArchiveQuery { date: Option<String> }
     responses((status = 200, description = "归档已触发")),
     tag = "Stats"
 )]
-pub async fn trigger_archive_now(State(state): State<AppState>, Query(q): Query<ArchiveQuery>) -> Result<Json<serde_json::Value>, AppError> {
-    let day = if let Some(d) = q.date { chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d").map_err(|e| AppError::Internal(format!("date 无效: {e}")))? } else { (Utc::now() - chrono::Duration::days(1)).date_naive() };
-    let storage = state.stats_storage.as_ref().ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+pub async fn trigger_archive_now(
+    State(state): State<AppState>,
+    Query(q): Query<ArchiveQuery>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let day = if let Some(d) = q.date {
+        chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")
+            .map_err(|e| AppError::Internal(format!("date 无效: {e}")))?
+    } else {
+        (Utc::now() - chrono::Duration::days(1)).date_naive()
+    };
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
     archive_one_day(storage, &crate::config::StatsArchiveConfig::default(), day).await?;
-    Ok(Json(serde_json::json!({"ok": true, "date": day.to_string()})))
+    Ok(Json(
+        serde_json::json!({"ok": true, "date": day.to_string()}),
+    ))
 }
 
 pub fn create_stats_router() -> Router<AppState> {
@@ -109,16 +137,29 @@ pub struct StatsSummaryResponse {
     responses((status = 200, body = StatsSummaryResponse)),
     tag = "Stats"
 )]
-pub async fn get_stats_summary(State(state): State<AppState>) -> Result<Json<StatsSummaryResponse>, AppError> {
-    let storage = state.stats_storage.as_ref().ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+pub async fn get_stats_summary(
+    State(state): State<AppState>,
+) -> Result<Json<StatsSummaryResponse>, AppError> {
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
     let tz_name = crate::config::AppConfig::global().stats.timezone.clone();
     let tz = parse_tz(&tz_name);
 
     // overall first/last event
     let row = sqlx::query("SELECT MIN(ts_utc) as min_ts, MAX(ts_utc) as max_ts FROM events")
-        .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("summary overall: {e}")))?;
-    let first_event_at = row.try_get::<String, _>("min_ts").ok().and_then(|s| convert_tz(&s, tz));
-    let last_event_at = row.try_get::<String, _>("max_ts").ok().and_then(|s| convert_tz(&s, tz));
+        .fetch_one(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("summary overall: {e}")))?;
+    let first_event_at = row
+        .try_get::<String, _>("min_ts")
+        .ok()
+        .and_then(|s| convert_tz(&s, tz));
+    let last_event_at = row
+        .try_get::<String, _>("max_ts")
+        .ok()
+        .and_then(|s| convert_tz(&s, tz));
 
     // features usage
     let feat_rows = sqlx::query("SELECT feature, COUNT(1) as cnt, MAX(ts_utc) as last_ts FROM events WHERE feature IS NOT NULL GROUP BY feature")
@@ -129,12 +170,20 @@ pub async fn get_stats_summary(State(state): State<AppState>) -> Result<Json<Sta
         let c: i64 = r.try_get("cnt").unwrap_or(0);
         let last: Option<String> = r.try_get("last_ts").ok();
         let last = last.and_then(|s| convert_tz(&s, tz));
-        features.push(FeatureUsageSummary { feature: f, count: c, last_at: last });
+        features.push(FeatureUsageSummary {
+            feature: f,
+            count: c,
+            last_at: last,
+        });
     }
 
     // unique users (total)
-    let row = sqlx::query("SELECT COUNT(DISTINCT user_hash) as total FROM events WHERE user_hash IS NOT NULL")
-        .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
+    let row = sqlx::query(
+        "SELECT COUNT(DISTINCT user_hash) as total FROM events WHERE user_hash IS NOT NULL",
+    )
+    .fetch_one(&storage.pool)
+    .await
+    .map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
     let total: i64 = row.try_get("total").unwrap_or(0);
 
     // by_kind via extra_json.user_kind （在应用端聚合，避免对 SQLite JSON1 的依赖）
@@ -143,8 +192,14 @@ pub async fn get_stats_summary(State(state): State<AppState>) -> Result<Json<Sta
     use std::collections::{HashMap, HashSet};
     let mut uniq: HashSet<(String, String)> = HashSet::new();
     for r in rows {
-        let uh: String = match r.try_get("user_hash") { Ok(v) => v, Err(_) => continue };
-        let ej: String = match r.try_get("extra_json") { Ok(v) => v, Err(_) => continue };
+        let uh: String = match r.try_get("user_hash") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let ej: String = match r.try_get("extra_json") {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej) {
             if let Some(kind) = val.get("user_kind").and_then(|v| v.as_str()) {
                 uniq.insert((uh.clone(), kind.to_string()));
@@ -152,9 +207,11 @@ pub async fn get_stats_summary(State(state): State<AppState>) -> Result<Json<Sta
         }
     }
     let mut by_kind_map: HashMap<String, i64> = HashMap::new();
-    for (_, k) in uniq.into_iter() { *by_kind_map.entry(k).or_insert(0) += 1; }
+    for (_, k) in uniq.into_iter() {
+        *by_kind_map.entry(k).or_insert(0) += 1;
+    }
     let mut by_kind: Vec<(String, i64)> = by_kind_map.into_iter().collect();
-    by_kind.sort_by(|a,b| b.1.cmp(&a.1));
+    by_kind.sort_by(|a, b| b.1.cmp(&a.1));
 
     let resp = StatsSummaryResponse {
         timezone: tz_name,
@@ -167,7 +224,10 @@ pub async fn get_stats_summary(State(state): State<AppState>) -> Result<Json<Sta
     Ok(Json(resp))
 }
 
-fn parse_tz(name: &str) -> chrono_tz::Tz { name.parse::<chrono_tz::Tz>().unwrap_or(chrono_tz::Asia::Shanghai) }
+fn parse_tz(name: &str) -> chrono_tz::Tz {
+    name.parse::<chrono_tz::Tz>()
+        .unwrap_or(chrono_tz::Asia::Shanghai)
+}
 
 fn convert_tz(ts_rfc3339: &str, tz: chrono_tz::Tz) -> Option<String> {
     let dt = chrono::DateTime::parse_from_rfc3339(ts_rfc3339).ok()?;

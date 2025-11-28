@@ -2,10 +2,10 @@
 //!
 //! 提供systemd看门狗协议支持，定期向systemd发送心跳通知
 
-use std::time::Duration;
-use tracing::{debug, error, info, warn};
 use crate::config::WatchdogConfig;
-use crate::shutdown::{ShutdownManager, ShutdownHandle};
+use crate::shutdown::{ShutdownHandle, ShutdownManager};
+use std::time::Duration;
+use tracing::{debug, error, info};
 
 /// systemd 看门狗管理器
 #[derive(Debug, Clone)]
@@ -16,7 +16,7 @@ pub struct SystemdWatchdog {
 
 #[cfg(target_os = "linux")]
 mod systemd_impl {
-    use sd_notify::{notify, NotifyState};
+    use sd_notify::{NotifyState, notify};
     use tracing::{debug, error};
 
     /// 通知systemd服务状态
@@ -148,7 +148,10 @@ impl SystemdWatchdog {
             info!("systemd看门狗超时时间: {}μs", watchdog_timeout_us.unwrap());
         }
 
-        info!("启动看门狗任务，间隔: {:?}", self.config.interval_duration());
+        info!(
+            "启动看门狗任务，间隔: {:?}",
+            self.config.interval_duration()
+        );
 
         let interval = self.config.interval_duration();
         let shutdown_handle = self.shutdown_handle.clone();

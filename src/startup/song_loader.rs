@@ -79,8 +79,7 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
     };
 
     for rec in rdr.records() {
-        let record =
-            rec.map_err(|e| AppError::Internal(format!("读取 info.csv 记录失败: {e}")))?;
+        let record = rec.map_err(|e| AppError::Internal(format!("读取 info.csv 记录失败: {e}")))?;
 
         let id = record.get(id_idx).unwrap_or("").trim().to_string();
         if id.is_empty() {

@@ -1,20 +1,26 @@
 use axum::{Router, http::StatusCode, response::Json, routing::get};
+use moka::future::Cache;
 use phi_backend::features::auth::client::TapTapClient;
-use phi_backend::features::{auth, save, song};
 use phi_backend::features::leaderboard::handler::create_leaderboard_router;
-use phi_backend::features::stats::{self, handler::create_stats_router, middleware::{stats_middleware, StateWithStats}};
+use phi_backend::features::stats::{
+    self,
+    handler::create_stats_router,
+    middleware::{StateWithStats, stats_middleware},
+};
+use phi_backend::features::{auth, save, song};
 use phi_backend::startup::chart_loader::{ChartConstantsMap, load_chart_constants};
 use phi_backend::startup::{run_startup_checks, song_loader};
 use phi_backend::state::AppState;
-use phi_backend::{AppError, config::AppConfig, error::SaveProviderError, ShutdownManager, SystemdWatchdog};
+use phi_backend::{
+    AppError, ShutdownManager, SystemdWatchdog, config::AppConfig, error::SaveProviderError,
+};
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
-use moka::future::Cache;
 use std::time::Duration;
+use tokio::sync::Semaphore;
+use utoipa::Modify;
 use utoipa::OpenApi;
-use utoipa::{Modify};
-use utoipa::openapi::security::{SecurityScheme, ApiKey, ApiKeyValue};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
 #[derive(OpenApi)]
@@ -156,13 +162,17 @@ async fn main() {
         tracing::warn!("发送reloading信号失败: {}", e);
     }
     if let Some(code) = config.watermark.current_dynamic_code() {
-        tracing::info!("watermark_unlock_code = {} (valid for ~{}s)", code, config.watermark.dynamic_ttl_secs);
+        tracing::info!(
+            "watermark_unlock_code = {} (valid for ~{}s)",
+            code,
+            config.watermark.dynamic_ttl_secs
+        );
     }
     // 周期性打印动态口令（仅当启用动态口令时）
     if config.watermark.unlock_dynamic {
         let wm = config.watermark.clone();
         tokio::spawn(async move {
-            use tokio::time::{interval, Duration};
+            use tokio::time::{Duration, interval};
             let ttl = wm.dynamic_ttl_secs.max(1);
             let period = std::cmp::max(1, ttl / 4);
             let mut ticker = interval(Duration::from_secs(period));
@@ -172,7 +182,11 @@ async fn main() {
                 if let Some(code) = wm.current_dynamic_code() {
                     if code != last {
                         last = code.clone();
-                        tracing::info!("watermark_unlock_code = {} (valid for ~{}s)", code, wm.dynamic_ttl_secs);
+                        tracing::info!(
+                            "watermark_unlock_code = {} (valid for ~{}s)",
+                            code,
+                            wm.dynamic_ttl_secs
+                        );
                     }
                 } else {
                     // 未启用动态口令，停止任务
@@ -217,9 +231,14 @@ async fn main() {
     let (stats_handle_opt, stats_storage_opt) = if config.stats.enabled {
         match stats::init_stats(config).await {
             Ok((h, storage)) => (Some(h), Some(storage)),
-            Err(e) => { tracing::warn!("统计初始化失败：{}（将继续运行）", e); (None, None) }
+            Err(e) => {
+                tracing::warn!("统计初始化失败：{}（将继续运行）", e);
+                (None, None)
+            }
         }
-    } else { (None, None) };
+    } else {
+        (None, None)
+    };
 
     // 初始化图片缓存（容量按总字节数加权）
     let bn_image_cache: Cache<String, Arc<Vec<u8>>> = {
@@ -248,7 +267,10 @@ async fn main() {
         qrcode_service,
         stats: stats_handle_opt.clone(),
         stats_storage: stats_storage_opt.clone(),
-        render_semaphore: Arc::new(Semaphore::new({ let m = config.image.max_parallel as usize; if m == 0 { num_cpus::get() } else { m } })),
+        render_semaphore: Arc::new(Semaphore::new({
+            let m = config.image.max_parallel as usize;
+            if m == 0 { num_cpus::get() } else { m }
+        })),
         bn_image_cache,
         song_image_cache,
     };
@@ -270,7 +292,9 @@ async fn main() {
 
     // 全局请求采集中间件
     if let Some(ref stats_handle) = stats_handle_opt {
-        let s = StateWithStats { stats: stats_handle.clone() };
+        let s = StateWithStats {
+            stats: stats_handle.clone(),
+        };
         app = app.layer(axum::middleware::from_fn_with_state(s, stats_middleware));
     }
 
@@ -322,7 +346,10 @@ async fn main() {
             // 清理统计服务
             if let Some(stats_handle) = stats_handle_for_cleanup.clone() {
                 tracing::info!("开始关闭统计服务...");
-                if let Err(e) = stats_handle.graceful_shutdown(std::time::Duration::from_secs(10)).await {
+                if let Err(e) = stats_handle
+                    .graceful_shutdown(std::time::Duration::from_secs(10))
+                    .await
+                {
                     tracing::warn!("统计服务关闭失败: {}", e);
                 } else {
                     tracing::info!("统计服务已优雅关闭");
@@ -331,7 +358,9 @@ async fn main() {
 
             // 等待一小段时间确保其他资源清理完成
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-        }).await {
+        })
+        .await
+        {
             Ok(_) => {
                 tracing::info!("优雅退出完成");
             }
@@ -346,12 +375,11 @@ async fn main() {
     };
 
     // 运行服务器直到收到退出信号
-    let graceful = axum::serve(listener, app)
-        .with_graceful_shutdown(async {
-            // 等待退出信号
-            shutdown_signal.await;
-            tracing::info!("开始优雅关闭HTTP服务器...");
-        });
+    let graceful = axum::serve(listener, app).with_graceful_shutdown(async {
+        // 等待退出信号
+        shutdown_signal.await;
+        tracing::info!("开始优雅关闭HTTP服务器...");
+    });
 
     if let Err(e) = graceful.await {
         tracing::error!("服务器运行错误: {}", e);

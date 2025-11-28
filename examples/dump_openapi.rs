@@ -1,9 +1,9 @@
 // 生成 OpenAPI JSON（无需启动服务），便于 SDK 代码生成
 // 用法：cargo run --example dump_openapi > sdk/openapi.json
 
+use utoipa::Modify;
 use utoipa::OpenApi;
-use utoipa::{Modify};
-use utoipa::openapi::security::{SecurityScheme, ApiKey, ApiKeyValue};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 
 // 与 src/main.rs 内一致的安全设置
 struct AdminTokenSecurity;
@@ -36,7 +36,6 @@ impl Modify for AdminTokenSecurity {
         phi_backend::features::leaderboard::handler::put_alias,
         phi_backend::features::leaderboard::handler::put_profile,
         phi_backend::features::leaderboard::handler::get_public_profile,
-        
     ),
     components(
         schemas(

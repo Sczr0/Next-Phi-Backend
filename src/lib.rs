@@ -22,5 +22,5 @@ pub mod watchdog;
 // 导出常用类型供外部使用
 pub use config::AppConfig;
 pub use error::AppError;
-pub use shutdown::{ShutdownManager, ShutdownHandle, ShutdownReason};
+pub use shutdown::{ShutdownHandle, ShutdownManager, ShutdownReason};
 pub use watchdog::SystemdWatchdog;

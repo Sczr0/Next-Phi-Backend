@@ -143,20 +143,42 @@ pub fn calculate_player_rks_simplified(
 
     for (song_id, diffs) in records.iter() {
         for rec in diffs {
-            let Some(consts) = chart_constants.get(song_id) else { continue; };
-            let Some(level) = level_for_difficulty(consts, &rec.difficulty) else { continue; };
+            let Some(consts) = chart_constants.get(song_id) else {
+                continue;
+            };
+            let Some(level) = level_for_difficulty(consts, &rec.difficulty) else {
+                continue;
+            };
 
             let acc_percent = rec.accuracy as f64;
-            let acc_decimal = if acc_percent > 1.5 { acc_percent / 100.0 } else { acc_percent } as f32;
+            let acc_decimal = if acc_percent > 1.5 {
+                acc_percent / 100.0
+            } else {
+                acc_percent
+            } as f32;
             let rks_value = calculate_single_chart_rks(acc_decimal, level);
-            let entry = ChartRankingScore { song_id: song_id.clone(), difficulty: rec.difficulty.clone(), rks: rks_value };
+            let entry = ChartRankingScore {
+                song_id: song_id.clone(),
+                difficulty: rec.difficulty.clone(),
+                rks: rks_value,
+            };
             all_scores.push(entry.clone());
-            if acc_percent >= 100.0 { phi_scores.push(entry); }
+            if acc_percent >= 100.0 {
+                phi_scores.push(entry);
+            }
         }
     }
 
-    all_scores.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
-    phi_scores.sort_by(|a,b| b.rks.partial_cmp(&a.rks).unwrap_or(core::cmp::Ordering::Equal));
+    all_scores.sort_by(|a, b| {
+        b.rks
+            .partial_cmp(&a.rks)
+            .unwrap_or(core::cmp::Ordering::Equal)
+    });
+    phi_scores.sort_by(|a, b| {
+        b.rks
+            .partial_cmp(&a.rks)
+            .unwrap_or(core::cmp::Ordering::Equal)
+    });
 
     const TOP_GENERAL: usize = 27;
     const TOP_PHI: usize = 3;
@@ -170,7 +192,10 @@ pub fn calculate_player_rks_simplified(
     let sum_ap3: f64 = phi_scores.iter().take(TOP_PHI).map(|c| c.rks).sum();
     let total_rks = (sum_best27 + sum_ap3) / 30.0;
 
-    PlayerRksResult { total_rks, b30_charts: picked }
+    PlayerRksResult {
+        total_rks,
+        b30_charts: picked,
+    }
 }
 
 fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f32> {

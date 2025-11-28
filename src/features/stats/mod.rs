@@ -1,8 +1,8 @@
+pub mod archive;
+pub mod handler;
+pub mod middleware;
 pub mod models;
 pub mod storage;
-pub mod middleware;
-pub mod handler;
-pub mod archive;
 
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
@@ -45,8 +45,12 @@ impl StatsHandle {
         let mut rx = self.done_rx.clone();
         let wait = async {
             loop {
-                if *rx.borrow() { break; }
-                if rx.changed().await.is_err() { break; }
+                if *rx.borrow() {
+                    break;
+                }
+                if rx.changed().await.is_err() {
+                    break;
+                }
             }
         };
 
@@ -65,7 +69,13 @@ impl StatsHandle {
     }
 
     /// 业务级打点：功能/动作
-    pub async fn track_feature(&self, feature: &str, action: &str, user_hash: Option<String>, extra_json: Option<serde_json::Value>) {
+    pub async fn track_feature(
+        &self,
+        feature: &str,
+        action: &str,
+        user_hash: Option<String>,
+        extra_json: Option<serde_json::Value>,
+    ) {
         let now = chrono::Utc::now();
         let evt = EventInsert {
             ts_utc: now,
@@ -90,7 +100,7 @@ fn hostname() -> String {
 
 /// 初始化统计���务：创建 SQLite、spawn 批量写入与每日归档任务
 pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsStorage>), AppError> {
-    if !config.stats.enabled { 
+    if !config.stats.enabled {
         tracing::warn!("统计功能已禁用（config.stats.enabled=false）");
     }
 
@@ -103,9 +113,13 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
 
     // 确保目录存在
     let db_path = PathBuf::from(&config.stats.sqlite_path);
-    if let Some(dir) = db_path.parent() { tokio::fs::create_dir_all(dir).await.ok(); }
+    if let Some(dir) = db_path.parent() {
+        tokio::fs::create_dir_all(dir).await.ok();
+    }
 
-    let storage = Arc::new(StatsStorage::connect_sqlite(&config.stats.sqlite_path, config.stats.sqlite_wal).await?);
+    let storage = Arc::new(
+        StatsStorage::connect_sqlite(&config.stats.sqlite_path, config.stats.sqlite_wal).await?,
+    );
     storage.init_schema().await?;
 
     let (tx, mut rx) = mpsc::channel::<EventInsert>(config.stats.batch_size * 10);
@@ -115,7 +129,7 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
     let batch_size = config.stats.batch_size;
     let flush_interval = Duration::from_millis(config.stats.flush_interval_ms);
     tokio::spawn(async move {
-        use tokio::time::{sleep, Instant};
+        use tokio::time::{Instant, sleep};
         let mut buf: Vec<EventInsert> = Vec::with_capacity(batch_size);
         let mut last = Instant::now();
         let mut shutdown_rx = shutdown_rx; // mutable local receiver
@@ -208,7 +222,14 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
         });
     }
 
-    Ok((StatsHandle { tx, shutdown_tx, done_rx }, storage))
+    Ok((
+        StatsHandle {
+            tx,
+            shutdown_tx,
+            done_rx,
+        },
+        storage,
+    ))
 }
 
 /// HMAC-SHA256(盐, 值) -> hex 前 32 位（16字节）
@@ -220,13 +241,47 @@ pub fn hmac_hex16(salt: &str, value: &str) -> String {
 }
 
 /// 依据 `UnifiedSaveRequest` 推导用户哈希（优先稳定标识）
-pub fn derive_user_identity_from_auth(salt_opt: Option<&str>, auth: &crate::features::save::models::UnifiedSaveRequest) -> (Option<String>, Option<String>) {
-    let Some(salt) = salt_opt else { return (None, None); };
-    if let Some(tok) = &auth.session_token { if !tok.is_empty() { return (Some(hmac_hex16(salt, tok)), Some("session_token".to_string())); } }
+pub fn derive_user_identity_from_auth(
+    salt_opt: Option<&str>,
+    auth: &crate::features::save::models::UnifiedSaveRequest,
+) -> (Option<String>, Option<String>) {
+    let Some(salt) = salt_opt else {
+        return (None, None);
+    };
+    if let Some(tok) = &auth.session_token {
+        if !tok.is_empty() {
+            return (
+                Some(hmac_hex16(salt, tok)),
+                Some("session_token".to_string()),
+            );
+        }
+    }
     if let Some(ext) = &auth.external_credentials {
-        if let Some(id) = &ext.api_user_id { if !id.is_empty() { return (Some(hmac_hex16(salt, id)), Some("external_api_user_id".to_string())); } }
-        if let Some(st) = &ext.sessiontoken { if !st.is_empty() { return (Some(hmac_hex16(salt, st)), Some("external_sessiontoken".to_string())); } }
-        if let (Some(p), Some(pid)) = (&ext.platform, &ext.platform_id) { if !p.is_empty() && !pid.is_empty() { let k = format!("{p}:{pid}"); return (Some(hmac_hex16(salt, &k)), Some("platform_pair".to_string())); } }
+        if let Some(id) = &ext.api_user_id {
+            if !id.is_empty() {
+                return (
+                    Some(hmac_hex16(salt, id)),
+                    Some("external_api_user_id".to_string()),
+                );
+            }
+        }
+        if let Some(st) = &ext.sessiontoken {
+            if !st.is_empty() {
+                return (
+                    Some(hmac_hex16(salt, st)),
+                    Some("external_sessiontoken".to_string()),
+                );
+            }
+        }
+        if let (Some(p), Some(pid)) = (&ext.platform, &ext.platform_id) {
+            if !p.is_empty() && !pid.is_empty() {
+                let k = format!("{p}:{pid}");
+                return (
+                    Some(hmac_hex16(salt, &k)),
+                    Some("platform_pair".to_string()),
+                );
+            }
+        }
     }
     (None, None)
 }

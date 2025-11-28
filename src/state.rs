@@ -1,11 +1,11 @@
+use moka::future::Cache;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
-use moka::future::Cache;
 
 use crate::features::auth::{client::TapTapClient, qrcode_service::QrCodeService};
 use crate::features::song::models::SongCatalog;
-use crate::startup::chart_loader::ChartConstantsMap;
 use crate::features::stats::StatsHandle;
+use crate::startup::chart_loader::ChartConstantsMap;
 
 /// 聚合的应用共享状态
 #[derive(Clone)]

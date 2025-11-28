@@ -38,4 +38,3 @@ pub struct StatsFeatureEvent {
     pub action: String,
     pub at: DateTime<Utc>,
 }
-

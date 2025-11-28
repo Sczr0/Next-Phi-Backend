@@ -67,24 +67,24 @@ impl SongCatalog {
 
         // 官方名：等于（忽略大小写）
         for item in self.by_id.values() {
-            if item.name.eq_ignore_ascii_case(q)
-                && seen.insert(item.id.as_str()) {
-                    result.push(Arc::clone(item));
-                }
+            if item.name.eq_ignore_ascii_case(q) && seen.insert(item.id.as_str()) {
+                result.push(Arc::clone(item));
+            }
         }
         // 官方名：前缀包含（忽略大小写）
         for item in self.by_id.values() {
             if item.name.to_lowercase().starts_with(q_lower.as_str())
-                && seen.insert(item.id.as_str()) {
-                    result.push(Arc::clone(item));
-                }
+                && seen.insert(item.id.as_str())
+            {
+                result.push(Arc::clone(item));
+            }
         }
         // 官方名：子串包含（忽略大小写）
         for item in self.by_id.values() {
-            if item.name.to_lowercase().contains(q_lower.as_str())
-                && seen.insert(item.id.as_str()) {
-                    result.push(Arc::clone(item));
-                }
+            if item.name.to_lowercase().contains(q_lower.as_str()) && seen.insert(item.id.as_str())
+            {
+                result.push(Arc::clone(item));
+            }
         }
 
         // 3) 按别名索引：等于（忽略大小写）
