@@ -139,6 +139,8 @@ impl SystemdWatchdog {
         // 检查systemd是否支持看门狗
         #[cfg(target_os = "linux")]
         {
+            use tracing::warn;
+            
             let watchdog_timeout_us = systemd_impl::get_watchdog_timeout_us();
             if watchdog_timeout_us.is_none() {
                 warn!("systemd看门狗未启用或不在systemd环境下运行");
@@ -233,7 +235,7 @@ mod tests {
         let shutdown_manager = ShutdownManager::new();
         let watchdog = SystemdWatchdog::new(config, &shutdown_manager);
 
-        assert_eq!(watchdog.config.enabled, false);
+        assert!(!watchdog.config.enabled);
     }
 
     #[test]
