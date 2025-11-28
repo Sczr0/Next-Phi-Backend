@@ -42,6 +42,46 @@ curl -X POST "http://localhost:3939/api/v1/save?calculate_rks=true" \
 curl "http://localhost:3939/api/v1/songs/search?q=devil&unique=true"
 ```
 
+### RKS API
+
+- 端点：`POST {api_prefix}/rks/history`
+- 用途：查询用户 RKS 历史变化记录
+- 认证：与存档 API 相同
+  - 官方会话：请求体 `{ "auth": { "sessionToken": "..." } }`
+  - 外部凭证：请求体 `{ "auth": { "externalCredentials": { ... } } }`
+- 可选参数：
+  - `limit`：返回数量（默认 50，最大 200）
+  - `offset`：分页偏移（默认 0）
+- 返回：
+  - `items`：历史记录列表（按时间倒序），每条包含 `rks`、`rks_jump`、`created_at`
+  - `total`：总记录数
+  - `current_rks`：当前 RKS
+  - `peak_rks`：历史最高 RKS
+
+示例：
+```bash
+curl -X POST "http://localhost:3939/api/v1/rks/history" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "auth": { "sessionToken": "your-leancloud-session-token" },
+    "limit": 20,
+    "offset": 0
+  }'
+```
+
+响应示例：
+```json
+{
+  "items": [
+    { "rks": 14.73, "rks_jump": 0.05, "created_at": "2025-11-28T10:30:00Z" },
+    { "rks": 14.68, "rks_jump": 0.12, "created_at": "2025-11-27T15:20:00Z" }
+  ],
+  "total": 42,
+  "current_rks": 14.73,
+  "peak_rks": 14.73
+}
+```
+
 ### 统计 API（Stats）
 
 1) 汇总
@@ -99,7 +139,7 @@ curl "http://localhost:3939/api/v1/songs/search?q=devil&unique=true"
 - 统计上报：
   - `image_render`：记录渲染总耗时（ms）、可用许可数、输出 PNG 字节数。
   - `bestn` / `single_query` / `bestn_user`：原有业务事件保持不变。
-## ͼƬ����Ż�
-- ����ͼƬ�˵�֧�ֲ�ѯ������ormat=jpeg|png��width=<����>����Ŀ�����ͬ�����ţ�
-- �ʹ������飺ormat=jpeg + width=800��ͨ���ɴ�����ͷ����ֽ���
-- ʾ����POST /image/bn?format=jpeg&width=800��������ͬԭ�ӿڣ�
+## ͼƬ����Ż�
+- ����ͼƬ�˵�֧�ֲ�ѯ������ormat=jpeg|png��width=<����>����Ŀ�����ͬ�����ţ�
+- �ʹ������飺ormat=jpeg + width=800��ͨ���ɴ�����ͷ����ֽ���
+- ʾ����POST /image/bn?format=jpeg&width=800��������ͬԭ�ӿڣ�

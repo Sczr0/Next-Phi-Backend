@@ -1608,7 +1608,7 @@ pub fn render_svg_to_webp(
 
     // WebP 支持透明度通道，直接使用 RGBA 像素数据
     let _rgba = pixmap.data();
-    
+
     // 使用 image crate 的 WebPEncoder
     use image::codecs::webp::WebPEncoder;
 

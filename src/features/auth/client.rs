@@ -122,9 +122,7 @@ impl TapTapClient {
         );
 
         let body: Value = serde_json::from_str(&body_text).map_err(|e| {
-            AppError::Json(format!(
-                "解析设备码响应失败: {e} - 原始响应: {body_text}"
-            ))
+            AppError::Json(format!("解析设备码响应失败: {e} - 原始响应: {body_text}"))
         })?;
 
         let success = body

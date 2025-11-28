@@ -304,4 +304,57 @@ impl StatsStorage {
         .map_err(|e| AppError::Internal(format!("upsert details: {e}")))?;
         Ok(())
     }
+
+    /// 查询用户 RKS 历史记录
+    ///
+    /// 返回 (历史记录列表, 总记录数)
+    pub async fn query_rks_history(
+        &self,
+        user_hash: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<(Vec<crate::features::rks::handler::RksHistoryItem>, i64), AppError> {
+        // 查询总数
+        let count_row =
+            sqlx::query("SELECT COUNT(1) as c FROM save_submissions WHERE user_hash = ?")
+                .bind(user_hash)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("count rks history: {e}")))?;
+        let total: i64 = count_row.try_get("c").unwrap_or(0);
+
+        // 查询历史记录（按时间倒序）
+        let rows = sqlx::query(
+            "SELECT total_rks, rks_jump, created_at FROM save_submissions WHERE user_hash = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+        )
+            .bind(user_hash)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("query rks history: {e}")))?;
+
+        let items: Vec<crate::features::rks::handler::RksHistoryItem> = rows
+            .into_iter()
+            .map(|r| crate::features::rks::handler::RksHistoryItem {
+                rks: r.try_get::<f64, _>("total_rks").unwrap_or(0.0),
+                rks_jump: r.try_get::<f64, _>("rks_jump").unwrap_or(0.0),
+                created_at: r.try_get::<String, _>("created_at").unwrap_or_default(),
+            })
+            .collect();
+
+        Ok((items, total))
+    }
+
+    /// 获取用户历史最高 RKS
+    pub async fn get_peak_rks(&self, user_hash: &str) -> Result<f64, AppError> {
+        let row =
+            sqlx::query("SELECT MAX(total_rks) as peak FROM save_submissions WHERE user_hash = ?")
+                .bind(user_hash)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("get peak rks: {e}")))?;
+
+        Ok(row.try_get::<f64, _>("peak").unwrap_or(0.0))
+    }
 }

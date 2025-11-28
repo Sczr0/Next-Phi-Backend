@@ -2,6 +2,7 @@ use axum::{Router, http::StatusCode, response::Json, routing::get};
 use moka::future::Cache;
 use phi_backend::features::auth::client::TapTapClient;
 use phi_backend::features::leaderboard::handler::create_leaderboard_router;
+use phi_backend::features::rks::handler::create_rks_router;
 use phi_backend::features::stats::{
     self,
     handler::create_stats_router,
@@ -41,6 +42,7 @@ use utoipa_swagger_ui::SwaggerUi;
         phi_backend::features::leaderboard::handler::put_alias,
         phi_backend::features::leaderboard::handler::put_profile,
         phi_backend::features::leaderboard::handler::get_public_profile,
+        phi_backend::features::rks::handler::post_rks_history,
         health_check,
     ),
     components(
@@ -74,6 +76,9 @@ use utoipa_swagger_ui::SwaggerUi;
             phi_backend::features::leaderboard::models::AliasRequest,
             phi_backend::features::leaderboard::models::ProfileUpdateRequest,
             phi_backend::features::leaderboard::models::PublicProfileResponse,
+            phi_backend::features::rks::handler::RksHistoryRequest,
+            phi_backend::features::rks::handler::RksHistoryItem,
+            phi_backend::features::rks::handler::RksHistoryResponse,
         )
     ),
     modifiers(&AdminTokenSecurity),
@@ -84,6 +89,7 @@ use utoipa_swagger_ui::SwaggerUi;
         (name = "Image", description = "Image APIs"),
         (name = "Stats", description = "Stats APIs"),
         (name = "Leaderboard", description = "Leaderboard APIs"),
+        (name = "RKS", description = "RKS APIs"),
         (name = "Health", description = "Health APIs"),
     ),
     info(
@@ -281,7 +287,8 @@ async fn main() {
         .merge(save::create_save_router())
         .merge(song::create_song_router())
         .merge(phi_backend::features::image::create_image_router())
-        .merge(create_leaderboard_router());
+        .merge(create_leaderboard_router())
+        .merge(create_rks_router());
     api_router = api_router.merge(create_stats_router());
 
     let mut app = Router::<AppState>::new()
