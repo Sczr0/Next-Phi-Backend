@@ -94,11 +94,6 @@ mod systemd_impl {
         debug!("非Linux平台，忽略systemd watchdog通知");
         Ok(())
     }
-
-    /// 获取看门狗超时时间（非Linux平台）
-    pub fn get_watchdog_timeout_us() -> Option<u64> {
-        None
-    }
 }
 
 impl SystemdWatchdog {

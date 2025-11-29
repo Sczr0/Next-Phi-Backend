@@ -509,7 +509,7 @@ impl WatermarkConfig {
         let input = format!("{salt}:{window}:{secret}");
         let hash = Sha256::digest(input.as_bytes());
         let hexed = hex::encode(hash);
-        let len = self.dynamic_length.max(4).min(64);
+        let len = self.dynamic_length.clamp(4, 64);
         Some(hexed[..len].to_string())
     }
 }

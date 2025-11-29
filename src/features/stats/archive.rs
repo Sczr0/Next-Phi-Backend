@@ -1,4 +1,9 @@
-use std::{path::PathBuf, str::FromStr, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    str::FromStr,
+    sync::Arc,
+    time::Duration,
+};
 
 use arrow_array::builder::{Int64Builder, StringBuilder, UInt16Builder};
 use arrow_array::{ArrayRef, RecordBatch, builder::TimestampMillisecondBuilder};
@@ -205,7 +210,7 @@ fn partition_dir(base: &str, day: NaiveDate) -> PathBuf {
         .join(format!("day={d:02}"))
 }
 
-fn unique_file_in(dir: &PathBuf) -> PathBuf {
+fn unique_file_in(dir: &Path) -> PathBuf {
     let name = format!("events-{}.parquet", uuid::Uuid::new_v4());
     dir.join(name)
 }

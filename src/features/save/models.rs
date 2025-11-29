@@ -12,7 +12,7 @@ mod float_serialize {
         match value {
             Some(v) => {
                 // 格式化为1位小数的字符串，然后解析为f64以获得干净的表示
-                let formatted = format!("{:.1}", v);
+                let formatted = format!("{v:.1}");
                 let clean: f64 = formatted.parse().unwrap_or(0.0);
                 serializer.serialize_some(&clean)
             }

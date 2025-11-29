@@ -10,7 +10,7 @@ use crate::error::AppError;
 
 use super::models::{Account, DeviceCodeResponse, SessionData, Token, Wrap};
 
-use crate::config::{TapTapConfig, TapTapMultiConfig, TapTapVersion};
+use crate::config::{TapTapConfig, TapTapMultiConfig};
 
 #[derive(Clone)]
 pub struct TapTapClient {
@@ -71,14 +71,6 @@ impl TapTapClient {
             Some("global") => &self.config.global,
             Some("cn") | None => &self.config.cn,
             _ => &self.config.cn,
-        }
-    }
-
-    /// 根据版本获取对应的配置，使用TapTapVersion枚举
-    fn get_config_by_enum(&self, version: TapTapVersion) -> &TapTapConfig {
-        match version {
-            TapTapVersion::Global => &self.config.global,
-            TapTapVersion::CN => &self.config.cn,
         }
     }
 

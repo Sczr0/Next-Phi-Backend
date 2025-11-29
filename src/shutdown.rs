@@ -306,6 +306,14 @@ impl ShutdownHandle {
         }
     }
 }
+impl Clone for ShutdownHandle {
+    fn clone(&self) -> Self {
+        Self {
+            reason_rx: self.manager.subscribe(),
+            manager: self.manager.clone(),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -370,14 +378,5 @@ mod tests {
             .await;
         assert!(result.is_err());
         matches!(result.unwrap_err(), ShutdownError::Timeout);
-    }
-}
-
-impl Clone for ShutdownHandle {
-    fn clone(&self) -> Self {
-        Self {
-            reason_rx: self.manager.subscribe(),
-            manager: self.manager.clone(),
-        }
     }
 }

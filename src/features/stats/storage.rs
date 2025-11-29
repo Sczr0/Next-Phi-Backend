@@ -7,6 +7,18 @@ use crate::error::AppError;
 
 use super::models::{DailyAggRow, EventInsert};
 
+/// 保存提交入库参数，减少函数参数数量
+pub struct SubmissionRecord<'a> {
+    pub user_hash: &'a str,
+    pub total_rks: f64,
+    pub rks_jump: f64,
+    pub route: &'a str,
+    pub client_ip_hash: Option<&'a str>,
+    pub details_json: Option<&'a str>,
+    pub suspicion_score: f64,
+    pub now_rfc3339: &'a str,
+}
+
 #[derive(Clone)]
 pub struct StatsStorage {
     pub pool: SqlitePool,
@@ -219,17 +231,17 @@ impl StatsStorage {
         }
     }
 
-    pub async fn insert_submission(
-        &self,
-        user_hash: &str,
-        total_rks: f64,
-        rks_jump: f64,
-        route: &str,
-        client_ip_hash: Option<&str>,
-        details_json: Option<&str>,
-        suspicion_score: f64,
-        now_rfc3339: &str,
-    ) -> Result<(), AppError> {
+    pub async fn insert_submission(&self, record: SubmissionRecord<'_>) -> Result<(), AppError> {
+        let SubmissionRecord {
+            user_hash,
+            total_rks,
+            rks_jump,
+            route,
+            client_ip_hash,
+            details_json,
+            suspicion_score,
+            now_rfc3339,
+        } = record;
         sqlx::query("INSERT INTO save_submissions(user_hash,total_rks,acc_stats,rks_jump,route,client_ip_hash,details_json,suspicion_score,created_at) VALUES(?,?,?,?,?,?,?,?,?)")
             .bind(user_hash)
             .bind(total_rks)

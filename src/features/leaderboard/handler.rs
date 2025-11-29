@@ -145,23 +145,21 @@ pub async fn get_top(
         let mut best_top3: Option<Vec<ChartTextItem>> = None;
         let mut ap_top3: Option<Vec<ChartTextItem>> = None;
         if sbt != 0 || sat != 0 {
-            if let Ok(row) = sqlx::query(
+            if let Ok(Some(row)) = sqlx::query(
                 "SELECT best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash=?",
             )
             .bind(&user_hash)
             .fetch_optional(&storage.pool)
             .await
             {
-                if let Some(row) = row {
-                    if sbt != 0 {
-                        if let Ok(Some(j)) = row.try_get::<String, _>("best_top3_json").map(Some) {
-                            best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
-                        }
+                if sbt != 0 {
+                    if let Ok(Some(j)) = row.try_get::<String, _>("best_top3_json").map(Some) {
+                        best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
                     }
-                    if sat != 0 {
-                        if let Ok(Some(j)) = row.try_get::<String, _>("ap_top3_json").map(Some) {
-                            ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
-                        }
+                }
+                if sat != 0 {
+                    if let Ok(Some(j)) = row.try_get::<String, _>("ap_top3_json").map(Some) {
+                        ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
                     }
                 }
             }
@@ -219,7 +217,7 @@ pub async fn get_by_rank(
         (s, (e - s + 1).min(200))
     } else if let (Some(s), Some(c)) = (q.start, q.count) {
         let s = s.max(1);
-        let c = c.max(1).min(200);
+        let c = c.clamp(1, 200);
         (s, c)
     } else {
         return Err(AppError::Validation(
@@ -228,7 +226,7 @@ pub async fn get_by_rank(
     };
 
     let offset = start_rank - 1;
-    let limit = count as i64;
+    let limit = count;
 
     let total_row = sqlx::query("SELECT COUNT(1) AS c FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0")
         .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("count rank: {e}")))?;
@@ -269,23 +267,21 @@ pub async fn get_by_rank(
         let mut best_top3: Option<Vec<ChartTextItem>> = None;
         let mut ap_top3: Option<Vec<ChartTextItem>> = None;
         if sbt != 0 || sat != 0 {
-            if let Ok(row) = sqlx::query(
+            if let Ok(Some(row)) = sqlx::query(
                 "SELECT best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash=?",
             )
             .bind(&user_hash)
             .fetch_optional(&storage.pool)
             .await
             {
-                if let Some(row) = row {
-                    if sbt != 0 {
-                        if let Ok(Some(j)) = row.try_get::<String, _>("best_top3_json").map(Some) {
-                            best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
-                        }
+                if sbt != 0 {
+                    if let Ok(Some(j)) = row.try_get::<String, _>("best_top3_json").map(Some) {
+                        best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
                     }
-                    if sat != 0 {
-                        if let Ok(Some(j)) = row.try_get::<String, _>("ap_top3_json").map(Some) {
-                            ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
-                        }
+                }
+                if sat != 0 {
+                    if let Ok(Some(j)) = row.try_get::<String, _>("ap_top3_json").map(Some) {
+                        ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
                     }
                 }
             }

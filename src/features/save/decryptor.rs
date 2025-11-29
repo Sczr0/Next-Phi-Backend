@@ -103,9 +103,12 @@ pub fn decrypt_zip_entry(
                 .map_err(|e| SaveProviderError::Decrypt(format!("GCM 初始化失败: {e}")))?;
             let mut buf = ct.to_vec();
             buf.extend_from_slice(tag);
+            #[allow(deprecated)]
+            let nonce_array = aes_gcm::Nonce::from_exact_iter(nonce.iter().copied())
+                .ok_or_else(|| SaveProviderError::Decrypt("nonce 长度无效".into()))?;
             let pt = aead
                 .decrypt(
-                    aes_gcm::Nonce::from_slice(nonce),
+                    &nonce_array,
                     Payload {
                         msg: &buf,
                         aad: &[],

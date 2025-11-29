@@ -862,11 +862,9 @@ pub fn generate_svg_string(
                 if embed_images {
                     if let Some(ref href_str) = background_image_href {
                         if !href_str.starts_with("data:") {
-                            if let Some(uri) = get_scaled_image_data_uri(
-                                random_path,
-                                width as u32,
-                                total_height as u32,
-                            ) {
+                            if let Some(uri) =
+                                get_scaled_image_data_uri(random_path, width, total_height)
+                            {
                                 background_image_href = Some(uri);
                             }
                         }
@@ -1011,7 +1009,7 @@ pub fn generate_svg_string(
         // 预缩放并内嵌背景，减少 resvg 的解码与缩放开销
         let href = if embed_images && !href.starts_with("data:") {
             let p = Path::new(&href);
-            get_scaled_image_data_uri(p, width as u32, total_height as u32).unwrap_or(href)
+            get_scaled_image_data_uri(p, width, total_height).unwrap_or(href)
         } else {
             href
         };
@@ -1521,7 +1519,7 @@ pub fn render_svg_to_jpeg(
     }
 
     let mut out = Vec::new();
-    let mut enc = JpegEncoder::new_with_quality(&mut out, quality.max(1).min(100));
+    let mut enc = JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100));
     enc.encode(&rgb, dst_w, dst_h, ColorType::Rgb8.into())
         .map_err(|e| AppError::ImageRendererError(format!("JPEG encode error: {e}")))?;
     Ok(out)
@@ -1677,11 +1675,9 @@ pub async fn render_svg_unified_async(
         )
     });
 
-    let result = handle
+    handle
         .await
-        .map_err(|e| AppError::Internal(format!("阻塞渲染任务执行失败: {e}")))?;
-
-    result
+        .map_err(|e| AppError::Internal(format!("阻塞渲染任务执行失败: {e}")))?
 }
 
 // ... (escape_xml function - unchanged) ...

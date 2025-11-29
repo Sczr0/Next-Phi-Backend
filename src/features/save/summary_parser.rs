@@ -113,8 +113,8 @@ pub fn parse_summary_base64(b64: &str) -> Result<SummaryParsed, SaveProviderErro
     let avatar = r.read_string()?;
 
     let mut progress = [0u16; 12];
-    for i in 0..12 {
-        progress[i] = r.read_u16_le()?;
+    for slot in &mut progress {
+        *slot = r.read_u16_le()?;
     }
 
     Ok(SummaryParsed {

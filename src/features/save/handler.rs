@@ -13,6 +13,7 @@ use crate::features::rks::engine::{
     PlayerRksResult, calculate_player_rks_simplified as calculate_player_rks,
     calculate_single_chart_rks,
 };
+use crate::features::stats::storage::SubmissionRecord;
 use crate::state::AppState;
 
 use super::{
@@ -101,16 +102,16 @@ pub async fn get_save_data(
             }
             let hide = suspicion >= 1.0;
             storage
-                .insert_submission(
-                    user_hash_ref,
+                .insert_submission(SubmissionRecord {
+                    user_hash: user_hash_ref,
                     total_rks,
                     rks_jump,
-                    "/save",
-                    None,
-                    None,
-                    suspicion,
-                    &now,
-                )
+                    route: "/save",
+                    client_ip_hash: None,
+                    details_json: None,
+                    suspicion_score: suspicion,
+                    now_rfc3339: &now,
+                })
                 .await?;
             storage
                 .upsert_leaderboard_rks(

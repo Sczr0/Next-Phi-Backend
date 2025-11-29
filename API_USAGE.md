@@ -1,145 +1,110 @@
 # Phi Backend API 使用指南
+> 更新日期：2025-11-29 · 编写：Codex
 
 ## 快速开始
-- 启动服务：`cargo run`
+- 启动：`cargo run`（默认监听 `0.0.0.0:3939`）
+- API 前缀：`/api/v1`（可用环境变量 `APP_API_PREFIX` 覆盖）
 - Swagger UI：`http://localhost:3939/docs`
-- 健康检查：`GET /health`
-- 默认 API 前缀：`/api/v1`（可通过 `APP_API_PREFIX` 覆盖）
+- OpenAPI JSON：`http://localhost:3939/api-docs/openapi.json`
+- 健康检查：`GET http://localhost:3939/health`（无前缀）
 
-## API 端点
+## 通用约定与鉴权
+- 请求：UTF-8 编码，`POST/PUT` 请带 `Content-Type: application/json`。
+- 错误：非 2xx 返回**纯文本**错误信息；典型状态码：202(待授权)、400/401、404、409、422、500、502。
+- 玩家鉴权（任选其一；至少提供 `sessionToken`，或 `platform+platformId`，或 `sessiontoken`，或 `apiUserId`）：
+  ```json
+  { "sessionToken": "r:abcdefg.hijklmn" }
+  {
+    "externalCredentials": {
+      "platform": "TapTap",
+      "platformId": "user_123",
+      "sessiontoken": "ext-session",
+      "apiUserId": "1008611",
+      "apiToken": "token-xyz"
+    },
+    "taptapVersion": "cn" // 可选：cn|global，默认 cn
+  }
+  ```
+- 管理员鉴权：在请求头添加 `X-Admin-Token: <token>`（来源 `config.leaderboard.admin_tokens`）。
+- 图片输出统一 Query 选项：`format=png|jpeg|webp`（默认 png）、`width=<px>`（默认 1200）、`webp_quality=1-100`（默认 80，webp 时有效）、`webp_lossless=true|false`（默认 false）。
+
+## 端点清单
 
 ### 健康检查
-- 端点：`GET /health`
-- 用途：探活与版本信息
+- `GET /health` → `{ "status": "healthy", "service": "phi-backend", "version": "…" }`
 
-### 存档 API（Save）
-- 端点：`POST {api_prefix}/save`
-- 认证：二选一
-  - 官方会话：请求体 `{ "sessionToken": "..." }`
-  - 外部凭证：请求体 `{ "externalCredentials": { ... } }`
-- 可选参数：`calculate_rks=true|false`（查询字符串）
-- 成功：返回解析后的存档，或附带玩家 RKS 概览
+### TapTap 扫码登录
+- `GET {prefix}/auth/qrcode?[version=cn|global]`  
+  返回 `qr_id`、`verification_url`、`qrcode_base64`(SVG data URL)。
+- `GET {prefix}/auth/qrcode/{qr_id}/status`  
+  返回 `status`(Pending/Confirmed/Error/Expired)，可含 `session_token` 与 `retry_after`；二维码失效返回 404。
 
-示例：
+### 存档 / RKS
+- `POST {prefix}/save?[calculate_rks=true|false]`  
+  Body：`UnifiedSaveRequest`。`calculate_rks=true` 时返回 `{ "save": {...}, "rks": {...} }`，否则 `{ "data": {...} }`。
+- `POST {prefix}/rks/history`  
+  Body：`{ "auth": UnifiedSaveRequest, "limit": 50, "offset": 0 }`（limit 默认 50，最大 200）。返回 `items[{rks,rks_jump,created_at}], total, current_rks, peak_rks`。
+
+### 图片
+> 响应类型 `image/png` / `image/jpeg` / `image/webp`（由 Query 控制）。
+- `POST {prefix}/image/bn`  
+  Body：`{ "auth": {...}, "n": 30, "theme": "black|white", "embed_images": false, "nickname": "可选" }`
+- `POST {prefix}/image/song`  
+  Body：`{ "auth": {...}, "song": "曲目ID或名称", "embed_images": false, "nickname": "可选" }`
+- `POST {prefix}/image/bn/user`（无需存档）  
+  Body：`{ "theme": "black|white", "nickname": "可选", "unlock_password": "可选", "scores": [{ "song": "...", "difficulty": "EZ|HD|IN|AT", "acc": 99.5, "score": 1000000 }] }`
+
+### 歌曲搜索
+- `GET {prefix}/songs/search?q=keyword&unique=true|false`  
+  `unique=true`：未命中返回 404，多命中返回 409；否则返回列表或单个结果。
+
+### 排行榜（玩家）
+- `GET {prefix}/leaderboard/rks/top?[limit=50&offset=0]`（或使用 `after_score&after_updated&after_user` 进行 seek 分页，limit 1~200） → `items[{rank,alias?,user,score,updated_at,best_top3?,ap_top3?}], total, next_after_*`
+- `GET {prefix}/leaderboard/rks/by-rank?rank=10` 或 `start=1&end=20` / `start=1&count=20`（count ≤ 200）→ 同上结构
+- `POST {prefix}/leaderboard/rks/me`  
+  Body：`UnifiedSaveRequest` → `{rank, score, total, percentile}`
+- `PUT {prefix}/leaderboard/alias`  
+  Body：`{ "auth": {...}, "alias": "自定义名" }`；长度 2~20，仅限 字母/数字/中日韩/._-，保留字：`admin/system/null/undefined/root`
+- `PUT {prefix}/leaderboard/profile`  
+  Body：`{ "auth": {...}, "is_public": true|false, "show_rks_composition": true|false, "show_best_top3": true|false, "show_ap_top3": true|false }`
+- `GET {prefix}/public/profile/{alias}` → 公共档案：`alias, score, updated_at, rks_composition?, best_top3?, ap_top3?`
+
+### 管理端（需 `X-Admin-Token`）
+- `GET {prefix}/admin/leaderboard/suspicious?[min_score=0.6&limit=100]`（limit 1~500）→ `[{user, alias?, score, suspicion, updated_at}]`
+- `POST {prefix}/admin/leaderboard/resolve`  
+  Body：`{ "user_hash": "...", "status": "approved|shadow|banned|rejected", "reason": "可选" }`；shadow/banned/rejected 会隐藏榜单条目。
+- `POST {prefix}/admin/leaderboard/alias/force`  
+  Body：`{ "user_hash": "...", "alias": "..." }`；与普通别名相同校验，提交后会回收原持有者的同名别名。
+
+### 统计
+- `GET {prefix}/stats/summary` → `timezone, config_start_at, first_event_at, last_event_at, features[{feature,count,last_at}], unique_users{total,by_kind}`
+- `GET {prefix}/stats/daily?start=YYYY-MM-DD&end=YYYY-MM-DD[&feature=bestn]` → `[{date, feature, route, method, count, err_count}]`
+- `POST {prefix}/stats/archive/now?[date=YYYY-MM-DD]`（默认昨天）→ `{"ok": true, "date": "YYYY-MM-DD"}`
+
+## 示例请求
 ```bash
+# 1) 获取存档并计算 RKS
 curl -X POST "http://localhost:3939/api/v1/save?calculate_rks=true" \
   -H "Content-Type: application/json" \
-  -d '{ "sessionToken": "your-leancloud-session-token" }'
-```
+  -d '{ "sessionToken": "r:your-leancloud-session-token" }'
 
-### 图片 API（Image）
-- BN 图：`POST {api_prefix}/image/bn`（从存档生成 BestN 汇总图）
-- 单曲图：`POST {api_prefix}/image/song`（从存档生成单曲图片）
-- 用户自报 BN 图：`POST {api_prefix}/image/bn/user`（无需存档，直接提交成绩生成 BestN）
-- 响应均为 `image/png`
-
-### 歌曲检索（Song）
-- 端点：`GET {api_prefix}/songs/search`
-- 参数：
-  - `q` 必填：歌曲 ID/名称/别名，支持模糊匹配
-  - `unique` 可选：`true|false`，`true` 时要求唯一匹配（未命中 404，多命中 409）
-```bash
-curl "http://localhost:3939/api/v1/songs/search?q=devil&unique=true"
-```
-
-### RKS API
-
-- 端点：`POST {api_prefix}/rks/history`
-- 用途：查询用户 RKS 历史变化记录
-- 认证：与存档 API 相同
-  - 官方会话：请求体 `{ "auth": { "sessionToken": "..." } }`
-  - 外部凭证：请求体 `{ "auth": { "externalCredentials": { ... } } }`
-- 可选参数：
-  - `limit`：返回数量（默认 50，最大 200）
-  - `offset`：分页偏移（默认 0）
-- 返回：
-  - `items`：历史记录列表（按时间倒序），每条包含 `rks`、`rks_jump`、`created_at`
-  - `total`：总记录数
-  - `current_rks`：当前 RKS
-  - `peak_rks`：历史最高 RKS
-
-示例：
-```bash
-curl -X POST "http://localhost:3939/api/v1/rks/history" \
+# 2) 生成 BestN WebP 图并保存到本地
+curl -X POST "http://localhost:3939/api/v1/image/bn?format=webp&width=1200" \
   -H "Content-Type: application/json" \
-  -d '{
-    "auth": { "sessionToken": "your-leancloud-session-token" },
-    "limit": 20,
-    "offset": 0
-  }'
+  -o bestn.webp \
+  -d '{ "auth": { "sessionToken": "r:your-leancloud-session-token" }, "n": 30, "theme": "black" }'
+
+# 3) 搜索歌曲（要求唯一命中）
+curl "http://localhost:3939/api/v1/songs/search?q=devil&unique=true"
+
+# 4) 设置排行榜别名
+curl -X PUT "http://localhost:3939/api/v1/leaderboard/alias" \
+  -H "Content-Type: application/json" \
+  -d '{ "auth": { "sessionToken": "r:your-leancloud-session-token" }, "alias": "Alice" }'
+
+# 5) 管理员标记可疑用户
+curl -X POST "http://localhost:3939/api/v1/admin/leaderboard/resolve" \
+  -H "Content-Type: application/json" \
+  -H "X-Admin-Token: <token>" \
+  -d '{ "user_hash": "abcd1234", "status": "shadow", "reason": "suspicious jump" }'
 ```
-
-响应示例：
-```json
-{
-  "items": [
-    { "rks": 14.73, "rks_jump": 0.05, "created_at": "2025-11-28T10:30:00Z" },
-    { "rks": 14.68, "rks_jump": 0.12, "created_at": "2025-11-27T15:20:00Z" }
-  ],
-  "total": 42,
-  "current_rks": 14.73,
-  "peak_rks": 14.73
-}
-```
-
-### 统计 API（Stats）
-
-1) 汇总
-- 端点：`GET {api_prefix}/stats/summary`
-- 返回：首末事件时间、各功能的使用次数与最近时间、唯一用户统计（总量与来源分布）
-- 功能次数统计中的“功能名”可能值：
-  - `bestn`：生成 BestN 汇总图
-  - `bestn_user`：生成用户自报 BestN 图片
-  - `single_query`：生成单曲成绩图
-  - `save`：获取并解析玩家存档
-  - `song_search`：歌曲检索
-- 备注：功能统计只包含通过业务打点上报的功能；路由级请求数请使用日聚合接口。
-
-2) 日聚合
-- 端点：`GET {api_prefix}/stats/daily?start=YYYY-MM-DD&end=YYYY-MM-DD[&feature=bestn]`
-- 返回：`[{ date, feature, route, method, count, err_count }]`
-
-## 配置与环境
-- 配置文件：`config.toml`
-- 常用覆盖：
-  - `APP_API_PREFIX` 调整 API 前缀
-  - `APP_STATS_USER_HASH_SALT` 启用去敏化用户哈希
-  - `APP_LOGGING_LEVEL` 调整日志级别
-
-## 说明
-- 仓库所有字符串与文件均为 UTF-8 编码
-- 更多统计细节参考：`STATS.md`
-
-## 性能调优参数
-
-以下参数位于 `config.toml` 的 `[image]` 部分，均可用环境变量 `APP_IMAGE_*` 覆盖（下划线分隔）。
-
-- `optimize_speed: bool`
-  - 启用后使用 SVG 栅格的 OptimizeSpeed 策略（更快，画质略降）。
-  - 例：`APP_IMAGE_OPTIMIZE_SPEED=true`
-
-- `cache_enabled: bool`
-  - 开启 BN/单曲图片缓存（按图片字节大小加权）。
-  - 例：`APP_IMAGE_CACHE_ENABLED=true`
-
-- `cache_max_bytes: u64`（字节）
-  - 缓存总容量上限（默认 100MB），超过逐出最少使用项。
-  - 例：`APP_IMAGE_CACHE_MAX_BYTES=134217728`
-
-- `cache_ttl_secs: u64` / `cache_tti_secs: u64`（秒）
-  - TTL：条目自写入起最大存活时间；TTI：条目自最后一次访问起的空闲时间上限。
-  - 例：`APP_IMAGE_CACHE_TTL_SECS=60`、`APP_IMAGE_CACHE_TTI_SECS=30`
-
-- `max_parallel: u32`（0 = 自动）
-  - 并发渲染许可数（Semaphore）。0 表示自动取 CPU 核心数。
-  - 例：`APP_IMAGE_MAX_PARALLEL=8`
-
-说明：
-- 缓存键包含用户哈希、存档更新时间、请求参数（BN：n/theme/embed；单曲：song_id/embed），避免跨用户串缓存。
-- 统计上报：
-  - `image_render`：记录渲染总耗时（ms）、可用许可数、输出 PNG 字节数。
-  - `bestn` / `single_query` / `bestn_user`：原有业务事件保持不变。
-## ͼƬ����Ż�
-- ����ͼƬ�˵�֧�ֲ�ѯ������ormat=jpeg|png��width=<����>����Ŀ�����ͬ�����ţ�
-- �ʹ������飺ormat=jpeg + width=800��ͨ���ɴ�����ͷ����ֽ���
-- ʾ����POST /image/bn?format=jpeg&width=800��������ͬԭ�ӿڣ�

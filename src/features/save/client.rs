@@ -49,7 +49,7 @@ struct SaveInfoResponse {
 #[derive(Debug, Deserialize)]
 struct SaveInfoResult {
     #[serde(rename = "objectId")]
-    object_id: String,
+    _object_id: String,
     summary: String,
     #[serde(rename = "gameFile")]
     game_file: GameFile,
@@ -62,7 +62,7 @@ struct SaveInfoResult {
 #[derive(Debug, Deserialize)]
 struct GameFile {
     #[serde(rename = "objectId")]
-    object_id: String,
+    _object_id: String,
     url: String,
 }
 
@@ -71,11 +71,11 @@ struct SaveCryptoMeta {
     #[serde(default)]
     crypto: Option<CryptoSpec>,
     #[serde(default)]
-    etag: Option<String>,
+    _etag: Option<String>,
     #[serde(default)]
-    length: Option<u64>,
+    _length: Option<u64>,
     #[serde(default)]
-    compressed: Option<bool>,
+    _compressed: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -87,9 +87,9 @@ struct CryptoSpec {
     #[serde(default)]
     nonce_hex: Option<String>,
     #[serde(default)]
-    key_hex: Option<String>,
+    _key_hex: Option<String>,
     #[serde(default)]
-    tag_hex: Option<String>,
+    _tag_hex: Option<String>,
     #[serde(default)]
     tag_len: Option<usize>,
     #[serde(default)]

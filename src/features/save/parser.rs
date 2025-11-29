@@ -12,7 +12,6 @@ enum NodeType {
     Float,
     Str,
     VarShort,
-    U16Array,
 }
 
 struct LeafNode {
@@ -300,13 +299,6 @@ fn deser_object(
                         }
                         obj.insert(nd.name.to_string(), Value::Array(arr));
                     }
-                    NodeType::U16Array => {
-                        let mut arr = Vec::with_capacity(12);
-                        for _ in 0..12 {
-                            arr.push(Value::Number(Number::from(reader.read_u16_le()? as i64)));
-                        }
-                        obj.insert(nd.name.to_string(), Value::Array(arr));
-                    }
                     NodeType::Bool => unreachable!(),
                 }
             }
@@ -324,8 +316,8 @@ fn deser_nodes_into(
     groups: &[&[LeafNode]],
 ) -> Result<(), SaveProviderError> {
     let version = obj.get("version").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-    for i in 0..version.min(groups.len()) {
-        let sub = deser_object(reader, groups[i])?;
+    for group in groups.iter().take(version.min(groups.len())) {
+        let sub = deser_object(reader, group)?;
         for (k, v) in sub {
             obj.insert(k, v);
         }

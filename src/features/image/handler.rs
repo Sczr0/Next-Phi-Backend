@@ -758,12 +758,14 @@ pub async fn render_song(
     };
     for diff in ["EZ", "HD", "IN", "AT"] {
         let dv = map_level(diff);
-        let rec = song_records.iter().find(|r| match (&r.difficulty, diff) {
-            (Difficulty::EZ, "EZ")
-            | (Difficulty::HD, "HD")
-            | (Difficulty::IN, "IN")
-            | (Difficulty::AT, "AT") => true,
-            _ => false,
+        let rec = song_records.iter().find(|r| {
+            matches!(
+                (&r.difficulty, diff),
+                (Difficulty::EZ, "EZ")
+                    | (Difficulty::HD, "HD")
+                    | (Difficulty::IN, "IN")
+                    | (Difficulty::AT, "AT")
+            )
         });
         let (score, acc, rks, is_fc) = if let Some(r) = rec {
             let mut ap = r.accuracy as f64;

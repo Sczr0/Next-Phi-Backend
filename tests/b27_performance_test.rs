@@ -75,8 +75,8 @@ async fn test_b27_generation_with_flamegraph() {
     let config = phi_backend::config::AppConfig::global();
 
     let phase1_elapsed = phase1_start.elapsed();
-    println!("  耗时: {:?}\n", phase1_elapsed);
-    performance_report.push(format!("阶段 1: 初始化配置 - {:?}", phase1_elapsed));
+    println!("  耗时: {phase1_elapsed:?}\n");
+    performance_report.push(format!("阶段 1: 初始化配置 - {phase1_elapsed:?}"));
 
     println!("阶段 2: 加载资源文件...");
     let phase2_start = std::time::Instant::now();
@@ -93,10 +93,9 @@ async fn test_b27_generation_with_flamegraph() {
 
     let phase2_elapsed = phase2_start.elapsed();
     println!("  加载了 {} 首歌曲", song_catalog.by_id.len());
-    println!("  耗时: {:?}\n", phase2_elapsed);
+    println!("  耗时: {phase2_elapsed:?}\n");
     performance_report.push(format!(
-        "阶段 2: 加载资源文件 - {:?} (加载 {} 首歌曲)",
-        phase2_elapsed,
+        "阶段 2: 加载资源文件 - {phase2_elapsed:?} (加载 {} 首歌曲)",
         song_catalog.by_id.len()
     ));
 
@@ -114,10 +113,9 @@ async fn test_b27_generation_with_flamegraph() {
 
     let phase3_elapsed = phase3_start.elapsed();
     println!("  解析了 {} 首歌曲的成绩", parsed.game_record.len());
-    println!("  耗时: {:?}\n", phase3_elapsed);
+    println!("  耗时: {phase3_elapsed:?}\n");
     performance_report.push(format!(
-        "阶段 3: 获取并解密存档 - {:?} (解析 {} 首歌曲)",
-        phase3_elapsed,
+        "阶段 3: 获取并解密存档 - {phase3_elapsed:?} (解析 {} 首歌曲)",
         parsed.game_record.len()
     ));
 
@@ -179,13 +177,11 @@ async fn test_b27_generation_with_flamegraph() {
     let best27_avg = top27.iter().map(|r| r.rks).sum::<f64>() / 27.0;
     let phase4_elapsed = phase4_start.elapsed();
     println!("  总成绩数: {}", all_records.len());
-    println!("  Best27 平均 RKS: {:.4}", best27_avg);
-    println!("  耗时: {:?}\n", phase4_elapsed);
+    println!("  Best27 平均 RKS: {best27_avg:.4}");
+    println!("  耗时: {phase4_elapsed:?}\n");
     performance_report.push(format!(
-        "阶段 4: 计算 RKS 并排序 - {:?} (总成绩 {}, Best27 平均 {:.4})",
-        phase4_elapsed,
-        all_records.len(),
-        best27_avg
+        "阶段 4: 计算 RKS 并排序 - {phase4_elapsed:?} (总成绩 {}, Best27 平均 {best27_avg:.4})",
+        all_records.len()
     ));
 
     println!("阶段 5: 计算推分 ACC...");
@@ -230,10 +226,9 @@ async fn test_b27_generation_with_flamegraph() {
 
     let phase5_elapsed = phase5_start.elapsed();
     println!("  计算了 {} 首歌曲的推分 ACC", push_acc_map.len());
-    println!("  耗时: {:?}\n", phase5_elapsed);
+    println!("  耗时: {phase5_elapsed:?}\n");
     performance_report.push(format!(
-        "阶段 5: 计算推分 ACC - {:?} (计算 {} 首)",
-        phase5_elapsed,
+        "阶段 5: 计算推分 ACC - {phase5_elapsed:?} (计算 {} 首)",
         push_acc_map.len()
     ));
 
@@ -285,19 +280,18 @@ async fn test_b27_generation_with_flamegraph() {
     };
 
     let phase6_elapsed = phase6_start.elapsed();
-    println!("  玩家 RKS: {:.4}", exact_rks);
+    println!("  玩家 RKS: {exact_rks:.4}");
     if let Some(ap_avg) = ap_top_3_avg {
-        println!("  AP Top3 平均: {:.4}", ap_avg);
+        println!("  AP Top3 平均: {ap_avg:.4}");
     }
-    println!("  耗时: {:?}\n", phase6_elapsed);
+    println!("  耗时: {phase6_elapsed:?}\n");
     let ap_info = if let Some(ap_avg) = ap_top_3_avg {
-        format!("AP Top3 平均 {:.4}", ap_avg)
+        format!("AP Top3 平均 {ap_avg:.4}")
     } else {
         "无 AP 成绩".to_string()
     };
     performance_report.push(format!(
-        "阶段 6: 生成统计信息 - {:?} (玩家 RKS {:.4}, {})",
-        phase6_elapsed, exact_rks, ap_info
+        "阶段 6: 生成统计信息 - {phase6_elapsed:?} (玩家 RKS {exact_rks:.4}, {ap_info})"
     ));
 
     println!("阶段 7: 渲染 SVG...");
@@ -316,10 +310,9 @@ async fn test_b27_generation_with_flamegraph() {
 
     let phase7_elapsed = phase7_start.elapsed();
     println!("  SVG 大小: {} bytes", svg.len());
-    println!("  耗时: {:?}\n", phase7_elapsed);
+    println!("  耗时: {phase7_elapsed:?}\n");
     performance_report.push(format!(
-        "阶段 7: 渲染 SVG - {:?} (大小 {} bytes)",
-        phase7_elapsed,
+        "阶段 7: 渲染 SVG - {phase7_elapsed:?} (大小 {} bytes)",
         svg.len()
     ));
 
@@ -331,10 +324,9 @@ async fn test_b27_generation_with_flamegraph() {
 
     let phase8_elapsed = phase8_start.elapsed();
     println!("  PNG 大小: {} bytes", png.len());
-    println!("  耗时: {:?}\n", phase8_elapsed);
+    println!("  耗时: {phase8_elapsed:?}\n");
     performance_report.push(format!(
-        "阶段 8: 渲染 PNG - {:?} (大小 {} bytes)",
-        phase8_elapsed,
+        "阶段 8: 渲染 PNG - {phase8_elapsed:?} (大小 {} bytes)",
         png.len()
     ));
 
@@ -346,14 +338,14 @@ async fn test_b27_generation_with_flamegraph() {
     let total_time = start.elapsed();
     println!("========================================");
     println!("测试完成!");
-    println!("  总耗时: {:?}", total_time);
+    println!("  总耗时: {total_time:?}");
     println!("  输出文件: {}", png_path.display());
     println!("========================================\n");
 
     // 保存性能报告
     performance_report.push(String::new());
     performance_report.push("=".repeat(50));
-    performance_report.push(format!("总耗时: {:?}", total_time));
+    performance_report.push(format!("总耗时: {total_time:?}"));
     performance_report.push(format!("输出图片: {}", png_path.display()));
 
     let report_path = output_dir.join("performance.txt");
