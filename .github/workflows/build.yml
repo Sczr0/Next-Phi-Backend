@@ -45,18 +45,29 @@ jobs:
         toolchain: stable
         targets: ${{ matrix.target }}
     
-    # Linux musl 需要安装 musl 工具和静态 OpenSSL
+    # Linux musl 需要安装 musl 工具和依赖
     - name: 安装 musl 工具和依赖 (Linux musl)
       if: matrix.target == 'x86_64-unknown-linux-musl'
       run: |
         sudo apt-get update
-        sudo apt-get install -y musl-tools musl-dev
+        sudo apt-get install -y musl-tools musl-dev linux-headers-generic
         
         # 编译静态 OpenSSL for musl
         wget https://www.openssl.org/source/openssl-3.0.15.tar.gz
         tar xzf openssl-3.0.15.tar.gz
         cd openssl-3.0.15
-        CC=musl-gcc ./Configure no-shared no-async --prefix=/musl --openssldir=/musl/ssl linux-x86_64
+        
+        # 配置 musl 编译环境
+        CC=musl-gcc ./Configure \
+          no-shared \
+          no-async \
+          no-engine \
+          --prefix=/musl \
+          --openssldir=/musl/ssl \
+          linux-x86_64 \
+          -static \
+          -fPIC
+        
         make -j$(nproc)
         sudo make install_sw install_ssldirs
         cd ..
