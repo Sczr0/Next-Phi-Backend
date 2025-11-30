@@ -46,19 +46,14 @@ pub struct ApiConfig {
 }
 
 /// TapTap 版本枚举
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TapTapVersion {
     /// 大陆版
+    #[default]
     CN,
     /// 国际版
     Global,
-}
-
-impl Default for TapTapVersion {
-    fn default() -> Self {
-        Self::CN
-    }
 }
 
 /// TapTap API 配置
@@ -475,17 +470,17 @@ impl WatermarkConfig {
         let Some(pwd) = input else {
             return false;
         };
-        if let Some(st) = &self.unlock_static {
-            if !st.is_empty() && pwd == st {
-                return true;
-            }
+        if let Some(st) = &self.unlock_static
+            && !st.is_empty()
+            && pwd == st
+        {
+            return true;
         }
-        if self.unlock_dynamic {
-            if let Some(cur) = self.current_dynamic_code() {
-                if pwd.eq_ignore_ascii_case(&cur) {
-                    return true;
-                }
-            }
+        if self.unlock_dynamic
+            && let Some(cur) = self.current_dynamic_code()
+            && pwd.eq_ignore_ascii_case(&cur)
+        {
+            return true;
         }
         false
     }

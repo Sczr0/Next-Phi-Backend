@@ -70,13 +70,13 @@ fn hmac_hex16(salt: &str, value: &str) -> String {
 }
 
 fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
-    if let Some(v) = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
-        let first = v.split(',').next().map(|s| s.trim().to_string());
-        if let Some(ip) = first {
-            if !ip.is_empty() {
-                return Some(ip);
-            }
-        }
+    if let Some(ip) = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+        && !ip.is_empty()
+    {
+        return Some(ip);
     }
     if let Some(v) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
         let s = v.trim();

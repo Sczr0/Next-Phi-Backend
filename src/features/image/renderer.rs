@@ -152,10 +152,10 @@ fn get_scaled_image_data_uri(path: &Path, target_w: u32, target_h: u32) -> Optio
         w: target_w,
         h: target_h,
     };
-    if let Ok(mut cache) = get_scaled_image_cache().lock() {
-        if let Some(uri) = cache.get(&key) {
-            return Some(uri.clone());
-        }
+    if let Ok(mut cache) = get_scaled_image_cache().lock()
+        && let Some(uri) = cache.get(&key)
+    {
+        return Some(uri.clone());
     }
 
     let speed = AppConfig::global().image.optimize_speed;

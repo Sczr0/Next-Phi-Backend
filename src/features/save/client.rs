@@ -161,57 +161,55 @@ pub async fn fetch_from_official(
     let updated_at = Some(result.updated_at);
 
     let mut meta = DecryptionMeta::default();
-    if let Some(meta_root) = result.crypto {
-        if let Some(crypto) = meta_root.crypto {
-            if let Some(mode) = crypto.mode {
-                match mode.as_str() {
-                    "aes-256-cbc" | "AES-256-CBC" => {
-                        if let Some(iv_hex) = crypto.iv_hex {
-                            if let Ok(iv) = hex::decode(iv_hex) {
-                                if iv.len() == 16 {
-                                    let mut iv_arr = [0u8; 16];
-                                    iv_arr.copy_from_slice(&iv);
-                                    meta.cipher = CipherSuite::Aes256CbcPkcs7 { iv: iv_arr };
-                                }
-                            }
-                        }
+    if let Some(meta_root) = result.crypto
+        && let Some(crypto) = meta_root.crypto
+    {
+        if let Some(mode) = crypto.mode {
+            match mode.as_str() {
+                "aes-256-cbc" | "AES-256-CBC" => {
+                    if let Some(iv_hex) = crypto.iv_hex
+                        && let Ok(iv) = hex::decode(iv_hex)
+                        && iv.len() == 16
+                    {
+                        let mut iv_arr = [0u8; 16];
+                        iv_arr.copy_from_slice(&iv);
+                        meta.cipher = CipherSuite::Aes256CbcPkcs7 { iv: iv_arr };
                     }
-                    "aes-128-gcm" | "AES-128-GCM" => {
-                        let nonce = if let Some(nh) = crypto.nonce_hex {
-                            hex::decode(nh).unwrap_or_default()
-                        } else if let Some(ivh) = crypto.iv_hex {
-                            hex::decode(ivh).unwrap_or_default()
-                        } else {
-                            vec![]
-                        };
-                        let tag_len = crypto.tag_len.unwrap_or(16);
-                        meta.cipher = CipherSuite::Aes128Gcm { nonce, tag_len };
-                    }
-                    _ => {}
                 }
+                "aes-128-gcm" | "AES-128-GCM" => {
+                    let nonce = if let Some(nh) = crypto.nonce_hex {
+                        hex::decode(nh).unwrap_or_default()
+                    } else if let Some(ivh) = crypto.iv_hex {
+                        hex::decode(ivh).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
+                    let tag_len = crypto.tag_len.unwrap_or(16);
+                    meta.cipher = CipherSuite::Aes128Gcm { nonce, tag_len };
+                }
+                _ => {}
             }
+        }
 
-            if let Some(kdf) = crypto.kdf {
-                if let Some(kind) = kdf.kind {
-                    if kind.eq_ignore_ascii_case("pbkdf2-sha1") {
-                        let salt = kdf
-                            .salt_hex
-                            .and_then(|h| hex::decode(h).ok())
-                            .unwrap_or_default();
-                        let rounds = kdf.rounds.unwrap_or(1000);
-                        let password = if let Some(b) = kdf.password_b64 {
-                            general_purpose::STANDARD.decode(b).unwrap_or_default()
-                        } else {
-                            vec![]
-                        };
-                        meta.kdf = KdfSpec::Pbkdf2Sha1 {
-                            salt,
-                            rounds,
-                            password,
-                        };
-                    }
-                }
-            }
+        if let Some(kdf) = crypto.kdf
+            && let Some(kind) = kdf.kind
+            && kind.eq_ignore_ascii_case("pbkdf2-sha1")
+        {
+            let salt = kdf
+                .salt_hex
+                .and_then(|h| hex::decode(h).ok())
+                .unwrap_or_default();
+            let rounds = kdf.rounds.unwrap_or(1000);
+            let password = if let Some(b) = kdf.password_b64 {
+                general_purpose::STANDARD.decode(b).unwrap_or_default()
+            } else {
+                vec![]
+            };
+            meta.kdf = KdfSpec::Pbkdf2Sha1 {
+                salt,
+                rounds,
+                password,
+            };
         }
     }
 
@@ -328,10 +326,10 @@ pub async fn fetch_from_external(
         if updated_at.is_none() {
             updated_at = info.updated_at;
         }
-        if updated_at.is_none() {
-            if let Some(md) = info.modified_at.and_then(|d| d.iso) {
-                updated_at = Some(md);
-            }
+        if updated_at.is_none()
+            && let Some(md) = info.modified_at.and_then(|d| d.iso)
+        {
+            updated_at = Some(md);
         }
         if updated_at.is_none() {
             updated_at = info.game_file.and_then(|g| g.updated_at);

@@ -121,7 +121,7 @@ fn update_repository(path: &Path) -> Result<(), AppError> {
         let total = progress.total_objects();
         if total > 0 {
             let percentage = (current as f64 / total as f64 * 100.0) as u32;
-            if percentage > 0 && percentage % 20 == 0 {
+            if percentage > 0 && percentage.is_multiple_of(20) {
                 tracing::debug!("⏫ 更新进度: {}%", percentage);
             }
         }

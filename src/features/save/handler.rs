@@ -69,8 +69,9 @@ pub async fn get_save_data(
             .await;
     }
     // 排行榜入库（无论是否返回RKS）
-    if let Some(storage) = state.stats_storage.as_ref() {
-        if let Some(user_hash_ref) = user_hash.as_ref() {
+    if let Some(storage) = state.stats_storage.as_ref()
+        && let Some(user_hash_ref) = user_hash.as_ref()
+    {
             let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
             let total_rks = rks_res.total_rks;
             let (best_top3, ap_top3, rks_comp) =
@@ -95,10 +96,10 @@ pub async fn get_save_data(
             } else if rks_jump > 0.5 {
                 suspicion += 0.3;
             }
-            if let Some(kind) = user_kind.as_deref() {
-                if kind == "session_token" {
-                    suspicion = (suspicion - 0.2).max(0.0);
-                }
+            if let Some(kind) = user_kind.as_deref()
+                && kind == "session_token"
+            {
+                suspicion = (suspicion - 0.2).max(0.0);
             }
             let hide = suspicion >= 1.0;
             storage
@@ -167,7 +168,6 @@ pub async fn get_save_data(
                 .execute(&storage.pool)
                 .await;
             }
-        }
     }
 
     let calc_rks = params

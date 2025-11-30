@@ -200,10 +200,10 @@ pub async fn get_stats_summary(
             Ok(v) => v,
             Err(_) => continue,
         };
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej) {
-            if let Some(kind) = val.get("user_kind").and_then(|v| v.as_str()) {
-                uniq.insert((uh.clone(), kind.to_string()));
-            }
+        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej)
+            && let Some(kind) = val.get("user_kind").and_then(|v| v.as_str())
+        {
+            uniq.insert((uh.clone(), kind.to_string()));
         }
     }
     let mut by_kind_map: HashMap<String, i64> = HashMap::new();

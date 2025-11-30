@@ -89,12 +89,10 @@ pub async fn render_bn(
     let save_ms = t_save.elapsed().as_millis() as i64;
 
     // 参数验证：webp_quality 范围
-    if let Some(quality) = q.webp_quality {
-        if quality > 100 {
-            return Err(AppError::Validation(
-                "webp_quality 必须在 1-100 范围内".to_string(),
-            ));
-        }
+    if let Some(quality) = q.webp_quality && quality > 100 {
+        return Err(AppError::Validation(
+            "webp_quality 必须在 1-100 范围内".to_string(),
+        ));
     }
 
     // Cache hit/miss 事件 + 快速返回
@@ -102,8 +100,9 @@ pub async fn render_bn(
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash_for_cache, user_kind_for_cache) =
         crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-    if cache_enabled {
-        if let Some(user_hash) = user_hash_for_cache.as_ref() {
+    if cache_enabled
+        && let Some(user_hash) = user_hash_for_cache.as_ref()
+    {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let theme_code = match req.theme {
                 super::types::Theme::White => "w",
@@ -202,7 +201,6 @@ pub async fn render_bn(
                 };
                 h.track(evt).await;
             }
-        }
     }
 
     // 扁平化为渲染记录 + 排序与推分预计算耗时
@@ -617,12 +615,10 @@ pub async fn render_song(
         .map_err(AppError::Search)?;
 
     // 参数验证：webp_quality 范围
-    if let Some(quality) = q.webp_quality {
-        if quality > 100 {
-            return Err(AppError::Validation(
-                "webp_quality 必须在 1-100 范围内".to_string(),
-            ));
-        }
+    if let Some(quality) = q.webp_quality && quality > 100 {
+        return Err(AppError::Validation(
+            "webp_quality 必须在 1-100 范围内".to_string(),
+        ));
     }
 
     // Cache hit/miss 事件 + 快速返回
@@ -630,8 +626,9 @@ pub async fn render_song(
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash_for_cache, user_kind_for_cache) =
         crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-    if cache_enabled {
-        if let Some(user_hash) = user_hash_for_cache.as_ref() {
+    if cache_enabled
+        && let Some(user_hash) = user_hash_for_cache.as_ref()
+    {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let fmt_code = match q.format.as_deref() {
                 Some("jpeg") | Some("jpg") => "jpg",
@@ -702,7 +699,6 @@ pub async fn render_song(
                 };
                 h.track(evt).await;
             }
-        }
     }
 
     // 构建所有引擎记录用于推分
@@ -1039,12 +1035,10 @@ pub async fn render_bn_user(
     Json(req): Json<RenderUserBnRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // 参数验证：webp_quality 范围
-    if let Some(quality) = q.webp_quality {
-        if quality > 100 {
-            return Err(AppError::Validation(
-                "webp_quality 必须在 1-100 范围内".to_string(),
-            ));
-        }
+    if let Some(quality) = q.webp_quality && quality > 100 {
+        return Err(AppError::Validation(
+            "webp_quality 必须在 1-100 范围内".to_string(),
+        ));
     }
 
     // 解析成绩并计算 RKS
