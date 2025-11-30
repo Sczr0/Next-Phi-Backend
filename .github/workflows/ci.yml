@@ -35,9 +35,9 @@ jobs:
         run: cargo test --all-targets --all-features
 
       - name: Security audit
-        uses: actions-rs/audit-check@v2
+        uses: actions-rust-lang/audit@v1
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build (release)
         run: cargo build --release --all-features
