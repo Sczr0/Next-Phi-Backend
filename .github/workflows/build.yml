@@ -45,37 +45,12 @@ jobs:
         toolchain: stable
         targets: ${{ matrix.target }}
     
-    # Linux musl 需要安装 musl 工具和依赖
-    - name: 安装 musl 工具和依赖 (Linux musl)
+    # 使用预装好的 muslrust 容器进行 musl 构建，避免系统依赖问题
+    - name: 使用 muslrust 容器构建 (Linux musl)
       if: matrix.target == 'x86_64-unknown-linux-musl'
       run: |
-        sudo apt-get update
-        sudo apt-get install -y musl-tools musl-dev linux-headers-generic
-        
-        # 编译静态 OpenSSL for musl
-        wget https://www.openssl.org/source/openssl-3.0.15.tar.gz
-        tar xzf openssl-3.0.15.tar.gz
-        cd openssl-3.0.15
-        
-        # 配置 musl 编译环境
-        CC=musl-gcc ./Configure \
-          no-shared \
-          no-async \
-          no-engine \
-          --prefix=/musl \
-          --openssldir=/musl/ssl \
-          linux-x86_64 \
-          -static \
-          -fPIC
-        
-        make -j$(nproc)
-        sudo make install_sw install_ssldirs
-        cd ..
-        
-        # 设置环境变量
-        echo "OPENSSL_DIR=/musl" >> $GITHUB_ENV
-        echo "OPENSSL_STATIC=1" >> $GITHUB_ENV
-        echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
+        docker run --rm -v "$PWD:/volume" -w /volume clux/muslrust:stable \
+          cargo build --release --target x86_64-unknown-linux-musl
     
     # Linux aarch64 需要安装交叉编译工具和编译 OpenSSL
     - name: 安装交叉编译工具和依赖 (Linux aarch64)
@@ -99,6 +74,7 @@ jobs:
         echo "PKG_CONFIG_ALLOW_CROSS=1" >> $GITHUB_ENV
     
     - name: 编译项目
+      if: matrix.target != 'x86_64-unknown-linux-musl'
       run: cargo build --release --target ${{ matrix.target }}
     - name: 上传构建产物
       uses: actions/upload-artifact@v4
