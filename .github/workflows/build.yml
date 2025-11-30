@@ -1,0 +1,43 @@
+name: Build
+
+on:
+  push:
+    branches: [ "master" ]
+
+jobs:
+  # 任务一：构建和创建发布产物
+  build-release:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    env:
+      EXECUTABLE_NAME: phi-backend
+      
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+    - name: 恢复Cargo缓存
+      uses: Swatinem/rust-cache@v2
+    - name: 安装 Rust 工具链
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        targets: ${{ matrix.target }}
+    - name: 编译项目
+      run: cargo build --release --target ${{ matrix.target }}
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: phi-backend-${{ matrix.target }}
+        # 这里的多行路径写法是正确的，它会尝试上传两个路径，
+        # 并优雅地忽略不存在的那个（例如在Linux上忽略.exe）
+        path: |
+          target/${{ matrix.target }}/release/${{ env.EXECUTABLE_NAME }}
+          target/${{ matrix.target }}/release/${{ env.EXECUTABLE_NAME }}.exe
