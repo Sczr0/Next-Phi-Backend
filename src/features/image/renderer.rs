@@ -190,18 +190,17 @@ fn init_global_font_db() -> Arc<fontdb::Database> {
 
     // 加载自定义字体
     let fonts_dir = PathBuf::from(FONTS_DIR);
-    if fonts_dir.exists() {
-        if let Ok(entries) = fs::read_dir(&fonts_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_file()
-                    && (path.extension() == Some("ttf".as_ref())
-                        || path.extension() == Some("otf".as_ref()))
-                {
-                    if let Err(e) = font_db.load_font_file(&path) {
-                        tracing::error!("加载字体文件失败 '{}': {}", path.display(), e);
-                    }
-                }
+    if fonts_dir.exists()
+        && let Ok(entries) = fs::read_dir(&fonts_dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && (path.extension() == Some("ttf".as_ref())
+                    || path.extension() == Some("otf".as_ref()))
+                && let Err(e) = font_db.load_font_file(&path)
+            {
+                tracing::error!("加载字体文件失败 '{}': {}", path.display(), e);
             }
         }
     }
@@ -375,19 +374,132 @@ fn get_background_image(path: &PathBuf) -> Option<String> {
     None
 }
 
-/// 返回适合放入 <image href> 的引用：小图返回 data URI，大图返回文件路径
-fn get_image_href(path: &PathBuf, embed_images: bool) -> Option<String> {
-    // 当 embed_images=false 时，总是返回文件路径，避免小图内嵌 data URI（减轻 usvg 解析和内存压力）
-    if !embed_images {
-        if path.exists() {
-            return Some(path.to_string_lossy().into_owned());
+/// 将本地路径转换为对外可访问的 URL（`base_url/relative/path`），用于浏览器渲染 SVG。
+fn to_public_url_for_base(
+    path: &std::path::Path,
+    base_dir: &std::path::Path,
+    base_url: &str,
+) -> Option<String> {
+    let rel = path.strip_prefix(base_dir).ok()?;
+    let rel = rel.to_string_lossy().replace('\\', "/");
+    Some(format!(
+        "{}/{}",
+        base_url.trim_end_matches('/'),
+        rel.trim_start_matches('/')
+    ))
+}
+
+/// 使用曲绘根目录（`covers_dir()`）将本地路径转换为对外可访问 URL。
+fn to_public_url(path: &std::path::Path, base_url: &str) -> Option<String> {
+    let base_dir = cover_loader::covers_dir();
+    to_public_url_for_base(path, &base_dir, base_url)
+}
+
+/// 将字符串编码为 URL 路径片段（UTF-8 字节逐字节百分号编码），避免空格/Unicode/保留字符导致链接不可用。
+fn url_encode_path_segment(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for &b in input.as_bytes() {
+        let ch = b as char;
+        let is_unreserved = ch.is_ascii_alphanumeric() || matches!(ch, '-' | '.' | '_' | '~');
+        if is_unreserved {
+            out.push(ch);
         } else {
-            // 兜底：路径异常时尝试小图内嵌，尽量保证可渲染
-            return get_background_image(path);
+            use std::fmt::Write;
+            let _ = write!(&mut out, "%{:02X}", b);
         }
     }
-    // 需要显式内嵌时，复用小图内嵌逻辑（大图直接返回路径）
-    get_background_image(path)
+    out
+}
+
+fn is_http_url(input: &str) -> bool {
+    input.starts_with("http://") || input.starts_with("https://")
+}
+
+fn build_remote_illustration_url(public_illustration_base_url: &str, song_id: &str) -> String {
+    format!(
+        "{}/illustration/{}.png",
+        public_illustration_base_url.trim_end_matches('/'),
+        url_encode_path_segment(song_id)
+    )
+}
+
+fn build_remote_illustration_low_res_url(
+    public_illustration_base_url: &str,
+    song_id: &str,
+) -> String {
+    format!(
+        "{}/illustrationLowRes/{}.png",
+        public_illustration_base_url.trim_end_matches('/'),
+        url_encode_path_segment(song_id)
+    )
+}
+
+fn to_somnia_public_url(path: &std::path::Path, base_url: &str) -> Option<String> {
+    let base_dir = cover_loader::covers_dir();
+    to_somnia_public_url_for_base(path, &base_dir, base_url)
+}
+
+fn to_somnia_public_url_for_base(
+    path: &std::path::Path,
+    base_dir: &std::path::Path,
+    base_url: &str,
+) -> Option<String> {
+    if !is_http_url(base_url) {
+        return None;
+    }
+    let rel = path.strip_prefix(base_dir).ok()?;
+    let category = rel.components().next()?.as_os_str().to_string_lossy();
+    let song_id = rel.file_stem()?.to_string_lossy();
+    let encoded_song_id = url_encode_path_segment(&song_id);
+
+    let remote_dir = match category.as_ref() {
+        "ill" => "illustration",
+        "illLow" => "illustrationLowRes",
+        "illBlur" => "illustrationBlur",
+        _ => return None,
+    };
+
+    Some(format!(
+        "{}/{}/{}.png",
+        base_url.trim_end_matches('/'),
+        remote_dir,
+        encoded_song_id
+    ))
+}
+
+fn to_public_illustration_url(path: &std::path::Path, base_url: &str) -> Option<String> {
+    to_somnia_public_url(path, base_url).or_else(|| to_public_url(path, base_url))
+}
+
+/// 返回适合放入 `<image href>` 的引用：
+/// - `embed_images=true`：优先 data URI（仅小图）；大图回退为 URL/文件路径
+/// - `embed_images=false`：优先 URL（若提供 `public_illustration_base_url`），否则返回文件路径
+fn get_image_href(
+    path: &PathBuf,
+    embed_images: bool,
+    public_illustration_base_url: Option<&str>,
+) -> Option<String> {
+    if !embed_images {
+        if let Some(base) = public_illustration_base_url {
+            // 即使本地不存在，也允许基于路径结构直接生成可访问 URL（用于完全外部化曲绘资源）。
+            if let Some(url) = to_public_illustration_url(path, base) {
+                return Some(url);
+            }
+        }
+        if path.exists() {
+            return Some(path.to_string_lossy().into_owned());
+        }
+        // 兜底：路径异常时尝试小图内嵌，尽量保证可渲染
+        return get_background_image(path);
+    }
+
+    let href = get_background_image(path)?;
+    if let Some(base) = public_illustration_base_url
+        && !href.starts_with("data:")
+    {
+        return to_public_illustration_url(std::path::Path::new(&href), base).or(Some(href));
+    }
+    Some(href)
 }
 
 fn to_engine_difficulty(code: &str) -> Option<Difficulty> {
@@ -442,6 +554,8 @@ struct CardRenderInfo<'a> {
     theme: &'a Theme,
     is_user_generated: bool, // 新增
     embed_images: bool,
+    /// 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
+    public_illustration_base_url: Option<&'a str>,
 }
 
 fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
@@ -462,6 +576,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         theme,
         is_user_generated,
         embed_images,
+        public_illustration_base_url,
     } = info;
 
     // --- Card Dimensions & Layout ---
@@ -526,8 +641,26 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         } else {
             href
         };
+        // SVG 输出给前端时，避免把本地文件系统路径写入 href（浏览器无法访问）。
+        let final_href = if let Some(base) = public_illustration_base_url
+            && !final_href.starts_with("data:")
+        {
+            let pb = PathBuf::from(&final_href);
+            to_public_illustration_url(&pb, base).unwrap_or(final_href)
+        } else {
+            final_href
+        };
         let escaped_href = escape_xml(&final_href);
         writeln!(svg, r#"<image href="{escaped_href}" x="{cover_x}" y="{cover_y}" width="{cover_size_w:.1}" height="{cover_size_h:.1}" clip-path="url(#{clip_path_id})" />"#).map_err(fmt_err)?;
+    } else if let Some(base) = public_illustration_base_url {
+        // 外部化曲绘：当本地未扫描到封面时，按约定拼接远端路径（`illustrationLowRes` 更小更适合作为封面）。
+        let href = build_remote_illustration_low_res_url(base, &score.song_id);
+        let escaped_href = escape_xml(&href);
+        writeln!(
+            svg,
+            r#"<image href="{escaped_href}" x="{cover_x}" y="{cover_y}" width="{cover_size_w:.1}" height="{cover_size_h:.1}" clip-path="url(#{clip_path_id})" />"#
+        )
+        .map_err(fmt_err)?;
     }
 
     // Text content positioning
@@ -744,6 +877,8 @@ pub fn generate_svg_string(
     push_acc_map: Option<&HashMap<String, f64>>, // 新增：预先计算的推分ACC映射，键为"曲目ID-难度"
     theme: &Theme,                               // 新增：主题参数
     embed_images: bool,
+    // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
+    public_illustration_base_url: Option<&str>,
 ) -> Result<String, AppError> {
     let _start_time = std::time::Instant::now();
     // ... (width, height calculations etc. - keep these as they were) ...
@@ -847,28 +982,26 @@ pub fn generate_svg_string(
         if let Some(random_path) = filtered_background_files.choose(&mut rng) {
             // 随机选择一个路径
             // --- 新增：计算背景主色的反色 ---
-            if let Theme::White = theme {
-                if let Some(inverse_color) = get_inverse_color_from_path_cached(random_path) {
-                    normal_card_stroke_color = inverse_color;
-                    tracing::info!("使用背景反色作为卡片边框: {normal_card_stroke_color}");
-                }
+            if let Theme::White = theme
+                && let Some(inverse_color) = get_inverse_color_from_path_cached(random_path)
+            {
+                normal_card_stroke_color = inverse_color;
+                tracing::info!("使用背景反色作为卡片边框: {normal_card_stroke_color}");
             }
             // --- 结束新增 ---
 
             // 使用缓存函数获取背景图片
-            if let Some(image_href) = get_image_href(random_path, embed_images) {
+            if let Some(image_href) =
+                get_image_href(random_path, embed_images, public_illustration_base_url)
+            {
                 background_image_href = Some(image_href);
                 // 若需内嵌，则将背景预缩放为 Data URI，避免 resvg 进行大图缩放
-                if embed_images {
-                    if let Some(ref href_str) = background_image_href {
-                        if !href_str.starts_with("data:") {
-                            if let Some(uri) =
-                                get_scaled_image_data_uri(random_path, width, total_height)
-                            {
-                                background_image_href = Some(uri);
-                            }
-                        }
-                    }
+                if embed_images
+                    && let Some(ref href_str) = background_image_href
+                    && !href_str.starts_with("data:")
+                    && let Some(uri) = get_scaled_image_data_uri(random_path, width, total_height)
+                {
+                    background_image_href = Some(uri);
                 }
                 tracing::info!("使用随机背景图: {}", random_path.display());
             } else {
@@ -1161,6 +1294,7 @@ pub fn generate_svg_string(
                 theme,
                 is_user_generated: stats.is_user_generated,
                 embed_images,
+                public_illustration_base_url,
             })?
         }
         writeln!(svg, r#"</g>"#).map_err(fmt_err)?;
@@ -1198,6 +1332,7 @@ pub fn generate_svg_string(
             theme,
             is_user_generated: stats.is_user_generated,
             embed_images,
+            public_illustration_base_url,
         })?
     }
     let t_after_main = t0.elapsed();
@@ -1217,17 +1352,17 @@ pub fn generate_svg_string(
     writeln!(svg, r#"<text x="{footer_padding}" y="{footer_y:.1}" class="text-footer" text-anchor="start">{generated_text}</text>"#).map_err(fmt_err)?;
 
     // 右下角自定义文本
-    if let Some(custom_text) = &stats.custom_footer_text {
-        if !custom_text.is_empty() {
-            writeln!(
-                svg,
-                r#"<text x="{}" y="{:.1}" class="text-footer" text-anchor="end">{}</text>"#,
-                width as f64 - footer_padding,
-                footer_y,
-                escape_xml(custom_text)
-            )
-            .map_err(fmt_err)?;
-        }
+    if let Some(custom_text) = &stats.custom_footer_text
+        && !custom_text.is_empty()
+    {
+        writeln!(
+            svg,
+            r#"<text x="{}" y="{:.1}" class="text-footer" text-anchor="end">{}</text>"#,
+            width as f64 - footer_padding,
+            footer_y,
+            escape_xml(custom_text)
+        )
+        .map_err(fmt_err)?;
     }
 
     writeln!(svg, "</svg>").map_err(fmt_err)?;
@@ -1291,10 +1426,8 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
     let t_raster = t0.elapsed();
 
     // 用户数据添加隐式水印：直接修改未编码像素，避免解/编码开销
-    if is_user_generated {
-        if let Some(px) = pixmap.data_mut().get_mut(0..4) {
-            px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
-        }
+    if is_user_generated && let Some(px) = pixmap.data_mut().get_mut(0..4) {
+        px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
     }
 
     // 使用 png crate 进行快速编码
@@ -1397,10 +1530,8 @@ pub fn render_svg_to_png_scaled(
     );
 
     // 隐式水印
-    if is_user_generated {
-        if let Some(px) = pixmap.data_mut().get_mut(0..4) {
-            px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
-        }
+    if is_user_generated && let Some(px) = pixmap.data_mut().get_mut(0..4) {
+        px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
     }
 
     // 编码 PNG
@@ -1493,10 +1624,8 @@ pub fn render_svg_to_jpeg(
     );
 
     // 隐式水印
-    if is_user_generated {
-        if let Some(px) = pixmap.data_mut().get_mut(0..4) {
-            px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
-        }
+    if is_user_generated && let Some(px) = pixmap.data_mut().get_mut(0..4) {
+        px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
     }
 
     // 将 RGBA 像素扁平化到黑色背景（JPEG 无透明通道）
@@ -1598,10 +1727,8 @@ pub fn render_svg_to_webp(
     );
 
     // 隐式水印
-    if is_user_generated {
-        if let Some(px) = pixmap.data_mut().get_mut(0..4) {
-            px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
-        }
+    if is_user_generated && let Some(px) = pixmap.data_mut().get_mut(0..4) {
+        px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
     }
 
     // WebP 支持透明度通道，直接使用 RGBA 像素数据
@@ -1753,6 +1880,8 @@ fn get_inverse_color_from_path_cached(path: &Path) -> Option<String> {
 pub fn generate_song_svg_string(
     data: &SongRenderData,
     embed_images: bool,
+    // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
+    public_illustration_base_url: Option<&str>,
 ) -> Result<String, AppError> {
     let fmt_err = |e| AppError::ImageRendererError(format!("SVG formatting error: {e}"));
     let t0 = std::time::Instant::now();
@@ -1803,7 +1932,11 @@ pub fn generate_song_svg_string(
     // 优先尝试使用当前曲目的曲绘作为背景
     // 使用预先缓存的封面文件列表来检查文件是否存在，避免重复的文件系统调用
     if cover_files.contains(&current_song_ill_path_png) {
-        if let Some(image_href) = get_image_href(&current_song_ill_path_png, embed_images) {
+        if let Some(image_href) = get_image_href(
+            &current_song_ill_path_png,
+            embed_images,
+            public_illustration_base_url,
+        ) {
             background_image_href = Some(image_href);
             tracing::info!(
                 "使用当前曲目曲绘作为背景: {}",
@@ -1811,7 +1944,11 @@ pub fn generate_song_svg_string(
             );
         }
     } else if cover_files.contains(&current_song_ill_path_jpg) {
-        if let Some(image_href) = get_image_href(&current_song_ill_path_jpg, embed_images) {
+        if let Some(image_href) = get_image_href(
+            &current_song_ill_path_jpg,
+            embed_images,
+            public_illustration_base_url,
+        ) {
             background_image_href = Some(image_href);
             tracing::info!(
                 "使用当前曲目曲绘作为背景: {}",
@@ -1823,7 +1960,9 @@ pub fn generate_song_svg_string(
         if !cover_files.is_empty() {
             let mut rng = rand::thread_rng();
             if let Some(random_path) = cover_files.as_slice().choose(&mut rng) {
-                if let Some(image_href) = get_image_href(random_path, embed_images) {
+                if let Some(image_href) =
+                    get_image_href(random_path, embed_images, public_illustration_base_url)
+                {
                     background_image_href = Some(image_href);
                     tracing::info!("使用随机背景图: {}", random_path.display());
                 } else {
@@ -1948,7 +2087,11 @@ pub fn generate_song_svg_string(
     let illust_href = data
         .illustration_path
         .as_ref()
-        .map(|p| p.to_string_lossy().into_owned());
+        .and_then(|p| get_image_href(p, embed_images, public_illustration_base_url))
+        .or_else(|| {
+            public_illustration_base_url
+                .map(|base| build_remote_illustration_url(base, &data.song_id))
+        });
 
     // 曲目名称位置
     let song_name_x = illust_x;
@@ -2056,13 +2199,13 @@ pub fn generate_song_svg_string(
         writeln!(svg, r#"<text x="{label_x}" y="{label_y}" class="{diff_label_class}" text-anchor="middle">{diff_key}</text>"#).map_err(fmt_err)?;
 
         // 在难度标签下方显示定数值
-        if let Some(Some(score_data)) = data.difficulty_scores.get(diff_key) {
-            if let Some(dv) = score_data.difficulty_value {
-                let constant_text_x = label_x; // 与难度标签X轴对齐
-                // 调整Y坐标，让它位于难度标签下方
-                let constant_text_y = label_y + 20.0;
-                writeln!(svg, r#"<text x="{constant_text_x}" y="{constant_text_y}" class="text-constants" text-anchor="middle">Lv. {dv:.1}</text>"#).map_err(fmt_err)?;
-            }
+        if let Some(Some(score_data)) = data.difficulty_scores.get(diff_key)
+            && let Some(dv) = score_data.difficulty_value
+        {
+            let constant_text_x = label_x; // 与难度标签X轴对齐
+            // 调整Y坐标，让它位于难度标签下方
+            let constant_text_y = label_y + 20.0;
+            writeln!(svg, r#"<text x="{constant_text_x}" y="{constant_text_y}" class="text-constants" text-anchor="middle">Lv. {dv:.1}</text>"#).map_err(fmt_err)?;
         }
 
         // 判断是否有该难度的谱面数据
@@ -2317,4 +2460,136 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
 
     svg.push_str("</svg>");
     Ok(svg)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PlayerStats, RenderRecord, SongRenderData, Theme, generate_song_svg_string,
+        generate_svg_string, to_public_url_for_base, to_somnia_public_url_for_base,
+    };
+    use chrono::Utc;
+    use std::fs;
+    use std::sync::OnceLock;
+
+    fn ensure_config_inited() {
+        static INIT: OnceLock<()> = OnceLock::new();
+        INIT.get_or_init(|| {
+            // 注意：全局配置只允许初始化一次；为避免与其它测试（如管理员令牌测试）发生顺序依赖，
+            // 在这里提前设置一个确定的默认管理员令牌集合。
+            unsafe {
+                std::env::set_var("APP_LEADERBOARD_ADMIN_TOKENS", "t1,t2");
+            }
+            let _ = crate::config::AppConfig::init_global();
+        });
+    }
+
+    #[test]
+    fn maps_local_path_to_public_url() {
+        let base_dir =
+            std::env::temp_dir().join(format!("phi-backend-test-{}", uuid::Uuid::new_v4()));
+        let ill_dir = base_dir.join("ill");
+        fs::create_dir_all(&ill_dir).unwrap();
+        let file_path = ill_dir.join("123.png");
+        fs::write(&file_path, b"test").unwrap();
+
+        let url = to_public_url_for_base(&file_path, &base_dir, "/_ill").unwrap();
+        assert_eq!(url, "/_ill/ill/123.png");
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn returns_none_when_not_under_base_dir() {
+        let base_dir =
+            std::env::temp_dir().join(format!("phi-backend-test-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base_dir).unwrap();
+        let other_dir =
+            std::env::temp_dir().join(format!("phi-backend-test-other-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&other_dir).unwrap();
+        let file_path = other_dir.join("ill").join("123.png");
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(&file_path, b"test").unwrap();
+
+        let url = to_public_url_for_base(&file_path, &base_dir, "/_ill");
+        assert!(url.is_none());
+
+        let _ = fs::remove_dir_all(&base_dir);
+        let _ = fs::remove_dir_all(&other_dir);
+    }
+
+    #[test]
+    fn maps_local_path_to_somnia_url_for_external_base() {
+        let base_dir =
+            std::env::temp_dir().join(format!("phi-backend-test-{}", uuid::Uuid::new_v4()));
+        let ill_low_dir = base_dir.join("illLow");
+        fs::create_dir_all(&ill_low_dir).unwrap();
+        let file_path = ill_low_dir.join("A B.png");
+        fs::write(&file_path, b"test").unwrap();
+
+        let url =
+            to_somnia_public_url_for_base(&file_path, &base_dir, "https://example.com").unwrap();
+        assert_eq!(url, "https://example.com/illustrationLowRes/A%20B.png");
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn generate_svg_uses_remote_cover_url_when_base_provided() {
+        ensure_config_inited();
+        let record = RenderRecord {
+            song_id: "TEST REMOTE 123".to_string(),
+            song_name: "Remote".to_string(),
+            difficulty: "IN".to_string(),
+            score: Some(1_000_000.0),
+            acc: 99.0,
+            rks: 0.0,
+            difficulty_value: 10.0,
+            is_fc: false,
+        };
+        let stats = PlayerStats {
+            ap_top_3_avg: None,
+            best_27_avg: None,
+            real_rks: None,
+            player_name: Some("Tester".to_string()),
+            update_time: Utc::now(),
+            n: 1,
+            ap_top_3_scores: vec![],
+            challenge_rank: None,
+            data_string: None,
+            custom_footer_text: None,
+            is_user_generated: false,
+        };
+
+        let svg = generate_svg_string(
+            &[record],
+            &stats,
+            None,
+            &Theme::default(),
+            false,
+            Some("https://example.com"),
+        )
+        .unwrap();
+
+        assert!(svg.contains("https://example.com/illustrationLowRes/TEST%20REMOTE%20123.png"));
+        assert!(!svg.contains("data:image/"));
+    }
+
+    #[test]
+    fn generate_song_svg_uses_remote_illust_when_missing_path() {
+        ensure_config_inited();
+        let data = SongRenderData {
+            song_name: "RemoteSong".to_string(),
+            song_id: "SONG REMOTE 456".to_string(),
+            player_name: Some("Tester".to_string()),
+            update_time: Utc::now(),
+            difficulty_scores: Default::default(),
+            illustration_path: None,
+            custom_footer_text: None,
+        };
+
+        let svg = generate_song_svg_string(&data, false, Some("https://example.com")).unwrap();
+        assert!(svg.contains("https://example.com/illustration/SONG%20REMOTE%20456.png"));
+        assert!(!svg.contains("data:image/"));
+    }
 }

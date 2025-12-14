@@ -72,88 +72,87 @@ pub async fn get_save_data(
     if let Some(storage) = state.stats_storage.as_ref()
         && let Some(user_hash_ref) = user_hash.as_ref()
     {
-            let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
-            let total_rks = rks_res.total_rks;
-            let (best_top3, ap_top3, rks_comp) =
-                compute_textual_details(&parsed.game_record, &state);
-            let best_top3_json = serde_json::to_string(&best_top3).ok();
-            let ap_top3_json = serde_json::to_string(&ap_top3).ok();
-            let rks_comp_json = serde_json::to_string(&rks_comp).ok();
-            let now = chrono::Utc::now().to_rfc3339();
-            let prev = storage.get_prev_rks(user_hash_ref).await?;
-            let prev_rks = prev.as_ref().map(|v| v.0).unwrap_or(0.0);
-            let rks_jump = if prev_rks > 0.0 {
-                total_rks - prev_rks
-            } else {
-                0.0
-            };
-            let mut suspicion = 0.0_f64;
-            if total_rks > 20.0 {
-                suspicion += 0.5;
-            }
-            if rks_jump > 1.0 {
-                suspicion += 0.8;
-            } else if rks_jump > 0.5 {
-                suspicion += 0.3;
-            }
-            if let Some(kind) = user_kind.as_deref()
-                && kind == "session_token"
-            {
-                suspicion = (suspicion - 0.2).max(0.0);
-            }
-            let hide = suspicion >= 1.0;
-            storage
-                .insert_submission(SubmissionRecord {
-                    user_hash: user_hash_ref,
-                    total_rks,
-                    rks_jump,
-                    route: "/save",
-                    client_ip_hash: None,
-                    details_json: None,
-                    suspicion_score: suspicion,
-                    now_rfc3339: &now,
-                })
-                .await?;
-            storage
-                .upsert_leaderboard_rks(
-                    user_hash_ref,
-                    total_rks,
-                    user_kind.as_deref(),
-                    suspicion,
-                    hide,
-                    &now,
-                )
-                .await?;
-            storage
-                .upsert_details(
-                    user_hash_ref,
-                    rks_comp_json.as_deref(),
-                    best_top3_json.as_deref(),
-                    ap_top3_json.as_deref(),
-                    &now,
-                )
-                .await?;
+        let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
+        let total_rks = rks_res.total_rks;
+        let (best_top3, ap_top3, rks_comp) = compute_textual_details(&parsed.game_record, &state);
+        let best_top3_json = serde_json::to_string(&best_top3).ok();
+        let ap_top3_json = serde_json::to_string(&ap_top3).ok();
+        let rks_comp_json = serde_json::to_string(&rks_comp).ok();
+        let now = chrono::Utc::now().to_rfc3339();
+        let prev = storage.get_prev_rks(user_hash_ref).await?;
+        let prev_rks = prev.as_ref().map(|v| v.0).unwrap_or(0.0);
+        let rks_jump = if prev_rks > 0.0 {
+            total_rks - prev_rks
+        } else {
+            0.0
+        };
+        let mut suspicion = 0.0_f64;
+        if total_rks > 20.0 {
+            suspicion += 0.5;
+        }
+        if rks_jump > 1.0 {
+            suspicion += 0.8;
+        } else if rks_jump > 0.5 {
+            suspicion += 0.3;
+        }
+        if let Some(kind) = user_kind.as_deref()
+            && kind == "session_token"
+        {
+            suspicion = (suspicion - 0.2).max(0.0);
+        }
+        let hide = suspicion >= 1.0;
+        storage
+            .insert_submission(SubmissionRecord {
+                user_hash: user_hash_ref,
+                total_rks,
+                rks_jump,
+                route: "/save",
+                client_ip_hash: None,
+                details_json: None,
+                suspicion_score: suspicion,
+                now_rfc3339: &now,
+            })
+            .await?;
+        storage
+            .upsert_leaderboard_rks(
+                user_hash_ref,
+                total_rks,
+                user_kind.as_deref(),
+                suspicion,
+                hide,
+                &now,
+            )
+            .await?;
+        storage
+            .upsert_details(
+                user_hash_ref,
+                rks_comp_json.as_deref(),
+                best_top3_json.as_deref(),
+                ap_top3_json.as_deref(),
+                &now,
+            )
+            .await?;
 
-            // 默认在排行榜上展示：首次保存时创建公开资料
-            let cfg = crate::config::AppConfig::global();
-            if cfg.leaderboard.allow_public {
-                let def_rc = if cfg.leaderboard.default_show_rks_composition {
-                    1_i64
-                } else {
-                    0_i64
-                };
-                let def_b3 = if cfg.leaderboard.default_show_best_top3 {
-                    1_i64
-                } else {
-                    0_i64
-                };
-                let def_ap3 = if cfg.leaderboard.default_show_ap_top3 {
-                    1_i64
-                } else {
-                    0_i64
-                };
-                // 仅当不存在时创建公开行（不覆盖用户后续设置）
-                let _ = sqlx::query(
+        // 默认在排行榜上展示：首次保存时创建公开资料
+        let cfg = crate::config::AppConfig::global();
+        if cfg.leaderboard.allow_public {
+            let def_rc = if cfg.leaderboard.default_show_rks_composition {
+                1_i64
+            } else {
+                0_i64
+            };
+            let def_b3 = if cfg.leaderboard.default_show_best_top3 {
+                1_i64
+            } else {
+                0_i64
+            };
+            let def_ap3 = if cfg.leaderboard.default_show_ap_top3 {
+                1_i64
+            } else {
+                0_i64
+            };
+            // 仅当不存在时创建公开行（不覆盖用户后续设置）
+            let _ = sqlx::query(
                     "INSERT INTO user_profile(user_hash,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
                      ON CONFLICT(user_hash) DO NOTHING"
                 )
@@ -167,7 +166,7 @@ pub async fn get_save_data(
                 .bind(&now)
                 .execute(&storage.pool)
                 .await;
-            }
+        }
     }
 
     let calc_rks = params

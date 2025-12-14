@@ -127,9 +127,7 @@ pub async fn get_top(
     };
     let (mut last_score, mut last_updated, mut last_user_hash) =
         (None::<f64>, None::<String>, None::<String>);
-    if has_more
-        && let Some(r) = rows.last()
-    {
+    if has_more && let Some(r) = rows.last() {
         last_score = r.try_get::<f64, _>("total_rks").ok();
         last_updated = r.try_get::<String, _>("updated_at").ok();
         last_user_hash = r.try_get::<String, _>("user_hash").ok();
@@ -248,12 +246,10 @@ pub async fn get_by_rank(
     let has_more = ((start_rank - 1) + rows.len() as i64) < total;
     let (mut last_score, mut last_updated, mut last_user_hash) =
         (None::<f64>, None::<String>, None::<String>);
-    if has_more {
-        if let Some(r) = rows.last() {
-            last_score = r.try_get::<f64, _>("total_rks").ok();
-            last_updated = r.try_get::<String, _>("updated_at").ok();
-            last_user_hash = r.try_get::<String, _>("user_hash").ok();
-        }
+    if has_more && let Some(r) = rows.last() {
+        last_score = r.try_get::<f64, _>("total_rks").ok();
+        last_updated = r.try_get::<String, _>("updated_at").ok();
+        last_user_hash = r.try_get::<String, _>("user_hash").ok();
     }
     for (i, r) in rows.into_iter().enumerate() {
         let user_hash: String = r.try_get("user_hash").unwrap_or_default();

@@ -305,6 +305,7 @@ async fn test_b27_generation_with_flamegraph() {
         Some(&push_acc_map),
         &Theme::default(),
         false,
+        None,
     )
     .expect("生成 SVG 失败");
 

@@ -17,6 +17,8 @@ base_path = "./resources"
 illustration_repo = "https://github.com/Catrong/phi-plugin-ill"
 # 曲绘文件夹名
 illustration_folder = "ill"
+# 曲绘外部资源基地址（HTTP）：当无法/不希望从 Git 克隆曲绘时，可配置此项让服务按需回源（同源代理由 /_ill 提供）
+# illustration_external_base_url = "https://somnia.xtower.site"
 # info 数据目录（包含 difficulty.csv）
 info_path = "./info"
 

@@ -30,7 +30,7 @@ use serde::Deserialize;
 /// 图片输出选项（通过 Query 传入，避免破坏现有 JSON 请求体）
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ImageQueryOpts {
-    /// 输出格式：png、jpeg 或 webp（默认 png）
+    /// 输出格式：png、jpeg、webp 或 svg（默认 png）
     #[serde(default)]
     format: Option<String>,
     /// 目标宽度：按宽度同比例缩放（可选）
@@ -44,6 +44,55 @@ pub struct ImageQueryOpts {
     webp_lossless: Option<bool>,
 }
 
+/// SVG 返回时，曲绘资源的同源访问前缀（由 `src/main.rs` 提供静态目录服务）。
+const ILLUSTRATION_PUBLIC_BASE_URL: &str = "/_ill";
+
+fn is_svg_format(q: &ImageQueryOpts) -> bool {
+    q.format
+        .as_deref()
+        .is_some_and(|fmt| fmt.eq_ignore_ascii_case("svg"))
+}
+
+fn format_code(q: &ImageQueryOpts) -> &'static str {
+    if is_svg_format(q) {
+        return "svg";
+    }
+    match q.format.as_deref() {
+        Some("jpeg") | Some("jpg") => "jpg",
+        Some("webp") => "webp",
+        _ => "png",
+    }
+}
+
+fn content_type_from_fmt_code(code: &str) -> &'static str {
+    match code {
+        "svg" => "image/svg+xml; charset=utf-8",
+        "jpg" => "image/jpeg",
+        "webp" => "image/webp",
+        _ => "image/png",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ImageQueryOpts, content_type_from_fmt_code, format_code};
+
+    #[test]
+    fn supports_svg_format_code_and_content_type() {
+        let q = ImageQueryOpts {
+            format: Some("svg".to_string()),
+            width: None,
+            webp_quality: None,
+            webp_lossless: None,
+        };
+        assert_eq!(format_code(&q), "svg");
+        assert_eq!(
+            content_type_from_fmt_code("svg"),
+            "image/svg+xml; charset=utf-8"
+        );
+    }
+}
+
 #[utoipa::path(
     post,
     path = "/image/bn",
@@ -51,7 +100,7 @@ pub struct ImageQueryOpts {
     description = "从官方/外部存档解析玩家成绩，按 RKS 值排序取前 N 条生成 BestN 概览（PNG）。可选内嵌封面与主题切换。",
     request_body = RenderBnRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp，默认 png"),
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
         ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
@@ -89,118 +138,128 @@ pub async fn render_bn(
     let save_ms = t_save.elapsed().as_millis() as i64;
 
     // 参数验证：webp_quality 范围
-    if let Some(quality) = q.webp_quality && quality > 100 {
+    if let Some(quality) = q.webp_quality
+        && quality > 100
+    {
         return Err(AppError::Validation(
             "webp_quality 必须在 1-100 范围内".to_string(),
         ));
     }
+
+    let fmt_code = format_code(&q);
+    // SVG 模式下：强制不内嵌图片（避免 data URI 导致体积爆炸），并将曲绘 href 指向外部资源基地址。
+    let embed_images_effective = if fmt_code == "svg" {
+        false
+    } else {
+        req.embed_images
+    };
+    let public_illustration_base_url = if fmt_code == "svg" {
+        Some(
+            AppConfig::global()
+                .resources
+                .illustration_external_base_url
+                .as_deref()
+                .unwrap_or(ILLUSTRATION_PUBLIC_BASE_URL),
+        )
+    } else {
+        None
+    };
 
     // Cache hit/miss 事件 + 快速返回
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash_for_cache, user_kind_for_cache) =
         crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-    if cache_enabled
-        && let Some(user_hash) = user_hash_for_cache.as_ref()
-    {
-            let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let theme_code = match req.theme {
-                super::types::Theme::White => "w",
-                super::types::Theme::Black => "b",
-            };
-            let fmt_code = match q.format.as_deref() {
-                Some("jpeg") | Some("jpg") => "jpg",
-                Some("webp") => "webp",
-                _ => "png",
-            };
-            let width_code = q.width.unwrap_or(0);
-            let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
-                1
-            } else {
-                0
-            };
-            let key = format!(
-                "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
-                user_hash,
-                req.n.max(1),
-                updated,
-                theme_code,
-                if req.embed_images { 1 } else { 0 },
-                fmt_code,
-                width_code,
-                webp_quality_code,
-                webp_lossless_code
-            );
-            if let Some(p) = state.bn_image_cache.get(&key).await {
-                let _cache_duration = Instant::now().elapsed();
-                tracing::info!(target: "bestn_performance", "缓存命中，缓存键: {}", key);
+    if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
+        let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
+        let theme_code = match req.theme {
+            super::types::Theme::White => "w",
+            super::types::Theme::Black => "b",
+        };
+        let width_code = q.width.unwrap_or(0);
+        let webp_quality_code = q.webp_quality.unwrap_or(80);
+        let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
+            1
+        } else {
+            0
+        };
+        let key = format!(
+            "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
+            user_hash,
+            req.n.max(1),
+            updated,
+            theme_code,
+            if embed_images_effective { 1 } else { 0 },
+            fmt_code,
+            width_code,
+            webp_quality_code,
+            webp_lossless_code
+        );
+        if let Some(p) = state.bn_image_cache.get(&key).await {
+            let _cache_duration = Instant::now().elapsed();
+            tracing::info!(target: "bestn_performance", "缓存命中，缓存键: {}", key);
 
-                if let Some(h) = state.stats.as_ref() {
-                    let total_ms = t_total.elapsed().as_millis() as i64;
-                    let evt = crate::features::stats::models::EventInsert {
-                        ts_utc: chrono::Utc::now(),
-                        route: Some("/image/bn".into()),
-                        feature: Some("image_cache".into()),
-                        action: Some("bn_hit".into()),
-                        method: Some("POST".into()),
-                        status: None,
-                        duration_ms: Some(total_ms),
-                        user_hash: Some(user_hash.clone()),
-                        client_ip_hash: None,
-                        instance: None,
-                        extra_json: Some(serde_json::json!({
-                            "cached": true,
-                            "user_kind": user_kind_for_cache,
-                            "fmt": fmt_code,
-                            "width": width_code,
-                            "webp_quality": webp_quality_code,
-                            "webp_lossless": webp_lossless_code
-                        })),
-                    };
-                    h.track(evt).await;
-                    // 日志：BestN 缓存命中耗时
-                    debug!(
-                        target: "phi_backend::image::bn",
-                        total_ms,
-                        fmt = fmt_code,
-                        width = width_code,
-                        "BestN 图片缓存命中，整体耗时 {total_ms}ms"
-                    );
-                }
-                let mut headers = axum::http::HeaderMap::new();
-                let content_type = match fmt_code {
-                    "jpg" => "image/jpeg",
-                    "webp" => "image/webp",
-                    _ => "image/png",
-                };
-                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-
-                let total_duration = t_total.elapsed();
-                tracing::info!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
-                return Ok((StatusCode::OK, headers, (*p).clone()));
-            } else {
-                let _cache_duration = Instant::now().elapsed();
-                tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
-            }
             if let Some(h) = state.stats.as_ref() {
+                let total_ms = t_total.elapsed().as_millis() as i64;
                 let evt = crate::features::stats::models::EventInsert {
                     ts_utc: chrono::Utc::now(),
                     route: Some("/image/bn".into()),
                     feature: Some("image_cache".into()),
-                    action: Some("bn_miss".into()),
+                    action: Some("bn_hit".into()),
                     method: Some("POST".into()),
                     status: None,
-                    duration_ms: None,
+                    duration_ms: Some(total_ms),
                     user_hash: Some(user_hash.clone()),
                     client_ip_hash: None,
                     instance: None,
-                    extra_json: Some(
-                        serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache }),
-                    ),
+                    extra_json: Some(serde_json::json!({
+                        "cached": true,
+                        "user_kind": user_kind_for_cache,
+                        "fmt": fmt_code,
+                        "width": width_code,
+                        "webp_quality": webp_quality_code,
+                        "webp_lossless": webp_lossless_code
+                    })),
                 };
                 h.track(evt).await;
+                // 日志：BestN 缓存命中耗时
+                debug!(
+                    target: "phi_backend::image::bn",
+                    total_ms,
+                    fmt = fmt_code,
+                    width = width_code,
+                    "BestN 图片缓存命中，整体耗时 {total_ms}ms"
+                );
             }
+            let mut headers = axum::http::HeaderMap::new();
+            let content_type = content_type_from_fmt_code(fmt_code);
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+
+            let total_duration = t_total.elapsed();
+            tracing::info!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
+            return Ok((StatusCode::OK, headers, (*p).clone()));
+        } else {
+            let _cache_duration = Instant::now().elapsed();
+            tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
+        }
+        if let Some(h) = state.stats.as_ref() {
+            let evt = crate::features::stats::models::EventInsert {
+                ts_utc: chrono::Utc::now(),
+                route: Some("/image/bn".into()),
+                feature: Some("image_cache".into()),
+                action: Some("bn_miss".into()),
+                method: Some("POST".into()),
+                status: None,
+                duration_ms: None,
+                user_hash: Some(user_hash.clone()),
+                client_ip_hash: None,
+                instance: None,
+                extra_json: Some(
+                    serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache }),
+                ),
+            };
+            h.track(evt).await;
+        }
     }
 
     // 扁平化为渲染记录 + 排序与推分预计算耗时
@@ -433,23 +492,28 @@ pub async fn render_bn(
         &stats,
         Some(&push_acc_map),
         &req.theme,
-        req.embed_images,
+        embed_images_effective,
+        public_illustration_base_url,
     )?;
     let svg_duration = t_svg_start.elapsed();
     let svg_size = svg.len();
     tracing::info!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
 
     let t_render_start = Instant::now();
-    // 输出格式与宽度处理
-    let (bytes, content_type) = renderer::render_svg_unified_async(
-        svg,
-        false,
-        q.format.as_deref(),
-        q.width,
-        q.webp_quality,
-        q.webp_lossless,
-    )
-    .await?;
+    // 输出格式与宽度处理（svg 直接返回，不做栅格化渲染）
+    let (bytes, content_type) = if fmt_code == "svg" {
+        (svg.into_bytes(), content_type_from_fmt_code(fmt_code))
+    } else {
+        renderer::render_svg_unified_async(
+            svg,
+            false,
+            q.format.as_deref(),
+            q.width,
+            q.webp_quality,
+            q.webp_lossless,
+        )
+        .await?
+    };
     let render_duration = t_render_start.elapsed();
     let render_ms = render_duration.as_millis() as i64;
     let bytes_len = bytes.len();
@@ -486,11 +550,7 @@ pub async fn render_bn(
                 super::types::Theme::White => "w",
                 super::types::Theme::Black => "b",
             };
-            let fmt_code = match q.format.as_deref() {
-                Some("jpeg") | Some("jpg") => "jpg",
-                Some("webp") => "webp",
-                _ => "png",
-            };
+            let fmt_code = format_code(&q);
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
             let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
@@ -504,7 +564,7 @@ pub async fn render_bn(
                 n,
                 updated,
                 theme_code,
-                if req.embed_images { 1 } else { 0 },
+                if embed_images_effective { 1 } else { 0 },
                 fmt_code,
                 width_code,
                 webp_quality_code,
@@ -580,7 +640,7 @@ pub async fn render_bn(
     description = "从存档中定位指定歌曲（支持 ID/名称），展示四难度成绩、RKS、推分建议等信息（PNG）。",
     request_body = RenderSongRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp，默认 png"),
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
         ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
@@ -615,78 +675,66 @@ pub async fn render_song(
         .map_err(AppError::Search)?;
 
     // 参数验证：webp_quality 范围
-    if let Some(quality) = q.webp_quality && quality > 100 {
+    if let Some(quality) = q.webp_quality
+        && quality > 100
+    {
         return Err(AppError::Validation(
             "webp_quality 必须在 1-100 范围内".to_string(),
         ));
     }
+
+    let fmt_code = format_code(&q);
+    // SVG 模式下：强制不内嵌图片（避免 data URI 导致体积爆炸），并将曲绘 href 指向外部资源基地址。
+    let embed_images_effective = if fmt_code == "svg" {
+        false
+    } else {
+        req.embed_images
+    };
+    let public_illustration_base_url = if fmt_code == "svg" {
+        Some(
+            AppConfig::global()
+                .resources
+                .illustration_external_base_url
+                .as_deref()
+                .unwrap_or(ILLUSTRATION_PUBLIC_BASE_URL),
+        )
+    } else {
+        None
+    };
 
     // Cache hit/miss 事件 + 快速返回
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash_for_cache, user_kind_for_cache) =
         crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-    if cache_enabled
-        && let Some(user_hash) = user_hash_for_cache.as_ref()
-    {
-            let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let fmt_code = match q.format.as_deref() {
-                Some("jpeg") | Some("jpg") => "jpg",
-                Some("webp") => "webp",
-                _ => "png",
-            };
-            let width_code = q.width.unwrap_or(0);
-            let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
-                1
-            } else {
-                0
-            };
-            let key = format!(
-                "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
-                user_hash,
-                song.id,
-                updated,
-                "d",
-                if req.embed_images { 1 } else { 0 },
-                fmt_code,
-                width_code,
-                webp_quality_code,
-                webp_lossless_code
-            );
-            if let Some(p) = state.song_image_cache.get(&key).await {
-                if let Some(h) = state.stats.as_ref() {
-                    let evt = crate::features::stats::models::EventInsert {
-                        ts_utc: chrono::Utc::now(),
-                        route: Some("/image/song".into()),
-                        feature: Some("image_cache".into()),
-                        action: Some("song_hit".into()),
-                        method: Some("POST".into()),
-                        status: None,
-                        duration_ms: None,
-                        user_hash: Some(user_hash.clone()),
-                        client_ip_hash: None,
-                        instance: None,
-                        extra_json: Some(
-                            serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id}),
-                        ),
-                    };
-                    h.track(evt).await;
-                }
-                let mut headers = axum::http::HeaderMap::new();
-                let content_type = match fmt_code {
-                    "jpg" => "image/jpeg",
-                    "webp" => "image/webp",
-                    _ => "image/png",
-                };
-                headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-                return Ok((StatusCode::OK, headers, (*p).clone()));
-            } else if let Some(h) = state.stats.as_ref() {
+    if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
+        let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
+        let width_code = q.width.unwrap_or(0);
+        let webp_quality_code = q.webp_quality.unwrap_or(80);
+        let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
+            1
+        } else {
+            0
+        };
+        let key = format!(
+            "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
+            user_hash,
+            song.id,
+            updated,
+            "d",
+            if embed_images_effective { 1 } else { 0 },
+            fmt_code,
+            width_code,
+            webp_quality_code,
+            webp_lossless_code
+        );
+        if let Some(p) = state.song_image_cache.get(&key).await {
+            if let Some(h) = state.stats.as_ref() {
                 let evt = crate::features::stats::models::EventInsert {
                     ts_utc: chrono::Utc::now(),
                     route: Some("/image/song".into()),
                     feature: Some("image_cache".into()),
-                    action: Some("song_miss".into()),
+                    action: Some("song_hit".into()),
                     method: Some("POST".into()),
                     status: None,
                     duration_ms: None,
@@ -694,11 +742,33 @@ pub async fn render_song(
                     client_ip_hash: None,
                     instance: None,
                     extra_json: Some(
-                        serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id}),
+                        serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id}),
                     ),
                 };
                 h.track(evt).await;
             }
+            let mut headers = axum::http::HeaderMap::new();
+            let content_type = content_type_from_fmt_code(fmt_code);
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
+            return Ok((StatusCode::OK, headers, (*p).clone()));
+        } else if let Some(h) = state.stats.as_ref() {
+            let evt = crate::features::stats::models::EventInsert {
+                ts_utc: chrono::Utc::now(),
+                route: Some("/image/song".into()),
+                feature: Some("image_cache".into()),
+                action: Some("song_miss".into()),
+                method: Some("POST".into()),
+                status: None,
+                duration_ms: None,
+                user_hash: Some(user_hash.clone()),
+                client_ip_hash: None,
+                instance: None,
+                extra_json: Some(
+                    serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id}),
+                ),
+            };
+            h.track(evt).await;
+        }
     }
 
     // 构建所有引擎记录用于推分
@@ -853,16 +923,24 @@ pub async fn render_song(
         .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
     let wait_ms2 = t_wait2.elapsed().as_millis() as i64;
     let t_render2 = Instant::now();
-    let svg = renderer::generate_song_svg_string(&render_data, req.embed_images)?;
-    let (bytes, content_type) = renderer::render_svg_unified_async(
-        svg,
-        false,
-        q.format.as_deref(),
-        q.width,
-        q.webp_quality,
-        q.webp_lossless,
-    )
-    .await?;
+    let svg = renderer::generate_song_svg_string(
+        &render_data,
+        embed_images_effective,
+        public_illustration_base_url,
+    )?;
+    let (bytes, content_type) = if fmt_code == "svg" {
+        (svg.into_bytes(), content_type_from_fmt_code(fmt_code))
+    } else {
+        renderer::render_svg_unified_async(
+            svg,
+            false,
+            q.format.as_deref(),
+            q.width,
+            q.webp_quality,
+            q.webp_lossless,
+        )
+        .await?
+    };
     let render_ms2 = t_render2.elapsed().as_millis() as i64;
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
@@ -886,11 +964,7 @@ pub async fn render_song(
         let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         if let Some(user_hash) = uh.as_ref() {
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-            let fmt_code = match q.format.as_deref() {
-                Some("jpeg") | Some("jpg") => "jpg",
-                Some("webp") => "webp",
-                _ => "png",
-            };
+            let fmt_code = format_code(&q);
             let width_code = q.width.unwrap_or(0);
             let webp_quality_code = q.webp_quality.unwrap_or(80);
             let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
@@ -904,7 +978,7 @@ pub async fn render_song(
                 song.id,
                 updated,
                 "d",
-                if req.embed_images { 1 } else { 0 },
+                if embed_images_effective { 1 } else { 0 },
                 fmt_code,
                 width_code,
                 webp_quality_code,
@@ -1017,7 +1091,7 @@ async fn fetch_nickname(session_token: &str) -> Option<String> {
     description = "无需存档，直接提交若干条用户自报成绩，计算 RKS 排序并生成 BestN 图片；支持水印解除口令。",
     request_body = RenderUserBnRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp，默认 png"),
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
         ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
@@ -1035,7 +1109,9 @@ pub async fn render_bn_user(
     Json(req): Json<RenderUserBnRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     // 参数验证：webp_quality 范围
-    if let Some(quality) = q.webp_quality && quality > 100 {
+    if let Some(quality) = q.webp_quality
+        && quality > 100
+    {
         return Err(AppError::Validation(
             "webp_quality 必须在 1-100 范围内".to_string(),
         ));
@@ -1182,16 +1258,39 @@ pub async fn render_bn_user(
         is_user_generated: explicit,
     };
 
-    let svg = renderer::generate_svg_string(&top, &stats, Some(&push_acc_map), &req.theme, false)?;
-    let (bytes, content_type) = renderer::render_svg_unified_async(
-        svg,
-        implicit,
-        q.format.as_deref(),
-        q.width,
-        q.webp_quality,
-        q.webp_lossless,
-    )
-    .await?;
+    let fmt_code = format_code(&q);
+    let public_illustration_base_url = if fmt_code == "svg" {
+        Some(
+            AppConfig::global()
+                .resources
+                .illustration_external_base_url
+                .as_deref()
+                .unwrap_or(ILLUSTRATION_PUBLIC_BASE_URL),
+        )
+    } else {
+        None
+    };
+    let svg = renderer::generate_svg_string(
+        &top,
+        &stats,
+        Some(&push_acc_map),
+        &req.theme,
+        false,
+        public_illustration_base_url,
+    )?;
+    let (bytes, content_type) = if fmt_code == "svg" {
+        (svg.into_bytes(), content_type_from_fmt_code(fmt_code))
+    } else {
+        renderer::render_svg_unified_async(
+            svg,
+            implicit,
+            q.format.as_deref(),
+            q.width,
+            q.webp_quality,
+            q.webp_lossless,
+        )
+        .await?
+    };
 
     // 统计：用户自报 BestN 图片生成
     if let Some(stats_handle) = state.stats.as_ref() {

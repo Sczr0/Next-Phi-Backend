@@ -19,6 +19,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use tower_http::services::ServeDir;
 use utoipa::Modify;
 use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
@@ -291,8 +292,13 @@ async fn main() {
         .merge(create_rks_router());
     api_router = api_router.merge(create_stats_router());
 
+    let ill_root = config.illustration_path();
     let mut app = Router::<AppState>::new()
         .route("/health", get(health_check))
+        // 给 SVG 渲染提供同源曲绘访问路径：只暴露实际用到的三个目录，避免误暴露 `.git` 等敏感文件。
+        .nest_service("/_ill/ill", ServeDir::new(ill_root.join("ill")))
+        .nest_service("/_ill/illLow", ServeDir::new(ill_root.join("illLow")))
+        .nest_service("/_ill/illBlur", ServeDir::new(ill_root.join("illBlur")))
         .nest(&config.api.prefix, api_router)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(app_state);

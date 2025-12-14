@@ -25,6 +25,9 @@ pub struct ResourcesConfig {
     pub illustration_repo: String,
     /// 曲绘文件夹名
     pub illustration_folder: String,
+    /// 曲绘外部资源基地址（HTTP），用于不依赖 Git/本地仓库时按需回源（例如 https://somnia.xtower.site）
+    #[serde(default)]
+    pub illustration_external_base_url: Option<String>,
     /// info 数据目录（包含 difficulty.csv）
     pub info_path: String,
 }
@@ -237,6 +240,7 @@ impl Default for AppConfig {
                 base_path: "./resources".to_string(),
                 illustration_repo: "https://github.com/Catrong/phi-plugin-ill".to_string(),
                 illustration_folder: "phi-plugin-ill".to_string(),
+                illustration_external_base_url: None,
                 info_path: "./info".to_string(),
             },
             logging: LoggingConfig {
