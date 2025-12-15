@@ -90,3 +90,18 @@ sd-notify = "0.4"
 
 [target.'cfg(unix)'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
+
+# 发布产物瘦身（主要针对 linux-musl 静态链接二进制体积）
+#
+# 使用方式：
+# - `cargo build --profile release-dist --target x86_64-unknown-linux-musl`
+#
+# 说明：
+# - `strip="symbols"` 会显著减小体积，但会削弱 backtrace/符号诊断能力；
+# - `opt-level="z"` 更偏向体积优化，CPU 开销可能略增。
+[profile.release-dist]
+inherits = "release"
+strip = "symbols"
+lto = "thin"
+codegen-units = 1
+opt-level = "z"
