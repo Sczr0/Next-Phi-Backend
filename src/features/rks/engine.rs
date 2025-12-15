@@ -287,45 +287,121 @@ pub fn calculate_chart_rks(acc_percent: f64, constant: f64) -> f64 {
     acc_factor * constant
 }
 
-/// 模拟把指定谱面提高到给定 ACC 后，玩家精确 RKS 的值（records 需按 rks 降序）
-fn simulate_rks_increase_simplified(
-    target_chart_id_full: &str,
+fn split_chart_id_full(target_chart_id_full: &str) -> Option<(&str, &str)> {
+    let (song_id, difficulty_str) = target_chart_id_full.rsplit_once('-')?;
+    Some((song_id, difficulty_str))
+}
+
+fn difficulty_key_from_str(difficulty_str: &str) -> Option<u8> {
+    if difficulty_str.eq_ignore_ascii_case("EZ") {
+        return Some(0);
+    }
+    if difficulty_str.eq_ignore_ascii_case("HD") {
+        return Some(1);
+    }
+    if difficulty_str.eq_ignore_ascii_case("IN") {
+        return Some(2);
+    }
+    if difficulty_str.eq_ignore_ascii_case("AT") {
+        return Some(3);
+    }
+    None
+}
+
+struct TopKSum {
+    k: usize,
+    values: Vec<f64>,
+    sum: f64,
+}
+
+impl TopKSum {
+    fn new(k: usize) -> Self {
+        Self {
+            k,
+            values: Vec::with_capacity(k),
+            sum: 0.0,
+        }
+    }
+
+    fn sum(&self) -> f64 {
+        self.sum
+    }
+
+    fn push(&mut self, value: f64) {
+        if self.k == 0 {
+            return;
+        }
+        if self.values.len() < self.k {
+            self.values.push(value);
+            self.sum += value;
+            return;
+        }
+
+        let min_index = self.min_index();
+        let min_value = self.values[min_index];
+        if Self::cmp_key(value).total_cmp(&Self::cmp_key(min_value)) == core::cmp::Ordering::Greater
+        {
+            self.values[min_index] = value;
+            self.sum += value - min_value;
+        }
+    }
+
+    fn min_index(&self) -> usize {
+        debug_assert!(!self.values.is_empty());
+        let mut min_index = 0;
+        let mut min_key = Self::cmp_key(self.values[0]);
+        for (idx, &v) in self.values.iter().enumerate().skip(1) {
+            let key = Self::cmp_key(v);
+            if key.total_cmp(&min_key) == core::cmp::Ordering::Less {
+                min_index = idx;
+                min_key = key;
+            }
+        }
+        min_index
+    }
+
+    fn cmp_key(value: f64) -> f64 {
+        if value.is_nan() {
+            return f64::NEG_INFINITY;
+        }
+        value
+    }
+}
+
+fn simulate_rks_increase_simplified_parsed(
+    target_song_id: &str,
+    target_difficulty_key: Option<u8>,
     target_chart_constant: f64,
     test_acc: f64,
     all_sorted_records: &[RksRecord],
 ) -> f64 {
-    let parts: Vec<&str> = target_chart_id_full.rsplitn(2, '-').collect();
-    if parts.len() != 2 {
-        return 0.0; // 格式错误
-    }
-    let (song_id, difficulty_str) = (parts[1], parts[0]);
-
-    // 1) 计算模拟后的该谱面 RKS
+    // 计算模拟后的该谱面 RKS
     let simulated_chart_rks = calculate_chart_rks(test_acc, target_chart_constant);
 
-    // 2) 构造简化记录 (rks, is_ap)，并排除旧记录
-    let mut simulated_records: Vec<(f64, bool)> = all_sorted_records
-        .iter()
-        .filter(|r| !(r.song_id == song_id && r.difficulty.to_string() == difficulty_str))
-        .map(|r| (r.rks, r.acc >= 100.0))
-        .collect();
+    // 只需要 Best27 与 AP Top3 的求和，无需构造完整 Vec 再全量排序
+    let mut best27 = TopKSum::new(27);
+    let mut ap3 = TopKSum::new(3);
 
-    // 3) 插入新纪录
-    simulated_records.push((simulated_chart_rks, test_acc >= 100.0));
+    for rec in all_sorted_records {
+        let is_target = rec.song_id == target_song_id
+            && target_difficulty_key.is_some_and(|k| key_of_difficulty(&rec.difficulty) == k);
+        if is_target {
+            continue;
+        }
 
-    // 4) 重新按 rks 降序排序
-    simulated_records.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal));
+        best27.push(rec.rks);
+        if rec.acc >= 100.0 {
+            ap3.push(rec.rks);
+        }
+    }
 
-    // 5) 重新计算 B27 + AP3
-    let b27_sum: f64 = simulated_records.iter().take(27).map(|(rks, _)| rks).sum();
-    let ap3_sum: f64 = simulated_records
-        .iter()
-        .filter(|(_, is_ap)| *is_ap)
-        .take(3)
-        .map(|(rks, _)| rks)
-        .sum();
+    // 插入新纪录
+    best27.push(simulated_chart_rks);
+    if test_acc >= 100.0 {
+        ap3.push(simulated_chart_rks);
+    }
 
-    (b27_sum + ap3_sum) / 30.0
+    (best27.sum() + ap3.sum()) / 30.0
 }
 
 /// 计算指定谱面需要达到多少 ACC，才能让四舍五入后的玩家 RKS 提升 0.01
@@ -356,9 +432,17 @@ pub fn calculate_target_chart_push_acc(
         return Some(100.0);
     }
 
+    let Some((song_id, difficulty_str)) = split_chart_id_full(target_chart_id_full) else {
+        // 保持与旧实现一致：格式异常时模拟函数返回 0.0，必然无法达到阈值
+        tracing::debug!("无法推分，ACC 100% 仍无法达到目标");
+        return Some(100.0);
+    };
+    let difficulty_key = difficulty_key_from_str(difficulty_str);
+
     // 边界检查：100% 时是否能达到目标
-    let rks_at_100 = simulate_rks_increase_simplified(
-        target_chart_id_full,
+    let rks_at_100 = simulate_rks_increase_simplified_parsed(
+        song_id,
+        difficulty_key,
         target_chart_constant,
         100.0,
         all_sorted_records,
@@ -369,16 +453,12 @@ pub fn calculate_target_chart_push_acc(
         return Some(100.0);
     }
 
-    // 当前谱面的 ACC
-    let parts: Vec<&str> = target_chart_id_full.rsplitn(2, '-').collect();
-    if parts.len() != 2 {
-        return None;
-    }
-    let (song_id, difficulty_str) = (parts[1], parts[0]);
-
     let current_acc = all_sorted_records
         .iter()
-        .find(|r| r.song_id == song_id && r.difficulty.to_string() == difficulty_str)
+        .find(|r| {
+            r.song_id == song_id
+                && difficulty_key.is_some_and(|k| key_of_difficulty(&r.difficulty) == k)
+        })
         .map_or(70.0, |r| r.acc);
 
     // 二分查找最小满足阈值的 ACC
@@ -393,8 +473,9 @@ pub fn calculate_target_chart_push_acc(
     while (high - low) > ACC_PRECISION && iteration < MAX_ITERATIONS {
         iteration += 1;
         let mid = low + (high - low) / 2.0;
-        let simulated_rks = simulate_rks_increase_simplified(
-            target_chart_id_full,
+        let simulated_rks = simulate_rks_increase_simplified_parsed(
+            song_id,
+            difficulty_key,
             target_chart_constant,
             mid,
             all_sorted_records,
@@ -454,4 +535,235 @@ pub fn calculate_all_push_accuracies(sorted_records: &[RksRecord]) -> HashMap<St
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{Rng, SeedableRng};
+
+    fn sort_records_desc(records: &mut [RksRecord]) {
+        records.sort_by(|a, b| {
+            b.rks
+                .partial_cmp(&a.rks)
+                .unwrap_or(core::cmp::Ordering::Equal)
+        });
+    }
+
+    fn simulate_rks_increase_simplified_slow(
+        target_chart_id_full: &str,
+        target_chart_constant: f64,
+        test_acc: f64,
+        all_sorted_records: &[RksRecord],
+    ) -> f64 {
+        let parts: Vec<&str> = target_chart_id_full.rsplitn(2, '-').collect();
+        if parts.len() != 2 {
+            return 0.0; // 格式错误
+        }
+        let (song_id, difficulty_str) = (parts[1], parts[0]);
+
+        let simulated_chart_rks = calculate_chart_rks(test_acc, target_chart_constant);
+
+        let mut simulated_records: Vec<(f64, bool)> = all_sorted_records
+            .iter()
+            .filter(|r| !(r.song_id == song_id && r.difficulty.to_string() == difficulty_str))
+            .map(|r| (r.rks, r.acc >= 100.0))
+            .collect();
+
+        simulated_records.push((simulated_chart_rks, test_acc >= 100.0));
+
+        simulated_records
+            .sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(core::cmp::Ordering::Equal));
+
+        let b27_sum: f64 = simulated_records.iter().take(27).map(|(rks, _)| rks).sum();
+        let ap3_sum: f64 = simulated_records
+            .iter()
+            .filter(|(_, is_ap)| *is_ap)
+            .take(3)
+            .map(|(rks, _)| rks)
+            .sum();
+
+        (b27_sum + ap3_sum) / 30.0
+    }
+
+    fn calculate_target_chart_push_acc_slow(
+        target_chart_id_full: &str,
+        target_chart_constant: f64,
+        all_sorted_records: &[RksRecord],
+    ) -> Option<f64> {
+        let (current_exact_rks, _current_rounded_rks) =
+            calculate_player_rks_details(all_sorted_records);
+
+        let target_rks_threshold = {
+            let third_decimal_ge_5 = (current_exact_rks * 1000.0) % 10.0 >= 5.0;
+            if third_decimal_ge_5 {
+                (current_exact_rks * 100.0).floor() / 100.0 + 0.015
+            } else {
+                (current_exact_rks * 100.0).floor() / 100.0 + 0.005
+            }
+        };
+
+        if current_exact_rks >= target_rks_threshold {
+            return Some(100.0);
+        }
+
+        let rks_at_100 = simulate_rks_increase_simplified_slow(
+            target_chart_id_full,
+            target_chart_constant,
+            100.0,
+            all_sorted_records,
+        );
+
+        if rks_at_100 < target_rks_threshold {
+            return Some(100.0);
+        }
+
+        let parts: Vec<&str> = target_chart_id_full.rsplitn(2, '-').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let (song_id, difficulty_str) = (parts[1], parts[0]);
+
+        let current_acc = all_sorted_records
+            .iter()
+            .find(|r| r.song_id == song_id && r.difficulty.to_string() == difficulty_str)
+            .map_or(70.0, |r| r.acc);
+
+        let mut low = current_acc;
+        let mut high = 100.0;
+
+        const ACC_PRECISION: f64 = 1e-7;
+        const MAX_ITERATIONS: usize = 50;
+
+        let mut iteration = 0;
+        while (high - low) > ACC_PRECISION && iteration < MAX_ITERATIONS {
+            iteration += 1;
+            let mid = low + (high - low) / 2.0;
+            let simulated_rks = simulate_rks_increase_simplified_slow(
+                target_chart_id_full,
+                target_chart_constant,
+                mid,
+                all_sorted_records,
+            );
+
+            if simulated_rks >= target_rks_threshold {
+                high = mid;
+            } else {
+                low = mid;
+            }
+        }
+
+        let result_acc = high.max(current_acc);
+        let final_acc = if result_acc <= current_acc {
+            100.0
+        } else {
+            (result_acc * 1000.0).ceil() / 1000.0
+        };
+
+        Some(final_acc.min(100.0))
+    }
+
+    #[test]
+    fn simulate_rks_increase_simplified_matches_reference() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(20251215);
+        let diffs = [
+            Difficulty::EZ,
+            Difficulty::HD,
+            Difficulty::IN,
+            Difficulty::AT,
+        ];
+
+        let mut records = Vec::new();
+        for i in 0..60 {
+            let song_id = format!("song{i:03}");
+            for diff in diffs.iter().cloned() {
+                let acc = rng.gen_range(70.0..=100.0);
+                let constant = rng.gen_range(1.0..=16.0);
+                let rks = calculate_chart_rks(acc, constant);
+                records.push(RksRecord {
+                    song_id: song_id.clone(),
+                    difficulty: diff,
+                    score: rng.gen_range(0..=1_000_000),
+                    acc,
+                    rks,
+                    chart_constant: constant,
+                });
+            }
+        }
+        sort_records_desc(&mut records);
+
+        // 挑一个非 100% 的谱面做目标
+        let target = records
+            .iter()
+            .find(|r| r.acc < 100.0)
+            .expect("需要至少一个非满ACC记录");
+        let target_chart_id = format!("{}-{}", target.song_id, target.difficulty);
+        let target_constant = target.chart_constant;
+        let (target_song_id, target_difficulty_str) =
+            split_chart_id_full(&target_chart_id).expect("目标谱面ID应当符合 song_id-difficulty");
+        let target_difficulty_key = difficulty_key_from_str(target_difficulty_str);
+
+        for test_acc in [70.0, 73.3, 80.0, 90.5, 99.999, 100.0] {
+            let slow = simulate_rks_increase_simplified_slow(
+                &target_chart_id,
+                target_constant,
+                test_acc,
+                &records,
+            );
+            let fast = simulate_rks_increase_simplified_parsed(
+                target_song_id,
+                target_difficulty_key,
+                target_constant,
+                test_acc,
+                &records,
+            );
+            assert!(
+                (slow - fast).abs() <= 1e-12,
+                "slow={slow:.12}, fast={fast:.12}, acc={test_acc}"
+            );
+        }
+    }
+
+    #[test]
+    fn calculate_target_chart_push_acc_matches_reference() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(2025121501);
+        let diffs = [
+            Difficulty::EZ,
+            Difficulty::HD,
+            Difficulty::IN,
+            Difficulty::AT,
+        ];
+
+        let mut records = Vec::new();
+        for i in 0..80 {
+            let song_id = format!("song{i:03}");
+            for diff in diffs.iter().cloned() {
+                let acc = rng.gen_range(70.0..=100.0);
+                let constant = rng.gen_range(1.0..=16.0);
+                let rks = calculate_chart_rks(acc, constant);
+                records.push(RksRecord {
+                    song_id: song_id.clone(),
+                    difficulty: diff,
+                    score: rng.gen_range(0..=1_000_000),
+                    acc,
+                    rks,
+                    chart_constant: constant,
+                });
+            }
+        }
+        sort_records_desc(&mut records);
+
+        // 抽样多个目标谱面做对拍
+        let targets: Vec<_> = records.iter().filter(|r| r.acc < 100.0).take(12).collect();
+        assert!(!targets.is_empty(), "需要至少一个非满ACC记录");
+
+        for t in targets {
+            let target_chart_id = format!("{}-{}", t.song_id, t.difficulty);
+            let slow =
+                calculate_target_chart_push_acc_slow(&target_chart_id, t.chart_constant, &records);
+            let fast =
+                calculate_target_chart_push_acc(&target_chart_id, t.chart_constant, &records);
+            assert_eq!(slow, fast, "target={target_chart_id}");
+        }
+    }
 }
