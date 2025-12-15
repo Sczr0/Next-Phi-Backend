@@ -107,6 +107,7 @@ static GLOBAL_FONT_DB: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
 type BackgroundAndCoverCache = (
     std::sync::Mutex<LruCache<PathBuf, String>>,
     Vec<PathBuf>,
+    Vec<PathBuf>,
     std::sync::Mutex<HashMap<String, String>>,
 );
 static BACKGROUND_AND_COVER_CACHE: OnceLock<BackgroundAndCoverCache> = OnceLock::new();
@@ -227,6 +228,7 @@ fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
 
     // 读取封面目录下的所有图片文件（包括 ill / illLow / illBlur 目录）
     let mut cover_files = Vec::new();
+    let mut blur_files = Vec::new();
 
     // 读取 ill 目录（标准封面）
     let cover_base_path = cover_loader::covers_dir().join("ill");
@@ -289,6 +291,7 @@ fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
                     && (path.extension() == Some("png".as_ref())
                         || path.extension() == Some("jpg".as_ref()))
                 {
+                    blur_files.push(path.clone());
                     cover_files.push(path);
                 }
             }
@@ -304,74 +307,88 @@ fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
 
     tracing::info!("初始化完成，共找到 {} 个封面文件", cover_files.len());
 
-    (cache, cover_files, std::sync::Mutex::new(metadata_map))
+    (
+        cache,
+        cover_files,
+        blur_files,
+        std::sync::Mutex::new(metadata_map),
+    )
 }
 
 /// 背景和封面缓存的类型别名
 type BackgroundAndCoverCacheRefs = (
     &'static std::sync::Mutex<LruCache<PathBuf, String>>,
     &'static Vec<PathBuf>,
+    &'static Vec<PathBuf>,
     &'static std::sync::Mutex<HashMap<String, String>>,
 );
 
 /// 获取背景图片缓存和封面文件列表
 fn get_background_and_cover_cache() -> BackgroundAndCoverCacheRefs {
-    let (cache, files, metadata) =
+    let (cache, files, blur_files, metadata) =
         BACKGROUND_AND_COVER_CACHE.get_or_init(init_background_and_cover_cache);
-    (cache, files, metadata)
+    (cache, files, blur_files, metadata)
 }
 
 /// 获取背景图片缓存
 pub fn get_background_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, String>> {
-    let (cache, _, _) = get_background_and_cover_cache();
+    let (cache, _, _, _) = get_background_and_cover_cache();
     cache
 }
 
 /// 获取封面文件列表
 pub fn get_cover_files() -> &'static Vec<PathBuf> {
-    let (_, files, _) = get_background_and_cover_cache();
+    let (_, files, _, _) = get_background_and_cover_cache();
     files
 }
 
 /// 获取封面元数据缓存
 pub fn get_cover_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
-    let (_, _, metadata) = get_background_and_cover_cache();
+    let (_, _, _, metadata) = get_background_and_cover_cache();
     metadata
+}
+
+/// 获取 illBlur 背景文件列表（预索引，避免每次渲染 O(n) 扫描）。
+fn get_blur_background_files() -> &'static Vec<PathBuf> {
+    let (_, _, blur_files, _) = get_background_and_cover_cache();
+    blur_files
 }
 
 /// 从缓存或磁盘加载背景图片
 /// 注意：现在只缓存小图（<256KB），大图直接返回路径
 fn get_background_image(path: &PathBuf) -> Option<String> {
-    let mut cache = get_background_cache().lock().unwrap();
-
-    // 尝试从缓存中获取
-    if let Some(cached_image) = cache.get(path) {
-        return Some(cached_image.clone());
+    // 先在锁内做一次快路径读取，避免并发争用时长时间持锁。
+    {
+        let mut cache = get_background_cache().lock().unwrap();
+        if let Some(cached_image) = cache.get(path) {
+            return Some(cached_image.clone());
+        }
     }
 
-    // 缓存未命中，从磁盘加载
-    if let Ok(data) = fs::read(path) {
-        let file_size = data.len();
+    // 缓存未命中：在锁外做磁盘 IO 与编码，避免长尾延迟放大。
+    let data = fs::read(path).ok()?;
+    let file_size = data.len();
 
-        // 只对小于 256KB 的图片进行 Base64 编码并缓存
-        // 大图片直接返回路径，避免内存膨胀
-        if file_size <= 256 * 1024 {
-            let mime_type = if path.extension().is_some_and(|ext| ext == "png") {
-                "image/png"
-            } else {
-                "image/jpeg"
-            };
-            let base64_encoded = base64_engine.encode(&data);
-            let image_data = format!("data:{mime_type};base64,{base64_encoded}");
-            cache.put(path.clone(), image_data.clone());
-            return Some(image_data);
-        }
-
-        // 大图片直接返回文件路径
+    // 大图片直接返回文件路径（避免内存膨胀与 base64 成本）。
+    if file_size > 256 * 1024 {
         return Some(path.to_string_lossy().into_owned());
     }
 
-    None
+    let mime_type = if path.extension().is_some_and(|ext| ext == "png") {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    let base64_encoded = base64_engine.encode(&data);
+    let image_data = format!("data:{mime_type};base64,{base64_encoded}");
+
+    // 回写缓存：二次检查，避免并发下重复写入/抖动。
+    let mut cache = get_background_cache().lock().unwrap();
+    if let Some(cached_image) = cache.get(path) {
+        return Some(cached_image.clone());
+    }
+    cache.put(path.clone(), image_data.clone());
+    Some(image_data)
 }
 
 /// 将本地路径转换为对外可访问的 URL（`base_url/relative/path`），用于浏览器渲染 SVG。
@@ -964,19 +981,7 @@ pub fn generate_svg_string(
     let mut background_image_href = None;
     let _background_fill = "url(#bg-gradient)".to_string(); // Prefix unused variable
 
-    // 使用预先缓存的封面文件列表来获取背景图片，避免重复读取目录
-    let background_files = get_cover_files();
-    let background_base_path = cover_loader::covers_dir().join("illBlur");
-    let filtered_background_files: Vec<&PathBuf> = background_files
-        .iter()
-        .filter(|path| {
-            // 检查路径是否在 illBlur 目录下且是图片文件
-            path.starts_with(&background_base_path)
-                && (path.extension() == Some("png".as_ref())
-                    || path.extension() == Some("jpg".as_ref()))
-        })
-        .collect();
-
+    let filtered_background_files = get_blur_background_files();
     if !filtered_background_files.is_empty() {
         let mut rng = rand::thread_rng();
         if let Some(random_path) = filtered_background_files.choose(&mut rng) {
@@ -1667,8 +1672,8 @@ pub fn render_svg_to_webp(
     svg_data: String,
     is_user_generated: bool,
     target_width: Option<u32>,
-    _quality: u8,
-    _lossless: bool,
+    quality: u8,
+    lossless: bool,
 ) -> Result<Vec<u8>, AppError> {
     // 字体数据库（全局复用）
     let font_db = get_global_font_db();
@@ -1731,17 +1736,19 @@ pub fn render_svg_to_webp(
         px.copy_from_slice(&[0x01, 0x02, 0x03, 0xFF]);
     }
 
-    // WebP 支持透明度通道，直接使用 RGBA 像素数据
-    let _rgba = pixmap.data();
+    // WebP 支持透明度通道，直接使用 RGBA 像素数据。
+    //
+    // 注意：image crate 当前仅支持“无损 WebP”（VP8L）。为了让 `quality/lossless` 参数真实生效，
+    // 这里改用基于 libwebp 的 `webp` crate 进行编码。
+    let rgba = pixmap.data();
 
-    // 使用 image crate 的 WebPEncoder
-    use image::codecs::webp::WebPEncoder;
-
-    let mut out = Vec::new();
-    let enc = WebPEncoder::new_lossless(&mut out);
-    enc.encode(_rgba, dst_w, dst_h, ColorType::Rgba8.into())
-        .map_err(|e| AppError::ImageRendererError(format!("WebP encode error: {e}")))?;
-    Ok(out)
+    let encoder = webp::Encoder::from_rgba(rgba, dst_w, dst_h);
+    let memory = if lossless {
+        encoder.encode_lossless()
+    } else {
+        encoder.encode(quality.clamp(1, 100) as f32)
+    };
+    Ok(memory.to_vec())
 }
 
 /// 统一的图片编码入口：根据 `format` 选择编码器，并返回字节与 Content-Type。
@@ -1920,42 +1927,23 @@ pub fn generate_song_svg_string(
     // --- 获取随机背景图 ---
     let mut background_image_href = None;
     let cover_files = get_cover_files();
+    let metadata_cache = get_cover_metadata_cache();
 
     // 优先尝试使用当前曲目的曲绘作为背景
-    let current_song_ill_path_png = cover_loader::covers_dir()
-        .join("ill")
-        .join(format!("{}.png", data.song_id));
-    let current_song_ill_path_jpg = cover_loader::covers_dir()
-        .join("ill")
-        .join(format!("{}.jpg", data.song_id));
+    let preferred_cover_path = metadata_cache
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&data.song_id).cloned())
+        .map(PathBuf::from);
 
-    // 优先尝试使用当前曲目的曲绘作为背景
-    // 使用预先缓存的封面文件列表来检查文件是否存在，避免重复的文件系统调用
-    if cover_files.contains(&current_song_ill_path_png) {
-        if let Some(image_href) = get_image_href(
-            &current_song_ill_path_png,
-            embed_images,
-            public_illustration_base_url,
-        ) {
-            background_image_href = Some(image_href);
-            tracing::info!(
-                "使用当前曲目曲绘作为背景: {}",
-                current_song_ill_path_png.display()
-            );
-        }
-    } else if cover_files.contains(&current_song_ill_path_jpg) {
-        if let Some(image_href) = get_image_href(
-            &current_song_ill_path_jpg,
-            embed_images,
-            public_illustration_base_url,
-        ) {
-            background_image_href = Some(image_href);
-            tracing::info!(
-                "使用当前曲目曲绘作为背景: {}",
-                current_song_ill_path_jpg.display()
-            );
-        }
-    } else {
+    if let Some(path) = preferred_cover_path.as_ref()
+        && let Some(image_href) = get_image_href(path, embed_images, public_illustration_base_url)
+    {
+        background_image_href = Some(image_href);
+        tracing::info!("使用当前曲目曲绘作为背景: {}", path.display());
+    }
+
+    if background_image_href.is_none() {
         // 如果找不到当前曲目的曲绘，则随机选一个
         if !cover_files.is_empty() {
             let mut rng = rand::thread_rng();
@@ -2466,7 +2454,8 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
 mod tests {
     use super::{
         PlayerStats, RenderRecord, SongRenderData, Theme, generate_song_svg_string,
-        generate_svg_string, to_public_url_for_base, to_somnia_public_url_for_base,
+        generate_svg_string, render_svg_unified, to_public_url_for_base,
+        to_somnia_public_url_for_base,
     };
     use chrono::Utc;
     use std::fs;
@@ -2591,5 +2580,68 @@ mod tests {
         let svg = generate_song_svg_string(&data, false, Some("https://example.com")).unwrap();
         assert!(svg.contains("https://example.com/illustration/SONG%20REMOTE%20456.png"));
         assert!(!svg.contains("data:image/"));
+    }
+
+    #[test]
+    fn webp_encoding_respects_quality_and_lossless() {
+        ensure_config_inited();
+
+        let svg = r##"<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#ff0000"/>
+      <stop offset="50%" stop-color="#00ff00"/>
+      <stop offset="100%" stop-color="#0000ff"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="128" height="128" fill="url(#g)"/>
+  <circle cx="64" cy="64" r="42" fill="rgba(255,255,255,0.35)"/>
+</svg>"##
+            .to_string();
+
+        let (q20, ct20) = render_svg_unified(
+            svg.clone(),
+            false,
+            Some("webp"),
+            Some(64),
+            Some(20),
+            Some(false),
+        )
+        .unwrap();
+        assert_eq!(ct20, "image/webp");
+
+        let (q90, _ct90) = render_svg_unified(
+            svg.clone(),
+            false,
+            Some("webp"),
+            Some(64),
+            Some(90),
+            Some(false),
+        )
+        .unwrap();
+        assert_ne!(q20, q90);
+
+        let img20 = image::load_from_memory(&q20).unwrap();
+        let img90 = image::load_from_memory(&q90).unwrap();
+        assert_eq!((img20.width(), img20.height()), (64, 64));
+        assert_eq!((img90.width(), img90.height()), (64, 64));
+
+        let (lossless_q20, _ct1) = render_svg_unified(
+            svg.clone(),
+            false,
+            Some("webp"),
+            Some(64),
+            Some(20),
+            Some(true),
+        )
+        .unwrap();
+        let (lossless_q90, _ct2) =
+            render_svg_unified(svg, false, Some("webp"), Some(64), Some(90), Some(true)).unwrap();
+
+        let img_l1 = image::load_from_memory(&lossless_q20).unwrap().to_rgba8();
+        let img_l2 = image::load_from_memory(&lossless_q90).unwrap().to_rgba8();
+        assert_eq!(img_l1.dimensions(), (64, 64));
+        assert_eq!(img_l2.dimensions(), (64, 64));
+        assert_eq!(img_l1.as_raw(), img_l2.as_raw());
     }
 }

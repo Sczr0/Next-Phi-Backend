@@ -73,6 +73,25 @@ fn content_type_from_fmt_code(code: &str) -> &'static str {
     }
 }
 
+/// 规范化 WebP 参数在缓存键中的表达，避免无关/无效参数造成缓存碎片。
+///
+/// - 非 WebP 输出：`webp_quality/webp_lossless` 一律归零（忽略 query 里多余参数）。
+/// - WebP 无损：质量参数无意义，归零（避免 lossless=true 但质量变化导致碎片）。
+/// - WebP 有损：质量归一化到 1-100（缺省 80）。
+fn normalized_webp_cache_params(fmt_code: &str, q: &ImageQueryOpts) -> (u8, u8) {
+    if fmt_code != "webp" {
+        return (0, 0);
+    }
+
+    let lossless = q.webp_lossless.unwrap_or(false);
+    if lossless {
+        return (0, 1);
+    }
+
+    let quality = q.webp_quality.unwrap_or(80).clamp(1, 100);
+    (quality, 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ImageQueryOpts, content_type_from_fmt_code, format_code};
@@ -177,12 +196,7 @@ pub async fn render_bn(
             super::types::Theme::Black => "b",
         };
         let width_code = q.width.unwrap_or(0);
-        let webp_quality_code = q.webp_quality.unwrap_or(80);
-        let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
-            1
-        } else {
-            0
-        };
+        let (webp_quality_code, webp_lossless_code) = normalized_webp_cache_params(fmt_code, &q);
         let key = format!(
             "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
             user_hash,
@@ -552,12 +566,8 @@ pub async fn render_bn(
             };
             let fmt_code = format_code(&q);
             let width_code = q.width.unwrap_or(0);
-            let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
-                1
-            } else {
-                0
-            };
+            let (webp_quality_code, webp_lossless_code) =
+                normalized_webp_cache_params(fmt_code, &q);
             let key = format!(
                 "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
                 user_hash,
@@ -710,12 +720,7 @@ pub async fn render_song(
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
         let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
         let width_code = q.width.unwrap_or(0);
-        let webp_quality_code = q.webp_quality.unwrap_or(80);
-        let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
-            1
-        } else {
-            0
-        };
+        let (webp_quality_code, webp_lossless_code) = normalized_webp_cache_params(fmt_code, &q);
         let key = format!(
             "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
             user_hash,
@@ -966,12 +971,8 @@ pub async fn render_song(
             let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
             let fmt_code = format_code(&q);
             let width_code = q.width.unwrap_or(0);
-            let webp_quality_code = q.webp_quality.unwrap_or(80);
-            let webp_lossless_code = if q.webp_lossless.unwrap_or(false) {
-                1
-            } else {
-                0
-            };
+            let (webp_quality_code, webp_lossless_code) =
+                normalized_webp_cache_params(fmt_code, &q);
             let key = format!(
                 "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
                 user_hash,
