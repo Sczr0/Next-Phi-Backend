@@ -1,3 +1,8 @@
+use axum::body::Bytes;
+use axum::extract::Request;
+use axum::http::{HeaderValue, header};
+use axum::middleware::Next;
+use axum::response::Response;
 use axum::{Router, http::StatusCode, response::Json, routing::get};
 use moka::future::Cache;
 use phi_backend::features::auth::client::TapTapClient;
@@ -19,6 +24,7 @@ use serde_json::json;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
+use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
 use utoipa::Modify;
 use utoipa::OpenApi;
@@ -130,6 +136,19 @@ async fn health_check() -> (StatusCode, Json<serde_json::Value>) {
             "version": env!("CARGO_PKG_VERSION")
         })),
     )
+}
+
+/// 为曲绘静态资源（`/_ill/*`）添加缓存头，降低 SVG 引用大量图片时的后端压力。
+async fn ill_cache_control_middleware(req: Request, next: Next) -> Response {
+    let is_ill = req.uri().path().starts_with("/_ill/");
+    let mut res = next.run(req).await;
+    if is_ill && res.headers().get(header::CACHE_CONTROL).is_none() {
+        res.headers_mut().insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("public, max-age=604800, immutable"),
+        );
+    }
+    res
 }
 
 #[tokio::main]
@@ -248,19 +267,19 @@ async fn main() {
     };
 
     // 初始化图片缓存（容量按总字节数加权）
-    let bn_image_cache: Cache<String, Arc<Vec<u8>>> = {
+    let bn_image_cache: Cache<String, Bytes> = {
         let img = &config.image;
         Cache::builder()
-            .weigher(|_k, v: &Arc<Vec<u8>>| v.len() as u32)
+            .weigher(|_k, v: &Bytes| v.len() as u32)
             .max_capacity(img.cache_max_bytes)
             .time_to_live(Duration::from_secs(img.cache_ttl_secs))
             .time_to_idle(Duration::from_secs(img.cache_tti_secs))
             .build()
     };
-    let song_image_cache: Cache<String, Arc<Vec<u8>>> = {
+    let song_image_cache: Cache<String, Bytes> = {
         let img = &config.image;
         Cache::builder()
-            .weigher(|_k, v: &Arc<Vec<u8>>| v.len() as u32)
+            .weigher(|_k, v: &Bytes| v.len() as u32)
             .max_capacity(img.cache_max_bytes)
             .time_to_live(Duration::from_secs(img.cache_ttl_secs))
             .time_to_idle(Duration::from_secs(img.cache_tti_secs))
@@ -302,6 +321,8 @@ async fn main() {
         .nest(&config.api.prefix, api_router)
         .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .with_state(app_state);
+    // 为 /_ill 静态资源加缓存头（仅匹配 /_ill/* 路径）。
+    app = app.layer(axum::middleware::from_fn(ill_cache_control_middleware));
 
     // 全局请求采集中间件
     if let Some(ref stats_handle) = stats_handle_opt {
@@ -310,6 +331,9 @@ async fn main() {
         };
         app = app.layer(axum::middleware::from_fn_with_state(s, stats_middleware));
     }
+
+    // 应用内响应压缩：对 SVG/JSON/文本等内容启用 gzip/brotli，降低带宽占用（默认不会压缩 png/jpg/webp 等图片）。
+    app = app.layer(CompressionLayer::new());
 
     // 启动看门狗任务
     if let Err(e) = watchdog.start_watchdog_task().await {

@@ -102,23 +102,30 @@ const SONG_ILLUST_ASPECT_RATIO: f64 = 1.0; // 假设单曲图的插画是方形�
 // 全局字体数据库单例
 static GLOBAL_FONT_DB: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
 
-// 背景图片 LRU 缓存和封面文件列表的组合结构
-// 注意：移除了重复的 HashSet，直接使用 HashMap 进行查找
-type BackgroundAndCoverCache = (
-    std::sync::Mutex<LruCache<PathBuf, String>>,
-    Vec<PathBuf>,
-    Vec<PathBuf>,
-    std::sync::Mutex<HashMap<String, String>>,
-);
-static BACKGROUND_AND_COVER_CACHE: OnceLock<BackgroundAndCoverCache> = OnceLock::new();
+/// 曲绘资源索引（启动时预热，运行时只读无锁）。
+struct IllustrationIndex {
+    /// 背景 data URI LRU（运行时会写入，因此保留互斥）。
+    background_cache: std::sync::Mutex<LruCache<PathBuf, String>>,
+    /// 全部可用的曲绘/背景文件列表（ill/illLow/illBlur）。
+    cover_files: Box<[PathBuf]>,
+    /// 仅 illBlur 背景文件列表（用于随机背景）。
+    blur_files: Box<[PathBuf]>,
+    /// song_id -> 曲绘绝对路径（优先 illLow 覆盖 ill）。
+    cover_metadata: HashMap<String, String>,
+    /// 预计算的「背景主色反色」（主要用于白主题边框），键为 illBlur 的文件绝对路径。
+    inverse_colors: HashMap<PathBuf, String>,
+}
+
+static ILLUSTRATION_INDEX: OnceLock<IllustrationIndex> = OnceLock::new();
 const BACKGROUND_CACHE_SIZE: usize = 10; // 缓存10张背景图片
-const COVER_METADATA_CACHE_SIZE: usize = 10000; // 缓存封面元数据
+const COVER_METADATA_CACHE_SIZE: usize = 10000; // 预热容量（并非运行时 LRU）
 
-// 背景主色反色缓存（避免重复解码大图）
-static INVERSE_COLOR_CACHE: OnceLock<std::sync::Mutex<LruCache<PathBuf, String>>> = OnceLock::new();
+// 反色计算兜底 LRU：只在预热未覆盖的路径上触发（极少数场景）。
+static INVERSE_COLOR_DYNAMIC_CACHE: OnceLock<std::sync::Mutex<LruCache<PathBuf, String>>> =
+    OnceLock::new();
 
-fn get_inverse_color_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, String>> {
-    INVERSE_COLOR_CACHE
+fn get_inverse_color_dynamic_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, String>> {
+    INVERSE_COLOR_DYNAMIC_CACHE
         .get_or_init(|| std::sync::Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap())))
 }
 
@@ -214,17 +221,17 @@ pub fn get_global_font_db() -> Arc<fontdb::Database> {
     GLOBAL_FONT_DB.get_or_init(init_global_font_db).clone()
 }
 
-/// 初始化背景图片缓存和封面文件列表
-fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
-    tracing::info!("初始化背景图片缓存和封面文件列表");
+/// 初始化曲绘资源索引（cover_files / blur_files / metadata_map / inverse_colors）。
+fn init_illustration_index() -> IllustrationIndex {
+    tracing::info!("初始化曲绘资源索引（cover_files/blur_files/metadata_map/inverse_colors）");
 
     // 初始 LRU 缓存（用于缓存背景图 data URI）
-    let cache = std::sync::Mutex::new(LruCache::new(
+    let background_cache = std::sync::Mutex::new(LruCache::new(
         NonZeroUsize::new(BACKGROUND_CACHE_SIZE).unwrap(),
     ));
 
-    // 封面元数据缓存：song_id -> 封面绝对路径
-    let mut metadata_map = HashMap::<String, String>::with_capacity(COVER_METADATA_CACHE_SIZE);
+    // 封面元数据：song_id -> 封面绝对路径
+    let mut cover_metadata = HashMap::<String, String>::with_capacity(COVER_METADATA_CACHE_SIZE);
 
     // 读取封面目录下的所有图片文件（包括 ill / illLow / illBlur 目录）
     let mut cover_files = Vec::new();
@@ -242,7 +249,7 @@ fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
                 {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         // 先记录标准封面，后续 illLow 可按需覆盖
-                        metadata_map
+                        cover_metadata
                             .entry(stem.to_string())
                             .or_insert_with(|| path.to_string_lossy().to_string());
                     }
@@ -266,7 +273,7 @@ fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
                         || path.extension() == Some("jpg".as_ref()))
                 {
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                        metadata_map.insert(stem.to_string(), path.to_string_lossy().to_string());
+                        cover_metadata.insert(stem.to_string(), path.to_string_lossy().to_string());
                     }
                     cover_files.push(path);
                 }
@@ -281,7 +288,7 @@ fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
         }
     }
 
-    // 读取 illBlur 目录（背景图片，只参与随机背景，不写入 metadata_map）
+    // 读取 illBlur 目录（背景图片，只参与随机背景，不写入 cover_metadata）
     let background_base_path = cover_loader::covers_dir().join("illBlur");
     match fs::read_dir(&background_base_path) {
         Ok(entries) => {
@@ -305,53 +312,63 @@ fn init_background_and_cover_cache() -> BackgroundAndCoverCache {
         }
     }
 
-    tracing::info!("初始化完成，共找到 {} 个封面文件", cover_files.len());
+    tracing::info!(
+        "曲绘目录扫描完成: cover_files={}, blur_files={}, metadata={}",
+        cover_files.len(),
+        blur_files.len(),
+        cover_metadata.len()
+    );
 
-    (
-        cache,
-        cover_files,
-        blur_files,
-        std::sync::Mutex::new(metadata_map),
-    )
+    // 预计算白主题背景反色（主要针对 illBlur）
+    let t0 = std::time::Instant::now();
+    let mut inverse_colors = HashMap::<PathBuf, String>::with_capacity(blur_files.len());
+    let mut inverse_miss = 0usize;
+    for p in &blur_files {
+        match calculate_inverse_color_from_path(p) {
+            Some(c) => {
+                inverse_colors.insert(p.clone(), c);
+            }
+            None => inverse_miss += 1,
+        }
+    }
+    tracing::info!(
+        "背景反色预计算完成: ok={}, miss={}, 耗时={}ms",
+        inverse_colors.len(),
+        inverse_miss,
+        t0.elapsed().as_millis()
+    );
+
+    IllustrationIndex {
+        background_cache,
+        cover_files: cover_files.into_boxed_slice(),
+        blur_files: blur_files.into_boxed_slice(),
+        cover_metadata,
+        inverse_colors,
+    }
 }
 
-/// 背景和封面缓存的类型别名
-type BackgroundAndCoverCacheRefs = (
-    &'static std::sync::Mutex<LruCache<PathBuf, String>>,
-    &'static Vec<PathBuf>,
-    &'static Vec<PathBuf>,
-    &'static std::sync::Mutex<HashMap<String, String>>,
-);
-
-/// 获取背景图片缓存和封面文件列表
-fn get_background_and_cover_cache() -> BackgroundAndCoverCacheRefs {
-    let (cache, files, blur_files, metadata) =
-        BACKGROUND_AND_COVER_CACHE.get_or_init(init_background_and_cover_cache);
-    (cache, files, blur_files, metadata)
+fn get_illustration_index() -> &'static IllustrationIndex {
+    ILLUSTRATION_INDEX.get_or_init(init_illustration_index)
 }
 
 /// 获取背景图片缓存
 pub fn get_background_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, String>> {
-    let (cache, _, _, _) = get_background_and_cover_cache();
-    cache
+    &get_illustration_index().background_cache
 }
 
 /// 获取封面文件列表
-pub fn get_cover_files() -> &'static Vec<PathBuf> {
-    let (_, files, _, _) = get_background_and_cover_cache();
-    files
+pub fn get_cover_files() -> &'static [PathBuf] {
+    get_illustration_index().cover_files.as_ref()
 }
 
-/// 获取封面元数据缓存
-pub fn get_cover_metadata_cache() -> &'static std::sync::Mutex<HashMap<String, String>> {
-    let (_, _, _, metadata) = get_background_and_cover_cache();
-    metadata
+/// 获取封面元数据（只读，无锁）
+pub fn get_cover_metadata_map() -> &'static HashMap<String, String> {
+    &get_illustration_index().cover_metadata
 }
 
 /// 获取 illBlur 背景文件列表（预索引，避免每次渲染 O(n) 扫描）。
-fn get_blur_background_files() -> &'static Vec<PathBuf> {
-    let (_, _, blur_files, _) = get_background_and_cover_cache();
-    blur_files
+fn get_blur_background_files() -> &'static [PathBuf] {
+    get_illustration_index().blur_files.as_ref()
 }
 
 /// 从缓存或磁盘加载背景图片
@@ -643,11 +660,8 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
 
     // Cover Image or Placeholder
     // 使用预构建的封面元数据缓存，避免运行时文件系统调用
-    let metadata_cache = get_cover_metadata_cache();
-    let cover_href = {
-        let cache = metadata_cache.lock().unwrap();
-        cache.get(&score.song_id).cloned()
-    };
+    let metadata = get_cover_metadata_map();
+    let cover_href = metadata.get(&score.song_id).cloned();
 
     if let Some(href) = cover_href {
         let final_href = if embed_images {
@@ -1868,16 +1882,21 @@ fn calculate_inverse_color_from_path(path: &Path) -> Option<String> {
 
 /// 带缓存的反色计算，避免重复解码大图
 fn get_inverse_color_from_path_cached(path: &Path) -> Option<String> {
+    // 优先使用启动期预计算结果（无锁读）。
+    if let Some(c) = get_illustration_index().inverse_colors.get(path) {
+        return Some(c.clone());
+    }
+
     let key = PathBuf::from(path);
     {
-        let mut cache = get_inverse_color_cache().lock().ok()?;
+        let mut cache = get_inverse_color_dynamic_cache().lock().ok()?;
         if let Some(c) = cache.get(&key) {
             return Some(c.clone());
         }
     }
 
     let color = calculate_inverse_color_from_path(path)?;
-    if let Ok(mut cache) = get_inverse_color_cache().lock() {
+    if let Ok(mut cache) = get_inverse_color_dynamic_cache().lock() {
         cache.put(key, color.clone());
     }
     Some(color)
@@ -1927,14 +1946,10 @@ pub fn generate_song_svg_string(
     // --- 获取随机背景图 ---
     let mut background_image_href = None;
     let cover_files = get_cover_files();
-    let metadata_cache = get_cover_metadata_cache();
+    let metadata = get_cover_metadata_map();
 
     // 优先尝试使用当前曲目的曲绘作为背景
-    let preferred_cover_path = metadata_cache
-        .lock()
-        .ok()
-        .and_then(|m| m.get(&data.song_id).cloned())
-        .map(PathBuf::from);
+    let preferred_cover_path = metadata.get(&data.song_id).cloned().map(PathBuf::from);
 
     if let Some(path) = preferred_cover_path.as_ref()
         && let Some(image_href) = get_image_href(path, embed_images, public_illustration_base_url)
@@ -1947,7 +1962,7 @@ pub fn generate_song_svg_string(
         // 如果找不到当前曲目的曲绘，则随机选一个
         if !cover_files.is_empty() {
             let mut rng = rand::thread_rng();
-            if let Some(random_path) = cover_files.as_slice().choose(&mut rng) {
+            if let Some(random_path) = cover_files.choose(&mut rng) {
                 if let Some(image_href) =
                     get_image_href(random_path, embed_images, public_illustration_base_url)
                 {

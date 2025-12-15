@@ -20,6 +20,16 @@ pub async fn run_startup_checks(config: &AppConfig) -> Result<(), AppError> {
     // 检查字体资源（仅告警，不阻断启动）
     ensure_font_resources()?;
 
+    // 预热曲绘索引（目录扫描 + 白主题背景反色预计算），降低首个 SVG 请求的长尾延迟。
+    let t_prewarm = std::time::Instant::now();
+    if let Err(e) =
+        tokio::task::spawn_blocking(crate::features::image::prewarm_illustration_assets).await
+    {
+        tracing::warn!("曲绘索引预热任务失败: {}", e);
+    } else {
+        tracing::info!("曲绘索引预热完成: {}ms", t_prewarm.elapsed().as_millis());
+    }
+
     tracing::info!("✅ 启动检查完成");
     Ok(())
 }

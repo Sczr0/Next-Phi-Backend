@@ -17,6 +17,13 @@ pub async fn stats_middleware(
     req: Request,
     next: Next,
 ) -> Response {
+    // 静态资源请求（尤其 SVG 模式下的曲绘引用）不纳入打点：
+    // - 避免为每张图片做一次 IP 哈希/HMAC 与 SQLite 写入
+    // - 降低高并发静态资源场景下的尾延迟与资源占用
+    if req.uri().path().starts_with("/_ill/") {
+        return next.run(req).await;
+    }
+
     let started = Instant::now();
     let method = req.method().to_string();
     let route = req

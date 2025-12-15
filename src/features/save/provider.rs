@@ -11,6 +11,15 @@ use super::summary_parser::{SummaryParsed, parse_summary_base64};
 use crate::error::SaveProviderError;
 use crate::startup::chart_loader::ChartConstantsMap;
 
+/// 存档元信息（用于缓存前移：先拿 updatedAt 再决定是否需要下载/解密）
+#[derive(Debug, Clone)]
+pub struct SaveMeta {
+    pub download_url: String,
+    pub decrypt_meta: DecryptionMeta,
+    pub summary_b64: Option<String>,
+    pub updated_at: Option<String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParsedSave {
     pub game_record: HashMap<String, Vec<DifficultyRecord>>,
@@ -41,19 +50,23 @@ impl SaveSource {
     }
 }
 
-pub async fn get_decrypted_save(
+/// 仅获取存档元信息（download_url / 解密参数 / updatedAt / summary），不下载存档本体。
+///
+/// 用途：
+/// - 生成缓存 Key（updatedAt 作为版本号）
+/// - 缓存命中时，避免走“下载+解密+解析”全流程
+pub async fn fetch_save_meta(
     source: SaveSource,
-    chart_constants: &ChartConstantsMap,
     taptap_config: &crate::config::TapTapMultiConfig,
     version: Option<&str>,
-) -> Result<ParsedSave, SaveProviderError> {
-    let (download_url, meta, summary_b64_opt, updated_at_opt) = match source {
+) -> Result<SaveMeta, SaveProviderError> {
+    let (download_url, decrypt_meta, summary_b64, updated_at) = match source {
         SaveSource::Official { session_token } => {
             client::fetch_from_official(&session_token, taptap_config, version).await?
         }
         SaveSource::ExternalApi { credentials } => {
             if let Some(s) = credentials.sessiontoken.clone() {
-                // 外部凭证若包含 sessiontoken，则直接走官方路径以获取 updatedAt/summary
+                // 外部凭证若包含 sessiontoken，则直接走官方元信息接口（能拿到 updatedAt/summary/crypto）
                 client::fetch_from_official(&s, taptap_config, version).await?
             } else {
                 let (url, ext_updated_at) = client::fetch_from_external(&credentials).await?;
@@ -62,7 +75,30 @@ pub async fn get_decrypted_save(
         }
     };
 
-    let encrypted_bytes = download_encrypted_save(&download_url).await?;
+    Ok(SaveMeta {
+        download_url,
+        decrypt_meta,
+        summary_b64,
+        updated_at,
+    })
+}
+
+pub async fn get_decrypted_save(
+    source: SaveSource,
+    chart_constants: &ChartConstantsMap,
+    taptap_config: &crate::config::TapTapMultiConfig,
+    version: Option<&str>,
+) -> Result<ParsedSave, SaveProviderError> {
+    let meta = fetch_save_meta(source, taptap_config, version).await?;
+    get_decrypted_save_from_meta(meta, chart_constants).await
+}
+
+/// 使用已获取的元信息下载/解密/解析存档（用于缓存前移后的 miss 路径，避免重复请求元信息接口）。
+pub async fn get_decrypted_save_from_meta(
+    meta: SaveMeta,
+    chart_constants: &ChartConstantsMap,
+) -> Result<ParsedSave, SaveProviderError> {
+    let encrypted_bytes = download_encrypted_save(&meta.download_url).await?;
 
     let zip_bytes = try_decompress(&encrypted_bytes)?;
     let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes))?;
@@ -73,7 +109,7 @@ pub async fn get_decrypted_save(
         if let Ok(mut f) = archive.by_name(name) {
             let mut enc = Vec::new();
             f.read_to_end(&mut enc)?;
-            let plain = decrypt_zip_entry(&enc, &meta)?;
+            let plain = decrypt_zip_entry(&enc, &meta.decrypt_meta)?;
             decrypted_entries.insert((*name).to_string(), plain);
         }
     }
@@ -97,11 +133,12 @@ pub async fn get_decrypted_save(
     let game_record = record_parser::parse_game_record(&game_record_val, chart_constants)
         .map_err(|e| SaveProviderError::Json(format!("parse gameRecord failed: {e}")))?;
 
-    let summary_parsed = summary_b64_opt
+    let summary_parsed = meta
+        .summary_b64
         .as_deref()
         .and_then(|b64| parse_summary_base64(b64).ok());
 
-    let parsed = ParsedSave {
+    Ok(ParsedSave {
         game_record,
         game_progress: root
             .remove("gameProgress")
@@ -110,10 +147,8 @@ pub async fn get_decrypted_save(
         settings: root.remove("settings").unwrap_or(serde_json::Value::Null),
         game_key: root.remove("gameKey").unwrap_or(serde_json::Value::Null),
         summary_parsed,
-        updated_at: updated_at_opt,
-    };
-
-    Ok(parsed)
+        updated_at: meta.updated_at,
+    })
 }
 
 async fn download_encrypted_save(url: &str) -> Result<Vec<u8>, SaveProviderError> {

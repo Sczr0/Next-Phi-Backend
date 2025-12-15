@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use axum::body::Bytes;
 use axum::{
     Json, Router,
     extract::{Query, State},
@@ -146,15 +147,15 @@ pub async fn render_bn(
     tracing::info!(target: "bestn_performance", "用户凭证验证完成，耗时: {:?}ms", auth_duration.as_millis());
 
     let taptap_version = req.auth.taptap_version.as_deref();
-    let parsed = provider::get_decrypted_save(
+    // 缓存前移：先拿 updatedAt（作为版本号）再决定是否需要下载/解密/解析存档本体。
+    let meta = provider::fetch_save_meta(
         source,
-        &state.chart_constants,
         &crate::config::AppConfig::global().taptap,
         taptap_version,
     )
     .await
-    .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
-    let save_ms = t_save.elapsed().as_millis() as i64;
+    .map_err(|e| AppError::Internal(format!("获取存档元信息失败: {e}")))?;
+    let updated_for_cache = meta.updated_at.clone().unwrap_or_else(|| "none".into());
 
     // 参数验证：webp_quality 范围
     if let Some(quality) = q.webp_quality
@@ -190,12 +191,16 @@ pub async fn render_bn(
     let (user_hash_for_cache, user_kind_for_cache) =
         crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
-        let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
+        let updated = updated_for_cache.clone();
         let theme_code = match req.theme {
             super::types::Theme::White => "w",
             super::types::Theme::Black => "b",
         };
-        let width_code = q.width.unwrap_or(0);
+        let width_code = if fmt_code == "svg" {
+            0
+        } else {
+            q.width.unwrap_or(0)
+        };
         let (webp_quality_code, webp_lossless_code) = normalized_webp_cache_params(fmt_code, &q);
         let key = format!(
             "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
@@ -251,7 +256,7 @@ pub async fn render_bn(
 
             let total_duration = t_total.elapsed();
             tracing::info!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
-            return Ok((StatusCode::OK, headers, (*p).clone()));
+            return Ok((StatusCode::OK, headers, p));
         } else {
             let _cache_duration = Instant::now().elapsed();
             tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
@@ -275,6 +280,12 @@ pub async fn render_bn(
             h.track(evt).await;
         }
     }
+
+    // cache miss：下载/解密/解析存档本体
+    let parsed = provider::get_decrypted_save_from_meta(meta, &state.chart_constants)
+        .await
+        .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
+    let save_ms = t_save.elapsed().as_millis() as i64;
 
     // 扁平化为渲染记录 + 排序与推分预计算耗时
     let t_flatten = Instant::now();
@@ -487,6 +498,9 @@ pub async fn render_bn(
     };
 
     // 等待许可与渲染分段计时
+    // 统计用：提前提取曲目 ID，避免后续把 `top` move 进阻塞线程后不可用。
+    let bestn_song_ids: Vec<String> = top.iter().map(|r| r.song_id.clone()).collect();
+
     let t_semaphore_start = Instant::now();
     let sem = state.render_semaphore.clone();
     let permits_avail = sem.available_permits() as i64;
@@ -501,14 +515,21 @@ pub async fn render_bn(
                    permits_avail, wait_ms, semaphore_duration.as_millis());
 
     let t_svg_start = Instant::now();
-    let svg = renderer::generate_svg_string(
-        &top,
-        &stats,
-        Some(&push_acc_map),
-        &req.theme,
-        embed_images_effective,
-        public_illustration_base_url,
-    )?;
+    // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
+    let theme = req.theme;
+    let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let svg = tokio::task::spawn_blocking(move || {
+        renderer::generate_svg_string(
+            &top,
+            &stats,
+            Some(&push_acc_map),
+            &theme,
+            embed_images_effective,
+            public_base_url.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("阻塞 SVG 生成任务执行失败: {e}")))??;
     let svg_duration = t_svg_start.elapsed();
     let svg_size = svg.len();
     tracing::info!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
@@ -516,9 +537,12 @@ pub async fn render_bn(
     let t_render_start = Instant::now();
     // 输出格式与宽度处理（svg 直接返回，不做栅格化渲染）
     let (bytes, content_type) = if fmt_code == "svg" {
-        (svg.into_bytes(), content_type_from_fmt_code(fmt_code))
+        (
+            Bytes::from(svg.into_bytes()),
+            content_type_from_fmt_code(fmt_code),
+        )
     } else {
-        renderer::render_svg_unified_async(
+        let (v, ct) = renderer::render_svg_unified_async(
             svg,
             false,
             q.format.as_deref(),
@@ -526,7 +550,8 @@ pub async fn render_bn(
             q.webp_quality,
             q.webp_lossless,
         )
-        .await?
+        .await?;
+        (Bytes::from(v), ct)
     };
     let render_duration = t_render_start.elapsed();
     let render_ms = render_duration.as_millis() as i64;
@@ -542,7 +567,6 @@ pub async fn render_bn(
             .as_deref();
         let (user_hash, user_kind) =
             crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
-        let bestn_song_ids: Vec<String> = top.iter().map(|r| r.song_id.clone()).collect();
         let extra = serde_json::json!({ "bestn_song_ids": bestn_song_ids, "user_kind": user_kind });
         stats
             .track_feature("bestn", "generate_image", user_hash, Some(extra))
@@ -559,13 +583,17 @@ pub async fn render_bn(
         let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         if let Some(user_hash) = uh.as_ref() {
             let t_cache_put = Instant::now();
-            let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
+            let updated = updated_for_cache.clone();
             let theme_code = match req.theme {
                 super::types::Theme::White => "w",
                 super::types::Theme::Black => "b",
             };
             let fmt_code = format_code(&q);
-            let width_code = q.width.unwrap_or(0);
+            let width_code = if fmt_code == "svg" {
+                0
+            } else {
+                q.width.unwrap_or(0)
+            };
             let (webp_quality_code, webp_lossless_code) =
                 normalized_webp_cache_params(fmt_code, &q);
             let key = format!(
@@ -580,10 +608,7 @@ pub async fn render_bn(
                 webp_quality_code,
                 webp_lossless_code
             );
-            state
-                .bn_image_cache
-                .insert(key, std::sync::Arc::new(bytes.clone()))
-                .await;
+            state.bn_image_cache.insert(key, bytes.clone()).await;
             cache_put_duration = Some(t_cache_put.elapsed());
         }
     }
@@ -670,14 +695,15 @@ pub async fn render_song(
     let t_total = std::time::Instant::now();
     let source = to_save_source(&req.auth)?;
     let taptap_version = req.auth.taptap_version.as_deref();
-    let parsed = provider::get_decrypted_save(
+    // 缓存前移：先拿 updatedAt（作为版本号）再决定是否需要下载/解密/解析存档本体。
+    let meta = provider::fetch_save_meta(
         source,
-        &state.chart_constants,
         &crate::config::AppConfig::global().taptap,
         taptap_version,
     )
     .await
-    .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
+    .map_err(|e| AppError::Internal(format!("获取存档元信息失败: {e}")))?;
+    let updated_for_cache = meta.updated_at.clone().unwrap_or_else(|| "none".into());
 
     let song = state
         .song_catalog
@@ -718,8 +744,12 @@ pub async fn render_song(
     let (user_hash_for_cache, user_kind_for_cache) =
         crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
-        let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
-        let width_code = q.width.unwrap_or(0);
+        let updated = updated_for_cache.clone();
+        let width_code = if fmt_code == "svg" {
+            0
+        } else {
+            q.width.unwrap_or(0)
+        };
         let (webp_quality_code, webp_lossless_code) = normalized_webp_cache_params(fmt_code, &q);
         let key = format!(
             "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
@@ -755,7 +785,7 @@ pub async fn render_song(
             let mut headers = axum::http::HeaderMap::new();
             let content_type = content_type_from_fmt_code(fmt_code);
             headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
-            return Ok((StatusCode::OK, headers, (*p).clone()));
+            return Ok((StatusCode::OK, headers, p));
         } else if let Some(h) = state.stats.as_ref() {
             let evt = crate::features::stats::models::EventInsert {
                 ts_utc: chrono::Utc::now(),
@@ -778,6 +808,10 @@ pub async fn render_song(
 
     // 构建所有引擎记录用于推分
     let mut engine_all: Vec<crate::features::rks::engine::RksRecord> = Vec::new();
+    // cache miss：下载/解密/解析存档本体
+    let parsed = provider::get_decrypted_save_from_meta(meta, &state.chart_constants)
+        .await
+        .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
     for (sid, diffs) in parsed.game_record.iter() {
         let chart = state.chart_constants.get(sid);
         for rec in diffs {
@@ -928,15 +962,24 @@ pub async fn render_song(
         .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
     let wait_ms2 = t_wait2.elapsed().as_millis() as i64;
     let t_render2 = Instant::now();
-    let svg = renderer::generate_song_svg_string(
-        &render_data,
-        embed_images_effective,
-        public_illustration_base_url,
-    )?;
+    // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
+    let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let svg = tokio::task::spawn_blocking(move || {
+        renderer::generate_song_svg_string(
+            &render_data,
+            embed_images_effective,
+            public_base_url.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("阻塞 SVG 生成任务执行失败: {e}")))??;
     let (bytes, content_type) = if fmt_code == "svg" {
-        (svg.into_bytes(), content_type_from_fmt_code(fmt_code))
+        (
+            Bytes::from(svg.into_bytes()),
+            content_type_from_fmt_code(fmt_code),
+        )
     } else {
-        renderer::render_svg_unified_async(
+        let (v, ct) = renderer::render_svg_unified_async(
             svg,
             false,
             q.format.as_deref(),
@@ -944,7 +987,8 @@ pub async fn render_song(
             q.webp_quality,
             q.webp_lossless,
         )
-        .await?
+        .await?;
+        (Bytes::from(v), ct)
     };
     let render_ms2 = t_render2.elapsed().as_millis() as i64;
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
@@ -968,9 +1012,13 @@ pub async fn render_song(
         let salt = AppConfig::global().stats.user_hash_salt.as_deref();
         let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         if let Some(user_hash) = uh.as_ref() {
-            let updated = parsed.updated_at.clone().unwrap_or_else(|| "none".into());
+            let updated = updated_for_cache.clone();
             let fmt_code = format_code(&q);
-            let width_code = q.width.unwrap_or(0);
+            let width_code = if fmt_code == "svg" {
+                0
+            } else {
+                q.width.unwrap_or(0)
+            };
             let (webp_quality_code, webp_lossless_code) =
                 normalized_webp_cache_params(fmt_code, &q);
             let key = format!(
@@ -985,10 +1033,7 @@ pub async fn render_song(
                 webp_quality_code,
                 webp_lossless_code
             );
-            state
-                .song_image_cache
-                .insert(key, std::sync::Arc::new(bytes.clone()))
-                .await;
+            state.song_image_cache.insert(key, bytes.clone()).await;
         }
     }
 
@@ -1271,18 +1316,35 @@ pub async fn render_bn_user(
     } else {
         None
     };
-    let svg = renderer::generate_svg_string(
-        &top,
-        &stats,
-        Some(&push_acc_map),
-        &req.theme,
-        false,
-        public_illustration_base_url,
-    )?;
+    // 等待许可与渲染分段计时
+    let sem = state.render_semaphore.clone();
+    let _permit = sem
+        .acquire_owned()
+        .await
+        .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
+
+    // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
+    let theme = req.theme;
+    let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let svg = tokio::task::spawn_blocking(move || {
+        renderer::generate_svg_string(
+            &top,
+            &stats,
+            Some(&push_acc_map),
+            &theme,
+            false,
+            public_base_url.as_deref(),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("阻塞 SVG 生成任务执行失败: {e}")))??;
     let (bytes, content_type) = if fmt_code == "svg" {
-        (svg.into_bytes(), content_type_from_fmt_code(fmt_code))
+        (
+            Bytes::from(svg.into_bytes()),
+            content_type_from_fmt_code(fmt_code),
+        )
     } else {
-        renderer::render_svg_unified_async(
+        let (v, ct) = renderer::render_svg_unified_async(
             svg,
             implicit,
             q.format.as_deref(),
@@ -1290,7 +1352,8 @@ pub async fn render_bn_user(
             q.webp_quality,
             q.webp_lossless,
         )
-        .await?
+        .await?;
+        (Bytes::from(v), ct)
     };
 
     // 统计：用户自报 BestN 图片生成

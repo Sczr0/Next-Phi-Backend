@@ -1,3 +1,4 @@
+use axum::body::Bytes;
 use moka::future::Cache;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
@@ -19,7 +20,7 @@ pub struct AppState {
     /// 控制并发渲染的信号量（限制 CPU 密集型任务数量）
     pub render_semaphore: Arc<Semaphore>,
     /// BN 图片缓存（按图片字节大小加权）
-    pub bn_image_cache: Cache<String, Arc<Vec<u8>>>,
+    pub bn_image_cache: Cache<String, Bytes>,
     /// 单曲图片缓存（按图片字节大小加权）
-    pub song_image_cache: Cache<String, Arc<Vec<u8>>>,
+    pub song_image_cache: Cache<String, Bytes>,
 }
