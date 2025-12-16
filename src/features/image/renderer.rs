@@ -24,6 +24,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use tokio::task::spawn_blocking;
 
+mod svg_templates;
+
 #[allow(dead_code)]
 pub struct PlayerStats {
     pub ap_top_3_avg: Option<f64>,
@@ -910,7 +912,20 @@ pub fn generate_svg_string(
     embed_images: bool,
     // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
     public_illustration_base_url: Option<&str>,
+    // 外部模板 ID：对应 `resources/templates/image/bn/{id}.svg.jinja`（为空则使用内置手写 SVG 实现）。
+    template_id: Option<&str>,
 ) -> Result<String, AppError> {
+    if template_id.is_some() {
+        return svg_templates::generate_bn_svg_with_template(
+            scores,
+            stats,
+            push_acc_map,
+            theme,
+            embed_images,
+            public_illustration_base_url,
+            template_id,
+        );
+    }
     let _start_time = std::time::Instant::now();
     // ... (width, height calculations etc. - keep these as they were) ...
     let width = 1200;
@@ -1908,7 +1923,17 @@ pub fn generate_song_svg_string(
     embed_images: bool,
     // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
     public_illustration_base_url: Option<&str>,
+    // 外部模板 ID：对应 `resources/templates/image/song/{id}.svg.jinja`（为空则使用内置手写 SVG 实现）。
+    template_id: Option<&str>,
 ) -> Result<String, AppError> {
+    if template_id.is_some() {
+        return svg_templates::generate_song_svg_with_template(
+            data,
+            embed_images,
+            public_illustration_base_url,
+            template_id,
+        );
+    }
     let fmt_err = |e| AppError::ImageRendererError(format!("SVG formatting error: {e}"));
     let t0 = std::time::Instant::now();
 
@@ -2572,6 +2597,7 @@ mod tests {
             &Theme::default(),
             false,
             Some("https://example.com"),
+            None,
         )
         .unwrap();
 
@@ -2592,9 +2618,67 @@ mod tests {
             custom_footer_text: None,
         };
 
-        let svg = generate_song_svg_string(&data, false, Some("https://example.com")).unwrap();
+        let svg =
+            generate_song_svg_string(&data, false, Some("https://example.com"), None).unwrap();
         assert!(svg.contains("https://example.com/illustration/SONG%20REMOTE%20456.png"));
         assert!(!svg.contains("data:image/"));
+    }
+
+    #[test]
+    fn generate_bn_svg_renders_with_external_template() {
+        ensure_config_inited();
+        let record = RenderRecord {
+            song_id: "TEMPLATE_TEST".to_string(),
+            song_name: "TemplateSong".to_string(),
+            difficulty: "IN".to_string(),
+            score: Some(1_000_000.0),
+            acc: 99.5,
+            rks: 12.34,
+            difficulty_value: 15.8,
+            is_fc: true,
+        };
+        let stats = PlayerStats {
+            ap_top_3_avg: None,
+            best_27_avg: Some(12.3456),
+            real_rks: Some(12.345678),
+            player_name: Some("Tester".to_string()),
+            update_time: Utc::now(),
+            n: 1,
+            ap_top_3_scores: vec![],
+            challenge_rank: None,
+            data_string: None,
+            custom_footer_text: None,
+            is_user_generated: false,
+        };
+        let svg = generate_svg_string(
+            &[record],
+            &stats,
+            None,
+            &Theme::default(),
+            false,
+            None,
+            Some("default"),
+        )
+        .unwrap();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("id=\"main-cards\""));
+    }
+
+    #[test]
+    fn generate_song_svg_renders_with_external_template() {
+        ensure_config_inited();
+        let data = SongRenderData {
+            song_name: "TemplateSong".to_string(),
+            song_id: "TEMPLATE_SONG_ID".to_string(),
+            player_name: Some("Tester".to_string()),
+            update_time: Utc::now(),
+            difficulty_scores: Default::default(),
+            illustration_path: None,
+            custom_footer_text: Some("Footer".to_string()),
+        };
+        let svg = generate_song_svg_string(&data, false, None, Some("default")).unwrap();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("difficulty-card"));
     }
 
     #[test]

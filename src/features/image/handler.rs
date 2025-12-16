@@ -34,6 +34,9 @@ pub struct ImageQueryOpts {
     /// 输出格式：png、jpeg、webp 或 svg（默认 png）
     #[serde(default)]
     format: Option<String>,
+    /// SVG 模板：对应 `resources/templates/image/{kind}/{template}.svg.jinja`（不传则使用内置手写 SVG 实现）
+    #[serde(default)]
+    template: Option<String>,
     /// 目标宽度：按宽度同比例缩放（可选）
     #[serde(default)]
     width: Option<u32>,
@@ -93,6 +96,27 @@ fn normalized_webp_cache_params(fmt_code: &str, q: &ImageQueryOpts) -> (u8, u8) 
     (quality, 0)
 }
 
+fn normalized_template_cache_code(q: &ImageQueryOpts) -> String {
+    // 缓存键需要与 renderer 的模板选择语义一致：
+    // - 未指定模板：走 legacy（内置手写 SVG）
+    // - 指定模板但非法：归一到 default（避免缓存碎片 + 避免路径穿越）
+    match q.template.as_deref() {
+        None => "legacy".to_string(),
+        Some(s) => {
+            if s.is_empty()
+                || s.len() > 64
+                || !s
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+            {
+                "default".to_string()
+            } else {
+                s.to_string()
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ImageQueryOpts, content_type_from_fmt_code, format_code};
@@ -101,6 +125,7 @@ mod tests {
     fn supports_svg_format_code_and_content_type() {
         let q = ImageQueryOpts {
             format: Some("svg".to_string()),
+            template: None,
             width: None,
             webp_quality: None,
             webp_lossless: None,
@@ -121,6 +146,7 @@ mod tests {
     request_body = RenderBnRequest,
     params(
         ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
+        ("template" = Option<String>, Query, description = "SVG 模板 ID：对应 resources/templates/image/bn/{id}.svg.jinja（不传则使用内置手写 SVG）"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
         ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
@@ -201,14 +227,16 @@ pub async fn render_bn(
         } else {
             q.width.unwrap_or(0)
         };
+        let tpl_code = normalized_template_cache_code(&q);
         let (webp_quality_code, webp_lossless_code) = normalized_webp_cache_params(fmt_code, &q);
         let key = format!(
-            "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             user_hash,
             req.n.max(1),
             updated,
             theme_code,
             if embed_images_effective { 1 } else { 0 },
+            tpl_code,
             fmt_code,
             width_code,
             webp_quality_code,
@@ -235,6 +263,7 @@ pub async fn render_bn(
                         "cached": true,
                         "user_kind": user_kind_for_cache,
                         "fmt": fmt_code,
+                        "tpl": tpl_code,
                         "width": width_code,
                         "webp_quality": webp_quality_code,
                         "webp_lossless": webp_lossless_code
@@ -274,7 +303,7 @@ pub async fn render_bn(
                 client_ip_hash: None,
                 instance: None,
                 extra_json: Some(
-                    serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache }),
+                    serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache, "tpl": tpl_code }),
                 ),
             };
             h.track(evt).await;
@@ -518,6 +547,7 @@ pub async fn render_bn(
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
     let theme = req.theme;
     let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
         renderer::generate_svg_string(
             &top,
@@ -526,6 +556,7 @@ pub async fn render_bn(
             &theme,
             embed_images_effective,
             public_base_url.as_deref(),
+            template_id.as_deref(),
         )
     })
     .await
@@ -596,13 +627,15 @@ pub async fn render_bn(
             };
             let (webp_quality_code, webp_lossless_code) =
                 normalized_webp_cache_params(fmt_code, &q);
+            let tpl_code = normalized_template_cache_code(&q);
             let key = format!(
-                "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 user_hash,
                 n,
                 updated,
                 theme_code,
                 if embed_images_effective { 1 } else { 0 },
+                tpl_code,
                 fmt_code,
                 width_code,
                 webp_quality_code,
@@ -676,6 +709,7 @@ pub async fn render_bn(
     request_body = RenderSongRequest,
     params(
         ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
+        ("template" = Option<String>, Query, description = "SVG 模板 ID：对应 resources/templates/image/song/{id}.svg.jinja（不传则使用内置手写 SVG）"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
         ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
@@ -750,14 +784,16 @@ pub async fn render_song(
         } else {
             q.width.unwrap_or(0)
         };
+        let tpl_code = normalized_template_cache_code(&q);
         let (webp_quality_code, webp_lossless_code) = normalized_webp_cache_params(fmt_code, &q);
         let key = format!(
-            "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{}:song:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             user_hash,
             song.id,
             updated,
             "d",
             if embed_images_effective { 1 } else { 0 },
+            tpl_code,
             fmt_code,
             width_code,
             webp_quality_code,
@@ -777,7 +813,7 @@ pub async fn render_song(
                     client_ip_hash: None,
                     instance: None,
                     extra_json: Some(
-                        serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id}),
+                        serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id, "tpl": tpl_code}),
                     ),
                 };
                 h.track(evt).await;
@@ -799,7 +835,7 @@ pub async fn render_song(
                 client_ip_hash: None,
                 instance: None,
                 extra_json: Some(
-                    serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id}),
+                    serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id, "tpl": tpl_code}),
                 ),
             };
             h.track(evt).await;
@@ -964,11 +1000,13 @@ pub async fn render_song(
     let t_render2 = Instant::now();
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
     let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
         renderer::generate_song_svg_string(
             &render_data,
             embed_images_effective,
             public_base_url.as_deref(),
+            template_id.as_deref(),
         )
     })
     .await
@@ -1021,13 +1059,15 @@ pub async fn render_song(
             };
             let (webp_quality_code, webp_lossless_code) =
                 normalized_webp_cache_params(fmt_code, &q);
+            let tpl_code = normalized_template_cache_code(&q);
             let key = format!(
-                "{}:song:{}:{}:{}:{}:{}:{}:{}:{}",
+                "{}:song:{}:{}:{}:{}:{}:{}:{}:{}:{}",
                 user_hash,
                 song.id,
                 updated,
                 "d",
                 if embed_images_effective { 1 } else { 0 },
+                tpl_code,
                 fmt_code,
                 width_code,
                 webp_quality_code,
@@ -1138,6 +1178,7 @@ async fn fetch_nickname(session_token: &str) -> Option<String> {
     request_body = RenderUserBnRequest,
     params(
         ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
+        ("template" = Option<String>, Query, description = "SVG 模板 ID：对应 resources/templates/image/bn/{id}.svg.jinja（不传则使用内置手写 SVG）"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
         ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
@@ -1326,6 +1367,7 @@ pub async fn render_bn_user(
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
     let theme = req.theme;
     let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
         renderer::generate_svg_string(
             &top,
@@ -1334,6 +1376,7 @@ pub async fn render_bn_user(
             &theme,
             false,
             public_base_url.as_deref(),
+            template_id.as_deref(),
         )
     })
     .await

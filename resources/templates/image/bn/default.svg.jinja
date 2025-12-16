@@ -1,0 +1,150 @@
+{# 
+  BN 默认模板
+#}
+
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="{{ page.width }}" height="{{ page.height }}"
+     viewBox="0 0 {{ page.width }} {{ page.height }}">
+  <defs>
+    <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="{{ colors.bg_grad_0 }}" />
+      <stop offset="100%" stop-color="{{ colors.bg_grad_1 }}" />
+    </linearGradient>
+    <linearGradient id="ap-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFDA63" />
+      <stop offset="100%" stop-color="#D1913C" />
+    </linearGradient>
+    <linearGradient id="ap-gradient-white" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#D4A017" />
+      <stop offset="100%" stop-color="#B8860B" />
+    </linearGradient>
+    <linearGradient id="normal-card-stroke-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#555868" />
+      <stop offset="100%" stop-color="#333848" />
+    </linearGradient>
+    <filter id="bg-blur">
+      <feGaussianBlur stdDeviation="10" />
+    </filter>
+
+    <style>
+      .text { font-family: '{{ fonts.main }}', sans-serif; fill: {{ colors.text }}; }
+      .text-title { font-size: 32px; font-weight: 700; }
+      .text-stat { font-size: 18px; fill: {{ colors.text_secondary }}; }
+      .text-time { font-size: 14px; fill: {{ colors.text_secondary }}; text-anchor: end; }
+      .text-info { font-size: 14px; fill: {{ colors.text_secondary }}; text-anchor: end; }
+      .text-footer { font-size: 14px; fill: {{ colors.text_secondary }}; }
+
+      .card { fill: {{ colors.card_bg }}; stroke: {{ colors.card_stroke }}; stroke-width: 1.2; }
+      .card-ap { stroke: url(#ap-gradient); stroke-width: 2.2; }
+      .card-fc { stroke: {{ colors.fc_stroke }}; stroke-width: 2.0; }
+
+      .text-song { font-size: 22px; font-weight: 700; }
+      .text-score { font-size: 34px; font-weight: 800; }
+      .text-acc { font-size: 18px; fill: {{ colors.text_secondary }}; }
+      .text-level { font-size: 18px; fill: {{ colors.text_secondary }}; }
+      .text-rank { font-size: 16px; fill: {{ colors.text_secondary }}; text-anchor: end; }
+
+      .text-difficulty-badge { font-size: 12px; font-weight: 700; }
+      .text-fc-ap-badge { font-size: 12px; font-weight: 800; }
+    </style>
+  </defs>
+
+  {# 背景：优先使用随机 blur 图，否则用渐变 #}
+  {% if background.href_xml %}
+    <image href="{{ background.href_xml }}" x="0" y="0" width="100%" height="100%"
+           preserveAspectRatio="xMidYMid slice" filter="url(#bg-blur)" />
+    <rect width="100%" height="100%" fill="{{ background.overlay_rgba }}" />
+  {% else %}
+    <rect width="100%" height="100%" fill="url(#bg-gradient)" />
+  {% endif %}
+
+  {# Header #}
+  <text x="40" y="55" class="text text-title">{{ header.player_title_xml }}</text>
+  <text x="40" y="85" class="text text-stat">{{ header.ap_text_xml }}</text>
+  <text x="40" y="110" class="text text-stat">{{ header.bn_text_xml }}</text>
+
+  {% for line in header.right_lines %}
+    <text x="{{ page.width - 30 }}" y="{{ line.y }}" class="text {{ line.class }}">{{ line.inner_xml }}</text>
+  {% endfor %}
+
+  <line x1="40" y1="{{ layout.header_height }}" x2="{{ page.width - 40 }}" y2="{{ layout.header_height }}"
+        stroke="{{ colors.card_stroke }}" stroke-width="1" stroke-opacity="0.7" />
+
+  {# AP Top 3 #}
+  {% if ap.cards | length > 0 %}
+  <g id="ap-top-3-section" transform="translate(0, {{ ap.section_y }})">
+    {% for c in ap.cards %}
+      <g transform="translate({{ c.x }}, {{ c.y }})">
+        <rect width="{{ c.w }}" height="{{ c.h }}" rx="{{ c.radius }}" ry="{{ c.radius }}" class="card card-ap" />
+        <defs>
+          <clipPath id="{{ c.clip_id }}">
+            <rect x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}" rx="4" ry="4" />
+          </clipPath>
+        </defs>
+        {% if c.cover.href_xml %}
+          <image href="{{ c.cover.href_xml }}" x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}"
+                 clip-path="url(#{{ c.clip_id }})" />
+        {% endif %}
+
+        {# 难度徽章 #}
+        <rect x="{{ c.badge.diff.x }}" y="{{ c.badge.diff.y }}" width="{{ c.badge.diff.w }}" height="{{ c.badge.diff.h }}"
+              rx="{{ c.badge.diff.r }}" ry="{{ c.badge.diff.r }}" fill="{{ c.badge.diff.fill }}" />
+        <text x="{{ c.badge.diff.tx }}" y="{{ c.badge.diff.ty }}" class="text-difficulty-badge" text-anchor="middle" fill="white">{{ c.badge.diff.text }}</text>
+
+        {# AP/FC 徽章（AP 优先） #}
+        {% if c.badge.fc_ap %}
+          <rect x="{{ c.badge.fc_ap.x }}" y="{{ c.badge.fc_ap.y }}" width="{{ c.badge.fc_ap.w }}" height="{{ c.badge.fc_ap.h }}"
+                rx="{{ c.badge.fc_ap.r }}" ry="{{ c.badge.fc_ap.r }}" fill="{{ c.badge.fc_ap.fill }}" />
+          <text x="{{ c.badge.fc_ap.tx }}" y="{{ c.badge.fc_ap.ty }}" class="text-fc-ap-badge" text-anchor="middle" fill="{{ c.badge.fc_ap.text_fill }}">{{ c.badge.fc_ap.text }}</text>
+        {% endif %}
+
+        <text x="{{ c.text.song_x }}" y="{{ c.text.song_y }}" class="text text-song">{{ c.text.song_name_xml }}</text>
+        <text x="{{ c.text.score_x }}" y="{{ c.text.score_y }}" class="text text-score">{{ c.text.score_text }}</text>
+        <text x="{{ c.text.acc_x }}" y="{{ c.text.acc_y }}" class="text text-acc">{{ c.text.acc_text_xml }}</text>
+        <text x="{{ c.text.level_x }}" y="{{ c.text.level_y }}" class="text text-level">{{ c.text.level_text_xml }}</text>
+      </g>
+    {% endfor %}
+  </g>
+  {% endif %}
+
+  {# Main cards #}
+  <g id="main-cards">
+  {% for c in cards %}
+    <g transform="translate({{ c.x }}, {{ c.y }})">
+      <rect width="{{ c.w }}" height="{{ c.h }}" rx="{{ c.radius }}" ry="{{ c.radius }}" class="card {{ c.class_extra }}" />
+      <defs>
+        <clipPath id="{{ c.clip_id }}">
+          <rect x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}" rx="4" ry="4" />
+        </clipPath>
+      </defs>
+      {% if c.cover.href_xml %}
+        <image href="{{ c.cover.href_xml }}" x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}"
+               clip-path="url(#{{ c.clip_id }})" />
+      {% endif %}
+
+      <rect x="{{ c.badge.diff.x }}" y="{{ c.badge.diff.y }}" width="{{ c.badge.diff.w }}" height="{{ c.badge.diff.h }}"
+            rx="{{ c.badge.diff.r }}" ry="{{ c.badge.diff.r }}" fill="{{ c.badge.diff.fill }}" />
+      <text x="{{ c.badge.diff.tx }}" y="{{ c.badge.diff.ty }}" class="text-difficulty-badge" text-anchor="middle" fill="white">{{ c.badge.diff.text }}</text>
+
+      {% if c.badge.fc_ap %}
+        <rect x="{{ c.badge.fc_ap.x }}" y="{{ c.badge.fc_ap.y }}" width="{{ c.badge.fc_ap.w }}" height="{{ c.badge.fc_ap.h }}"
+              rx="{{ c.badge.fc_ap.r }}" ry="{{ c.badge.fc_ap.r }}" fill="{{ c.badge.fc_ap.fill }}" />
+        <text x="{{ c.badge.fc_ap.tx }}" y="{{ c.badge.fc_ap.ty }}" class="text-fc-ap-badge" text-anchor="middle" fill="{{ c.badge.fc_ap.text_fill }}">{{ c.badge.fc_ap.text }}</text>
+      {% endif %}
+
+      <text x="{{ c.text.song_x }}" y="{{ c.text.song_y }}" class="text text-song">{{ c.text.song_name_xml }}</text>
+      <text x="{{ c.text.score_x }}" y="{{ c.text.score_y }}" class="text text-score">{{ c.text.score_text }}</text>
+      <text x="{{ c.text.acc_x }}" y="{{ c.text.acc_y }}" class="text text-acc">{{ c.text.acc_text_xml }}</text>
+      <text x="{{ c.text.level_x }}" y="{{ c.text.level_y }}" class="text text-level">{{ c.text.level_text_xml }}</text>
+      <text x="{{ c.text.rank_x }}" y="{{ c.text.rank_y }}" class="text text-rank">{{ c.text.rank_text }}</text>
+    </g>
+  {% endfor %}
+  </g>
+
+  {# Footer #}
+  <text x="{{ layout.footer_padding }}" y="{{ footer.y }}" class="text-footer" text-anchor="start">{{ footer.generated_text_xml }}</text>
+  {% if footer.custom_text_xml %}
+    <text x="{{ page.width - layout.footer_padding }}" y="{{ footer.y }}" class="text-footer" text-anchor="end">{{ footer.custom_text_xml }}</text>
+  {% endif %}
+</svg>

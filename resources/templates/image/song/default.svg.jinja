@@ -1,0 +1,103 @@
+{#
+  单曲默认模板
+#}
+
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="{{ page.width }}" height="{{ page.height }}"
+     viewBox="0 0 {{ page.width }} {{ page.height }}">
+  <defs>
+    <linearGradient id="bg-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#141826" />
+      <stop offset="100%" stop-color="#252E48" />
+    </linearGradient>
+    <linearGradient id="card-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2D3241" />
+      <stop offset="100%" stop-color="#1E2330" />
+    </linearGradient>
+    <linearGradient id="rks-gradient-push" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#a8e063" />
+      <stop offset="100%" stop-color="#56ab2f" />
+    </linearGradient>
+    <filter id="bg-blur">
+      <feGaussianBlur stdDeviation="10" />
+    </filter>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="3" flood-color="rgba(0,0,0,0.25)" flood-opacity="0.25" />
+    </filter>
+
+    <style>
+      .text { font-family: '{{ fonts.main }}', sans-serif; fill: #E0E0E0; }
+      .text-songname { font-size: 24px; font-weight: 800; fill: #FFFFFF; text-anchor: middle; }
+      .text-player-info { font-size: 22px; font-weight: 800; fill: #FFFFFF; }
+      .text-player-rks { font-size: 20px; fill: #E0E0E0; }
+      .text-footer { font-size: 14px; fill: #888888; text-anchor: end; }
+
+      .difficulty-card { fill: url(#card-gradient); stroke: rgba(120, 120, 120, 0.5); stroke-width: 1.5; filter: url(#card-shadow); }
+      .difficulty-card-inactive { fill: rgba(40, 45, 60, 0.5); stroke: rgba(70, 70, 70, 0.3); stroke-width: 1; }
+      .difficulty-card-fc { fill: url(#card-gradient); stroke: #87CEEB; stroke-width: 3; }
+      .difficulty-card-phi { fill: url(#card-gradient); stroke: gold; stroke-width: 3; }
+
+      .text-label { font-size: 28px; font-weight: 900; }
+      .text-difficulty-ez { fill: #77DD77; }
+      .text-difficulty-hd { fill: #87CEEB; }
+      .text-difficulty-in { fill: #FFB347; }
+      .text-difficulty-at { fill: #FF6961; }
+
+      .text-score { font-size: 34px; font-weight: 900; }
+      .text-acc { font-size: 18px; fill: #B0B0B0; }
+      .text-rks { font-size: 18px; fill: #E0E0E0; }
+      .text-constants { font-size: 18px; fill: #AAAAAA; }
+      .text-push-acc { font-size: 18px; font-weight: 900; }
+    </style>
+  </defs>
+
+  {% if background.href_xml %}
+    <image href="{{ background.href_xml }}" x="0" y="0" width="100%" height="100%"
+           preserveAspectRatio="xMidYMid slice" filter="url(#bg-blur)" />
+    <rect width="100%" height="100%" fill="rgba(20, 24, 38, 0.7)" />
+  {% else %}
+    <rect width="100%" height="100%" fill="url(#bg-gradient)" />
+  {% endif %}
+
+  {# 曲绘 #}
+  {% if illust.href_xml %}
+    <defs>
+      <clipPath id="{{ illust.clip_id }}">
+        <rect x="{{ illust.x }}" y="{{ illust.y }}" width="{{ illust.w }}" height="{{ illust.h }}" rx="{{ illust.r }}" ry="{{ illust.r }}" />
+      </clipPath>
+    </defs>
+    <image href="{{ illust.href_xml }}" x="{{ illust.x }}" y="{{ illust.y }}" width="{{ illust.w }}" height="{{ illust.h }}"
+           preserveAspectRatio="xMidYMid slice" clip-path="url(#{{ illust.clip_id }})" />
+  {% endif %}
+
+  {# 玩家信息 #}
+  <text x="{{ player.x }}" y="{{ player.y_name }}" class="text text-player-info">{{ player.name_xml }}</text>
+  <text x="{{ player.x }}" y="{{ player.y_rks }}" class="text text-player-rks">{{ player.rks_xml }}</text>
+
+  {# 曲名 #}
+  <text x="{{ song.cx }}" y="{{ song.y }}" class="text text-songname">{{ song.name_xml }}</text>
+
+  {# 难度卡片（4 张） #}
+  {% for c in difficulty_cards %}
+    <g>
+      <rect x="{{ c.x }}" y="{{ c.y }}" width="{{ c.w }}" height="{{ c.h }}" rx="{{ c.r }}" ry="{{ c.r }}" class="{{ c.card_class }}" />
+
+      <text x="{{ c.label_x }}" y="{{ c.label_y }}" class="text text-label text-difficulty-{{ c.key_lower }}" text-anchor="middle">{{ c.key }}</text>
+      {% if c.constant_text_xml %}
+        <text x="{{ c.label_x }}" y="{{ c.constant_y }}" class="text-constants" text-anchor="middle">{{ c.constant_text_xml }}</text>
+      {% endif %}
+
+      {% if c.score_text %}
+        <text x="{{ c.text_x }}" y="{{ c.score_y }}" class="text text-score" text-anchor="start">{{ c.score_text }}</text>
+        <text x="{{ c.text_x }}" y="{{ c.acc_y }}" class="text text-acc" text-anchor="start">{{ c.acc_text_xml }}</text>
+        <text x="{{ c.text_x }}" y="{{ c.rks_y }}" class="text text-rks" text-anchor="start">{{ c.rks_text_xml }}</text>
+      {% else %}
+        <text x="{{ c.no_data_x }}" y="{{ c.no_data_y }}" class="text text-acc" text-anchor="middle" dominant-baseline="middle">{{ c.no_data_text }}</text>
+      {% endif %}
+    </g>
+  {% endfor %}
+
+  <text x="{{ page.width - footer.pad }}" y="{{ footer.y }}" class="text-footer">{{ footer.text_xml }}</text>
+</svg>
+
