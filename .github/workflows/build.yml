@@ -2,7 +2,7 @@ name: Build
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "feat" ]
 
 jobs:
   # 任务一：构建和创建发布产物
