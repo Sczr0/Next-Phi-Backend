@@ -1,0 +1,233 @@
+{#
+  BN 模板：Neo（新粗野主义风格）
+  日期：2025-12-16
+  执行者：Codex
+
+  设计目标：
+  - 保持“硬阴影 + 粗描边 + 高对比 + 几何块”的视觉风格；
+  - 避免使用 CSS 变量（resvg 对 var() 支持不稳定），确保 SVG/PNG/WebP 路径一致可用；
+  - 兼容 theme=white/black（通过上下文 colors 推断）。
+#}
+
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="{{ page.width }}" height="{{ page.height }}"
+     viewBox="0 0 {{ page.width }} {{ page.height }}">
+
+  {% set is_white = colors.text == "#000000" %}
+  {% if is_white %}
+    {% set ink = "#0A0A0A" %}
+    {% set paper = "#FFFFFF" %}
+    {% set bg = "#F7FAFF" %}
+    {% set dot_opacity = "0.08" %}
+  {% else %}
+    {% set ink = "#FFFFFF" %}
+    {% set paper = "#141826" %}
+    {% set bg = "#0B1020" %}
+    {% set dot_opacity = "0.06" %}
+  {% endif %}
+
+  {% set accent_a = "#FF4D8D" %}
+  {% set accent_b = "#00D4FF" %}
+  {% set accent_c = "#FFD166" %}
+  {% set shadow = "#000000" %}
+
+  <defs>
+    <!-- AP 渐变（用于徽章 fill="url(#ap-gradient*)"） -->
+    <linearGradient id="ap-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFDA63" />
+      <stop offset="100%" stop-color="#D1913C" />
+    </linearGradient>
+    <linearGradient id="ap-gradient-white" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#D4A017" />
+      <stop offset="100%" stop-color="#B8860B" />
+    </linearGradient>
+
+    <style>
+      /* 字体：主字体沿用后端 fonts.main，强调“粗、硬、强对比” */
+      .font-main { font-family: '{{ fonts.main }}', 'Impact', 'Arial Black', sans-serif; font-weight: 900; }
+      .font-mono { font-family: 'Courier New', monospace; font-weight: 700; }
+
+      .text-ink { fill: {{ ink }}; }
+      .text-paper { fill: {{ paper }}; }
+      .text-muted { opacity: 0.8; }
+
+      .title { font-size: 40px; letter-spacing: -1px; }
+      .label { font-size: 12px; letter-spacing: 1px; }
+      .value { font-size: 18px; }
+
+      .card-song { font-size: 20px; }
+      .card-score { font-size: 32px; letter-spacing: -1px; }
+      .card-meta { font-size: 14px; }
+
+      .stroke-thick { stroke: {{ ink }}; stroke-width: 3px; }
+      .stroke-medium { stroke: {{ ink }}; stroke-width: 2px; }
+    </style>
+
+    <!-- 背景波点纹理（根据主题自动切换为黑/白点） -->
+    <pattern id="dot-pattern" x="0" y="0" width="20" height="20" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="2" fill="{{ ink }}" fill-opacity="{{ dot_opacity }}"/>
+    </pattern>
+  </defs>
+
+  <!-- ==================== 背景层 ==================== -->
+  {% if background.href_xml %}
+    <image href="{{ background.href_xml }}" x="0" y="0" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" />
+    <rect width="100%" height="100%" fill="{{ background.overlay_rgba }}" />
+  {% else %}
+    <rect width="100%" height="100%" fill="{{ bg }}" />
+  {% endif %}
+  <rect width="100%" height="100%" fill="url(#dot-pattern)" />
+
+  <!-- ==================== Header 区域 ==================== -->
+  <!-- 玩家名称贴纸 (左上角) -->
+  <g transform="translate(40, 40)">
+    <rect x="10" y="10" width="520" height="82" fill="{{ shadow }}" />
+    <rect x="0" y="0" width="520" height="82" fill="{{ accent_a }}" class="stroke-thick" />
+    <text x="18" y="56" class="font-main text-paper title">{{ header.player_title_xml }}</text>
+  </g>
+
+  <!-- 统计信息贴纸 (右上角) -->
+  <g transform="translate({{ page.width - 40 - 560 }}, 40)">
+    <!-- 统计贴纸 -->
+    <g transform="translate(0, 0)">
+      <rect x="10" y="10" width="560" height="82" fill="{{ shadow }}" />
+      <rect x="0" y="0" width="560" height="82" fill="{{ accent_b }}" class="stroke-thick" />
+      <text x="18" y="26" class="font-mono text-ink label">STATS</text>
+      <text x="18" y="52" class="font-main text-ink value">{{ header.ap_text_xml }}</text>
+      <text x="18" y="74" class="font-main text-ink value">{{ header.bn_text_xml }}</text>
+    </g>
+
+    <!-- 右侧行信息（Data/Challenge/Time），最多 3 行 -->
+    <g transform="translate(0, 100)">
+      <rect x="10" y="10" width="560" height="70" fill="{{ shadow }}" />
+      <rect x="0" y="0" width="560" height="70" fill="{{ accent_c }}" class="stroke-thick" />
+      <g transform="translate(18, 22)">
+        {% for line in header.right_lines %}
+          {% if loop.index0 < 3 %}
+            <text x="0" y="{{ 16 + loop.index0 * 20 }}" class="font-mono text-ink">{{ line.inner_xml }}</text>
+          {% endif %}
+        {% endfor %}
+      </g>
+    </g>
+  </g>
+
+  <!-- 分割线 (粗线条) -->
+  <line x1="40" y1="{{ layout.header_height - 10 }}" x2="{{ page.width - 40 }}" y2="{{ layout.header_height - 10 }}" class="stroke-thick" />
+
+
+  <!-- ==================== AP Cards (Best 3) ==================== -->
+  {% if ap.cards | length > 0 %}
+  <g id="ap-section" transform="translate(0, {{ ap.section_y }})">
+    {% for c in ap.cards %}
+      <g transform="translate({{ c.x }}, {{ c.y }})">
+        <!-- 1. 硬阴影 -->
+        <rect x="8" y="8" width="{{ c.w }}" height="{{ c.h }}" fill="{{ shadow }}" />
+        
+        <!-- 2. 卡片主体（AP 采用强调色） -->
+        <rect width="{{ c.w }}" height="{{ c.h }}" fill="{{ accent_c }}" class="stroke-thick" />
+        
+        <!-- 3. 曲绘（按后端给定 cover.x/y 放置，避免与文本坐标错位） -->
+        <defs>
+          <clipPath id="{{ c.clip_id }}">
+            <rect x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}" />
+          </clipPath>
+        </defs>
+        {% if c.cover.href_xml %}
+          <image href="{{ c.cover.href_xml }}" x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}"
+                 preserveAspectRatio="xMidYMid slice" clip-path="url(#{{ c.clip_id }})" />
+        {% endif %}
+        <rect x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}" fill="none" class="stroke-medium" />
+
+        <!-- 4. 信息排版 (AP) -->
+        <!-- 歌名 -->
+        <text x="{{ c.text.song_x }}" y="{{ c.text.song_y - 5 }}" class="font-main text-base card-song">{{ c.text.song_name_xml }}</text>
+        
+        <!-- 分数 (大号) -->
+        <text x="{{ c.text.score_x }}" y="{{ c.text.score_y + 5 }}" class="font-main text-base card-score">{{ c.text.score_text }}</text>
+        
+        <!-- 底部信息栏 (Acc / Level) -->
+        <line x1="{{ c.cover.w + 24 }}" y1="{{ c.h - 40 }}" x2="{{ c.w - 12 }}" y2="{{ c.h - 40 }}" class="stroke-medium" stroke-dasharray="4 2"/>
+        
+        <text x="{{ c.text.acc_x }}" y="{{ c.h - 15 }}" class="font-mono text-ink card-meta">{{ c.text.acc_text_xml }}</text>
+        <text x="{{ c.w - 15 }}" y="{{ c.h - 15 }}" class="font-mono text-ink card-meta" text-anchor="end">{{ c.text.level_text_xml }}</text>
+
+        <!-- 5. 徽章 (FC/AP & Diff) -->
+        <!-- 这里的坐标由后端计算，我们只需要画出"Box"风格的徽章 -->
+        
+        <!-- Diff Badge (实心黑框 + 彩色填充) -->
+        <g>
+            <rect x="{{ c.badge.diff.x }}" y="{{ c.badge.diff.y }}" width="{{ c.badge.diff.w }}" height="{{ c.badge.diff.h }}" 
+                  fill="{{ c.badge.diff.fill }}" stroke="black" stroke-width="2" />
+            <text x="{{ c.badge.diff.tx }}" y="{{ c.badge.diff.ty }}" text-anchor="middle" class="font-main" fill="white" font-size="12">{{ c.badge.diff.text }}</text>
+        </g>
+
+        <!-- FC/AP Badge (如果存在) -->
+        {% if c.badge.fc_ap %}
+          <g>
+            <rect x="{{ c.badge.fc_ap.x }}" y="{{ c.badge.fc_ap.y }}" width="{{ c.badge.fc_ap.w }}" height="{{ c.badge.fc_ap.h }}"
+                  fill="{{ c.badge.fc_ap.fill }}" stroke="{{ ink }}" stroke-width="2" />
+            <text x="{{ c.badge.fc_ap.tx }}" y="{{ c.badge.fc_ap.ty }}" text-anchor="middle" class="font-main" fill="{{ c.badge.fc_ap.text_fill }}" font-size="12">{{ c.badge.fc_ap.text }}</text>
+          </g>
+        {% endif %}
+      </g>
+    {% endfor %}
+  </g>
+  {% endif %}
+
+
+  <!-- ==================== Main Cards ==================== -->
+  <g id="main-cards">
+  {% for c in cards %}
+    <g transform="translate({{ c.x }}, {{ c.y }})">
+      <!-- 1. 硬阴影 -->
+      <rect x="6" y="6" width="{{ c.w }}" height="{{ c.h }}" fill="{{ shadow }}" />
+      
+      <!-- 2. 卡片主体 -->
+      <rect width="{{ c.w }}" height="{{ c.h }}" fill="{{ paper }}" class="stroke-thick" />
+      
+      <!-- 3. 曲绘（按 cover.x/y） -->
+      <defs>
+        <clipPath id="{{ c.clip_id }}">
+          <rect x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}" />
+        </clipPath>
+      </defs>
+      {% if c.cover.href_xml %}
+        <image href="{{ c.cover.href_xml }}" x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}"
+               preserveAspectRatio="xMidYMid slice" clip-path="url(#{{ c.clip_id }})" />
+      {% endif %}
+      <rect x="{{ c.cover.x }}" y="{{ c.cover.y }}" width="{{ c.cover.w }}" height="{{ c.cover.h }}" fill="none" class="stroke-medium" />
+
+      <!-- 4. 文本 -->
+      <text x="{{ c.text.song_x }}" y="{{ c.text.song_y - 5 }}" class="font-main text-ink card-song">{{ c.text.song_name_xml }}</text>
+      <text x="{{ c.text.score_x }}" y="{{ c.text.score_y + 5 }}" class="font-main text-ink card-score">{{ c.text.score_text }}</text>
+      
+      <text x="{{ c.text.acc_x }}" y="{{ c.h - 15 }}" class="font-mono text-ink card-meta text-muted">{{ c.text.acc_text_xml }}</text>
+      <text x="{{ c.w - 15 }}" y="{{ c.h - 15 }}" class="font-mono text-ink card-meta" text-anchor="end">{{ c.text.rank_text }}</text>
+
+      <!-- 5. 徽章 -->
+      <!-- Diff -->
+      <rect x="{{ c.badge.diff.x }}" y="{{ c.badge.diff.y }}" width="{{ c.badge.diff.w }}" height="{{ c.badge.diff.h }}" 
+            fill="{{ c.badge.diff.fill }}" stroke="black" stroke-width="2" />
+      <text x="{{ c.badge.diff.tx }}" y="{{ c.badge.diff.ty }}" text-anchor="middle" class="font-main" fill="white" font-size="12">{{ c.badge.diff.text }}</text>
+
+      <!-- FC/AP -->
+      {% if c.badge.fc_ap %}
+        <rect x="{{ c.badge.fc_ap.x }}" y="{{ c.badge.fc_ap.y }}" width="{{ c.badge.fc_ap.w }}" height="{{ c.badge.fc_ap.h }}"
+              fill="{{ c.badge.fc_ap.fill }}" stroke="{{ ink }}" stroke-width="2" />
+        <text x="{{ c.badge.fc_ap.tx }}" y="{{ c.badge.fc_ap.ty }}" text-anchor="middle" class="font-main" fill="{{ c.badge.fc_ap.text_fill }}" font-size="12">{{ c.badge.fc_ap.text }}</text>
+      {% endif %}
+
+    </g>
+  {% endfor %}
+  </g>
+
+  <!-- ==================== Footer ==================== -->
+  {% set footer_rect_y = page.height - layout.footer_height %}
+  <rect x="0" y="{{ footer_rect_y }}" width="100%" height="{{ layout.footer_height }}" fill="#000000" />
+  <text x="{{ layout.footer_padding }}" y="{{ footer_rect_y + 38 }}" class="font-mono" fill="#FFFFFF" font-size="16">{{ footer.generated_text_xml }}</text>
+  {% if footer.custom_text_xml %}
+    <text x="{{ page.width - layout.footer_padding }}" y="{{ footer_rect_y + 38 }}" class="font-mono" fill="{{ accent_c }}" text-anchor="end" font-size="16">{{ footer.custom_text_xml }}</text>
+  {% endif %}
+
+</svg>

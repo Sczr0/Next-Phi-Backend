@@ -2665,6 +2665,46 @@ mod tests {
     }
 
     #[test]
+    fn generate_bn_svg_renders_with_neo_template() {
+        ensure_config_inited();
+        let record = RenderRecord {
+            song_id: "TEMPLATE_TEST".to_string(),
+            song_name: "TemplateSong".to_string(),
+            difficulty: "IN".to_string(),
+            score: Some(1_000_000.0),
+            acc: 99.5,
+            rks: 12.34,
+            difficulty_value: 15.8,
+            is_fc: true,
+        };
+        let stats = PlayerStats {
+            ap_top_3_avg: None,
+            best_27_avg: Some(12.3456),
+            real_rks: Some(12.345678),
+            player_name: Some("Tester".to_string()),
+            update_time: Utc::now(),
+            n: 1,
+            ap_top_3_scores: vec![],
+            challenge_rank: None,
+            data_string: None,
+            custom_footer_text: None,
+            is_user_generated: false,
+        };
+        let svg = generate_svg_string(
+            &[record],
+            &stats,
+            None,
+            &Theme::default(),
+            false,
+            None,
+            Some("neo"),
+        )
+        .unwrap();
+        assert!(svg.contains("<svg"));
+        assert!(svg.contains("id=\"main-cards\""));
+    }
+
+    #[test]
     fn generate_song_svg_renders_with_external_template() {
         ensure_config_inited();
         let data = SongRenderData {
