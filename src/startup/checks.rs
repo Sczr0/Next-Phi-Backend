@@ -15,7 +15,29 @@ pub async fn run_startup_checks(config: &AppConfig) -> Result<(), AppError> {
     ensure_resources_folder(config)?;
 
     // 检查并克隆曲绘仓库
-    ensure_illustration_repo(config)?;
+    {
+        let illustration_path = config.illustration_path();
+        let illustration_repo = config.resources.illustration_repo.clone();
+        let join = tokio::task::spawn_blocking(move || {
+            ensure_illustration_repo_blocking(&illustration_repo, &illustration_path)
+        })
+        .await;
+        match join {
+            Ok(res) => res?,
+            Err(e) => {
+                // 保持与同步实现一致：若发生 panic，则继续向上传播 panic。
+                let e_str = e.to_string();
+                match e.try_into_panic() {
+                    Ok(panic) => std::panic::resume_unwind(panic),
+                    Err(_e) => {
+                        return Err(AppError::Internal(format!(
+                            "spawn_blocking cancelled: {e_str}"
+                        )));
+                    }
+                }
+            }
+        }
+    }
 
     // 检查字体资源（仅告警，不阻断启动）
     ensure_font_resources()?;
@@ -51,14 +73,15 @@ fn ensure_resources_folder(config: &AppConfig) -> Result<(), AppError> {
 }
 
 /// 确保曲绘仓库存在
-fn ensure_illustration_repo(config: &AppConfig) -> Result<(), AppError> {
-    let illustration_path = config.illustration_path();
-
+fn ensure_illustration_repo_blocking(
+    illustration_repo: &str,
+    illustration_path: &Path,
+) -> Result<(), AppError> {
     if illustration_path.exists() {
         tracing::info!("✅ Phigros 曲绘仓库已存在: {:?}", illustration_path);
 
         // 尝试更新仓库
-        if let Err(e) = update_repository(&illustration_path) {
+        if let Err(e) = update_repository(illustration_path) {
             tracing::warn!("⚠️ 更新曲绘仓库失败: {}", e);
             tracing::info!("💡 将继续使用现有仓库");
         } else {
@@ -66,10 +89,10 @@ fn ensure_illustration_repo(config: &AppConfig) -> Result<(), AppError> {
         }
     } else {
         tracing::info!("📦 正在克隆 Phigros 曲绘仓库...");
-        tracing::info!("📍 仓库地址: {}", config.resources.illustration_repo);
+        tracing::info!("📍 仓库地址: {}", illustration_repo);
         tracing::info!("📂 目标路径: {:?}", illustration_path);
 
-        clone_repository(&config.resources.illustration_repo, &illustration_path)?;
+        clone_repository(illustration_repo, illustration_path)?;
 
         tracing::info!("✅ Phigros 曲绘仓库克隆成功");
     }

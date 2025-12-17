@@ -33,9 +33,31 @@ pub struct SongCatalog {
     pub by_name: HashMap<String, Vec<Arc<SongInfo>>>,
     /// 通过别名索引（可能重名，值为 Vec）
     pub by_nickname: HashMap<String, Vec<Arc<SongInfo>>>,
+    search_cache_name_lower: Vec<(Arc<SongInfo>, String)>,
+    search_cache_nick_lower: Vec<(String, String, Vec<Arc<SongInfo>>)>,
 }
 
 impl SongCatalog {
+    /// 重建搜索缓存（在加载/更新索引后调用）。
+    pub fn rebuild_search_cache(&mut self) {
+        self.search_cache_name_lower.clear();
+        self.search_cache_name_lower.reserve(self.by_id.len());
+        for item in self.by_id.values() {
+            self.search_cache_name_lower
+                .push((Arc::clone(item), item.name.to_lowercase()));
+        }
+
+        self.search_cache_nick_lower.clear();
+        self.search_cache_nick_lower.reserve(self.by_nickname.len());
+        for (nick, list) in &self.by_nickname {
+            self.search_cache_nick_lower.push((
+                nick.clone(),
+                nick.to_lowercase(),
+                list.iter().map(Arc::clone).collect(),
+            ));
+        }
+    }
+
     /// 通用查询：按 ID -> 官方名 -> 别名 的顺序查找。
     /// 当 ID 精确命中时，直接返回唯一结果；否则按以下优先级合并并去重：
     /// 1) 官方名：等于(忽略大小写) -> 前缀包含 -> 子串包含
@@ -53,11 +75,7 @@ impl SongCatalog {
 
         // 1.1) 再尝试按 ID 不区分大小写精确命中
         let q_lower = q.to_lowercase();
-        if let Some((_id, info)) = self
-            .by_id
-            .iter()
-            .find(|(id, _)| id.to_lowercase() == q_lower)
-        {
+        if let Some((_id, info)) = self.by_id.iter().find(|(id, _)| id.eq_ignore_ascii_case(q)) {
             return vec![Arc::clone(info)];
         }
 
@@ -66,42 +84,34 @@ impl SongCatalog {
         let mut seen: HashSet<&str> = HashSet::new(); // 基于 id 去重
 
         // 预计算每首歌的 name_lower，避免在多轮遍历中反复 `to_lowercase()` 分配。
-        let mut items_with_lower: Vec<(&Arc<SongInfo>, String)> =
-            Vec::with_capacity(self.by_id.len());
-        for item in self.by_id.values() {
-            items_with_lower.push((item, item.name.to_lowercase()));
-        }
+        // 使用预计算缓存，避免每次搜索都重复分配 `to_lowercase()`。
 
         // 官方名：等于（忽略大小写）
-        for (item, _name_lower) in items_with_lower.iter() {
+        for (item, _name_lower) in self.search_cache_name_lower.iter() {
             if item.name.eq_ignore_ascii_case(q) && seen.insert(item.id.as_str()) {
                 result.push(Arc::clone(item));
             }
         }
         // 官方名：前缀包含（忽略大小写）
-        for (item, name_lower) in items_with_lower.iter() {
+        for (item, name_lower) in self.search_cache_name_lower.iter() {
             if name_lower.starts_with(q_lower.as_str()) && seen.insert(item.id.as_str()) {
                 result.push(Arc::clone(item));
             }
         }
         // 官方名：子串包含（忽略大小写）
-        for (item, name_lower) in items_with_lower.iter() {
+        for (item, name_lower) in self.search_cache_name_lower.iter() {
             if name_lower.contains(q_lower.as_str()) && seen.insert(item.id.as_str()) {
                 result.push(Arc::clone(item));
             }
         }
 
         // 3) 按别名索引：预计算 nick_lower，避免反复分配。
-        let mut nicks_with_lower: Vec<(&str, String, &Vec<Arc<SongInfo>>)> =
-            Vec::with_capacity(self.by_nickname.len());
-        for (nick, list) in &self.by_nickname {
-            nicks_with_lower.push((nick.as_str(), nick.to_lowercase(), list));
-        }
+        // 别名使用预计算缓存，避免每次搜索都重复分配 `to_lowercase()`。
 
         // 按别名索引：等于（忽略大小写）
-        for (nick, _nick_lower, list) in nicks_with_lower.iter() {
+        for (nick, _nick_lower, list) in self.search_cache_nick_lower.iter() {
             if nick.eq_ignore_ascii_case(q) {
-                for item in (*list).iter() {
+                for item in list.iter() {
                     if seen.insert(item.id.as_str()) {
                         result.push(Arc::clone(item));
                     }
@@ -109,9 +119,9 @@ impl SongCatalog {
             }
         }
         // 别名：前缀包含（忽略大小写）
-        for (_nick, nick_lower, list) in nicks_with_lower.iter() {
+        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
             if nick_lower.starts_with(q_lower.as_str()) {
-                for item in (*list).iter() {
+                for item in list.iter() {
                     if seen.insert(item.id.as_str()) {
                         result.push(Arc::clone(item));
                     }
@@ -119,9 +129,9 @@ impl SongCatalog {
             }
         }
         // 别名：子串包含（忽略大小写）
-        for (_nick, nick_lower, list) in nicks_with_lower.iter() {
+        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
             if nick_lower.contains(q_lower.as_str()) {
-                for item in (*list).iter() {
+                for item in list.iter() {
                     if seen.insert(item.id.as_str()) {
                         result.push(Arc::clone(item));
                     }

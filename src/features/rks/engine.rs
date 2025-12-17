@@ -308,6 +308,7 @@ fn difficulty_key_from_str(difficulty_str: &str) -> Option<u8> {
     None
 }
 
+#[derive(Clone)]
 struct TopKSum {
     k: usize,
     values: Vec<f64>,
@@ -368,6 +369,7 @@ impl TopKSum {
     }
 }
 
+#[cfg(test)]
 fn simulate_rks_increase_simplified_parsed(
     target_song_id: &str,
     target_difficulty_key: Option<u8>,
@@ -439,14 +441,37 @@ pub fn calculate_target_chart_push_acc(
     };
     let difficulty_key = difficulty_key_from_str(difficulty_str);
 
+    // 性能优化：二分迭代会重复进行“模拟后 RKS”计算。
+    // 原实现每次模拟都会遍历整份 records 计算 Best27/AP3（O(N)），在最多 50 次迭代下会放大为 O(50N)。
+    // 这里先计算“排除目标谱面后的 Best27/AP3 基底”，迭代时只需 clone 小型 TopKSum 并插入模拟值（O(K)）。
+    // 该优化不改变任何计算逻辑与结果（等价变换）。
+    let mut best27_base = TopKSum::new(27);
+    let mut ap3_base = TopKSum::new(3);
+    for rec in all_sorted_records {
+        let is_target = rec.song_id == song_id
+            && difficulty_key.is_some_and(|k| key_of_difficulty(&rec.difficulty) == k);
+        if is_target {
+            continue;
+        }
+        best27_base.push(rec.rks);
+        if rec.acc >= 100.0 {
+            ap3_base.push(rec.rks);
+        }
+    }
+
+    let simulate_from_base = |test_acc: f64| -> f64 {
+        let simulated_chart_rks = calculate_chart_rks(test_acc, target_chart_constant);
+        let mut best27 = best27_base.clone();
+        best27.push(simulated_chart_rks);
+        let mut ap3 = ap3_base.clone();
+        if test_acc >= 100.0 {
+            ap3.push(simulated_chart_rks);
+        }
+        (best27.sum() + ap3.sum()) / 30.0
+    };
+
     // 边界检查：100% 时是否能达到目标
-    let rks_at_100 = simulate_rks_increase_simplified_parsed(
-        song_id,
-        difficulty_key,
-        target_chart_constant,
-        100.0,
-        all_sorted_records,
-    );
+    let rks_at_100 = simulate_from_base(100.0);
 
     if rks_at_100 < target_rks_threshold {
         tracing::debug!("无法推分，ACC 100% 仍无法达到目标");
@@ -473,13 +498,7 @@ pub fn calculate_target_chart_push_acc(
     while (high - low) > ACC_PRECISION && iteration < MAX_ITERATIONS {
         iteration += 1;
         let mid = low + (high - low) / 2.0;
-        let simulated_rks = simulate_rks_increase_simplified_parsed(
-            song_id,
-            difficulty_key,
-            target_chart_constant,
-            mid,
-            all_sorted_records,
-        );
+        let simulated_rks = simulate_from_base(mid);
 
         if simulated_rks >= target_rks_threshold {
             high = mid; // mid 满足条件，尝试更低的 acc

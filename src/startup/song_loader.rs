@@ -143,5 +143,8 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
         }
     }
 
+    // 构建搜索缓存，避免运行期每次搜索重复分配与遍历预处理。
+    catalog.rebuild_search_cache();
+
     Ok(catalog)
 }

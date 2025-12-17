@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
-use sqlx::{ConnectOptions, Row, SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{ConnectOptions, QueryBuilder, Row, SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::error::AppError;
 
@@ -135,29 +135,46 @@ impl StatsStorage {
     }
 
     pub async fn insert_events(&self, events: &[EventInsert]) -> Result<(), AppError> {
+        if events.is_empty() {
+            return Ok(());
+        }
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| AppError::Internal(format!("begin tx: {e}")))?;
-        for e in events {
-            let extra = e
-                .extra_json
-                .as_ref()
-                .map(|v| serde_json::to_string(v).unwrap_or_default());
-            sqlx::query("INSERT INTO events(ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-                .bind(e.ts_utc.to_rfc3339())
-                .bind(&e.route)
-                .bind(&e.feature)
-                .bind(&e.action)
-                .bind(&e.method)
-                .bind(e.status.map(|v| v as i64))
-                .bind(e.duration_ms)
-                .bind(&e.user_hash)
-                .bind(&e.client_ip_hash)
-                .bind(&e.instance)
-                .bind(extra)
-                .execute(&mut *tx).await.map_err(|er| AppError::Internal(format!("insert event: {er}")))?;
+
+        // SQLite 默认 `SQLITE_MAX_VARIABLE_NUMBER=999`，这里每行 11 列绑定参数，保守按 90 行/批次拆分。
+        // 性能优化：从“逐条 INSERT”改为“单语句多行 INSERT”，降低 SQL 解析与往返开销，不改变写入语义。
+        const COLS: usize = 11;
+        const SQLITE_MAX_VARS: usize = 999;
+        const MAX_ROWS_PER_INSERT: usize = SQLITE_MAX_VARS / COLS; // 90
+
+        for chunk in events.chunks(MAX_ROWS_PER_INSERT) {
+            let mut qb = QueryBuilder::new(
+                "INSERT INTO events(ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json) ",
+            );
+            qb.push_values(chunk, |mut b, e| {
+                let extra = e
+                    .extra_json
+                    .as_ref()
+                    .map(|v| serde_json::to_string(v).unwrap_or_default());
+                b.push_bind(e.ts_utc.to_rfc3339())
+                    .push_bind(&e.route)
+                    .push_bind(&e.feature)
+                    .push_bind(&e.action)
+                    .push_bind(&e.method)
+                    .push_bind(e.status.map(|v| v as i64))
+                    .push_bind(e.duration_ms)
+                    .push_bind(&e.user_hash)
+                    .push_bind(&e.client_ip_hash)
+                    .push_bind(&e.instance)
+                    .push_bind(extra);
+            });
+            qb.build()
+                .execute(&mut *tx)
+                .await
+                .map_err(|e| AppError::Internal(format!("insert event: {e}")))?;
         }
         tx.commit()
             .await
