@@ -31,6 +31,67 @@ use utoipa::OpenApi;
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
+fn compression_predicate() -> impl tower_http::compression::predicate::Predicate {
+    use tower_http::compression::predicate::{NotForContentType, Predicate, SizeAbove};
+
+    // 压缩策略：从“全局默认”改为“明确排除不该压缩的响应”。
+    //
+    // 主要考虑：
+    // - SSE/流式响应：压缩可能引入缓冲，影响实时性。
+    // - 图片/音视频等：本身已压缩或收益极低，反而浪费 CPU。
+    // - application/octet-stream/zip/gzip 等：常见二进制下载类型，压缩收益不确定且有额外 CPU 开销。
+    //
+    // 仍保留默认的最小大小阈值（默认 32B），避免“压缩开销覆盖收益”。
+    SizeAbove::default()
+        .and(NotForContentType::GRPC)
+        .and(NotForContentType::IMAGES)
+        .and(NotForContentType::SSE)
+        .and(NotForContentType::const_new("application/octet-stream"))
+        .and(NotForContentType::const_new("application/zip"))
+        .and(NotForContentType::const_new("application/gzip"))
+        .and(NotForContentType::const_new("application/x-gzip"))
+        .and(NotForContentType::const_new("application/x-7z-compressed"))
+        .and(NotForContentType::const_new("application/vnd.rar"))
+        .and(NotForContentType::const_new("video/"))
+        .and(NotForContentType::const_new("audio/"))
+}
+
+#[cfg(test)]
+mod compression_predicate_tests {
+    use super::compression_predicate;
+    use axum::body::Body;
+    use axum::http::{Response as HttpResponse, header};
+    use tower_http::compression::predicate::Predicate;
+
+    fn should_compress_for(ct: &str) -> bool {
+        // 命中 SizeAbove（默认 32B），避免因为 body 太小导致测试不稳定。
+        let body_bytes = vec![b'x'; 2048];
+        let resp = HttpResponse::builder()
+            .header(header::CONTENT_TYPE, ct)
+            .body(Body::from(body_bytes))
+            .unwrap();
+        compression_predicate().should_compress(&resp)
+    }
+
+    #[test]
+    fn compression_predicate_disables_sse() {
+        assert!(!should_compress_for("text/event-stream"));
+    }
+
+    #[test]
+    fn compression_predicate_disables_images_but_allows_svg() {
+        assert!(!should_compress_for("image/png"));
+        assert!(should_compress_for("image/svg+xml"));
+    }
+
+    #[test]
+    fn compression_predicate_disables_common_binary_downloads() {
+        assert!(!should_compress_for("application/octet-stream"));
+        assert!(!should_compress_for("application/zip"));
+        assert!(!should_compress_for("application/gzip"));
+    }
+}
+
 #[derive(OpenApi)]
 #[openapi(
     paths(
@@ -333,7 +394,12 @@ async fn main() {
     }
 
     // 应用内响应压缩：对 SVG/JSON/文本等内容启用 gzip/brotli，降低带宽占用（默认不会压缩 png/jpg/webp 等图片）。
-    app = app.layer(CompressionLayer::new());
+    // 压缩策略：从“全局默认”改为“明确排除不该压缩的响应”。
+    //
+    // - SSE/流式响应：压缩容易引入缓冲，影响实时性
+    // - 图片/音视频等：本身已压缩或压缩收益极低，反而浪费 CPU
+    // - application/octet-stream/zip/gzip：通常是二进制下载，压缩收益不确定且可能造成额外 CPU
+    app = app.layer(CompressionLayer::new().compress_when(compression_predicate()));
 
     // 启动看门狗任务
     if let Err(e) = watchdog.start_watchdog_task().await {
