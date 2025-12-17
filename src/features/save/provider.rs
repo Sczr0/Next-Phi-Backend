@@ -188,17 +188,89 @@ async fn download_encrypted_save(url: &str) -> Result<Bytes, SaveProviderError> 
 }
 
 fn try_decompress(bytes: Bytes) -> Result<Bytes, SaveProviderError> {
-    if bytes.len() >= 2 && bytes[0] == 0x1F && bytes[1] == 0x8B {
-        let mut gz = GzDecoder::new(bytes.as_ref());
-        let mut out = Vec::new();
-        gz.read_to_end(&mut out)?;
-        return Ok(Bytes::from(out));
+    // 快速识别：ZIP（PK..）/GZIP（1F 8B），避免不必要的解压尝试。
+    // 决策：保留“回退机制”。即：识别失败或解压失败时，不报错，直接按 Raw Bytes 处理（保持现有行为）。
+
+    let raw = bytes.as_ref();
+
+    // ZIP 魔数：PK\x03\x04 / PK\x05\x06 / PK\x07\x08
+    if raw.len() >= 4
+        && raw[0] == b'P'
+        && raw[1] == b'K'
+        && matches!((raw[2], raw[3]), (3, 4) | (5, 6) | (7, 8))
+    {
+        return Ok(bytes);
     }
 
-    let mut z = ZlibDecoder::new(bytes.as_ref());
+    // GZIP 魔数：1F 8B
+    if raw.len() >= 2 && raw[0] == 0x1F && raw[1] == 0x8B {
+        let mut gz = GzDecoder::new(raw);
+        let mut out = Vec::new();
+        if gz.read_to_end(&mut out).is_ok() {
+            return Ok(Bytes::from(out));
+        }
+        return Ok(bytes);
+    }
+
+    // 其他：尝试 Zlib，失败则回退 Raw Bytes。
+    let mut z = ZlibDecoder::new(raw);
     let mut out = Vec::new();
     match z.read_to_end(&mut out) {
         Ok(_) => Ok(Bytes::from(out)),
         Err(_) => Ok(bytes),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::Compression;
+    use flate2::write::{GzEncoder, ZlibEncoder};
+    use std::io::Write;
+
+    #[test]
+    fn try_decompress_zip_magic_returns_raw() {
+        let raw = Bytes::from_static(b"PK\x03\x04this-is-zip");
+        let out = try_decompress(raw.clone()).unwrap();
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn try_decompress_gzip_success_returns_decompressed() {
+        let payload = b"hello-gzip";
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(payload).unwrap();
+        let gz = Bytes::from(enc.finish().unwrap());
+        assert_ne!(gz.as_ref(), payload);
+
+        let out = try_decompress(gz).unwrap();
+        assert_eq!(out.as_ref(), payload);
+    }
+
+    #[test]
+    fn try_decompress_gzip_failure_falls_back_to_raw() {
+        // 伪造 gzip 魔数但内容非法，必须回退为原 bytes（不报错）。
+        let raw = Bytes::from_static(b"\x1f\x8b\x00\x00\x00\x00\x00");
+        let out = try_decompress(raw.clone()).unwrap();
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn try_decompress_zlib_success_returns_decompressed() {
+        let payload = b"hello-zlib";
+        let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(payload).unwrap();
+        let z = Bytes::from(enc.finish().unwrap());
+        assert_ne!(z.as_ref(), payload);
+
+        let out = try_decompress(z).unwrap();
+        assert_eq!(out.as_ref(), payload);
+    }
+
+    #[test]
+    fn try_decompress_unknown_header_falls_back_to_raw() {
+        let raw = Bytes::from_static(b"not-gzip-not-zip-not-zlib");
+        let out = try_decompress(raw.clone()).unwrap();
+        assert_eq!(out, raw);
     }
 }
