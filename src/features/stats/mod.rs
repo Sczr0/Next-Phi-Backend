@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, watch};
 use crate::{config::AppConfig, error::AppError};
 use hmac::{Hmac, Mac};
 use models::EventInsert;
+use once_cell::sync::OnceCell;
 use sha2::Sha256;
 use storage::StatsStorage;
 
@@ -95,7 +96,11 @@ impl StatsHandle {
 }
 
 fn hostname() -> String {
-    gethostname::gethostname().to_string_lossy().to_string()
+    // hostname 在进程生命周期内稳定，缓存以减少重复系统调用与分配。
+    static HOSTNAME: OnceCell<String> = OnceCell::new();
+    HOSTNAME
+        .get_or_init(|| gethostname::gethostname().to_string_lossy().to_string())
+        .clone()
 }
 
 /// 初始化统计���务：创建 SQLite、spawn 批量写入与每日归档任务

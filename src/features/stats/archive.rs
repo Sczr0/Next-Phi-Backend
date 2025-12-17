@@ -132,7 +132,7 @@ pub async fn archive_one_day(
         append_opt_string(&mut extra_b, r.try_get("extra_json").ok());
     }
 
-    let schema = Schema::new(vec![
+    let schema = std::sync::Arc::new(Schema::new(vec![
         Field::new(
             "ts_utc",
             DataType::Timestamp(arrow_schema::TimeUnit::Millisecond, None),
@@ -148,10 +148,10 @@ pub async fn archive_one_day(
         Field::new("client_ip_hash", DataType::Utf8, true),
         Field::new("instance", DataType::Utf8, true),
         Field::new("extra_json", DataType::Utf8, true),
-    ]);
+    ]));
 
     let batch = RecordBatch::try_new(
-        std::sync::Arc::new(schema.clone()),
+        schema.clone(),
         vec![
             std::sync::Arc::new(tsb.finish()) as ArrayRef,
             std::sync::Arc::new(route_b.finish()),
@@ -172,31 +172,48 @@ pub async fn archive_one_day(
     let out_dir = partition_dir(&arcfg.dir, day);
     tokio::fs::create_dir_all(&out_dir).await.ok();
     let file = unique_file_in(&out_dir);
-    let f = std::fs::File::create(&file)
-        .map_err(|e| AppError::Internal(format!("create parquet: {e}")))?;
 
-    // 压缩设置
-    let compression = match arcfg.compress.to_ascii_lowercase().as_str() {
-        "snappy" => Compression::SNAPPY,
-        "zstd" => Compression::ZSTD(ZstdLevel::default()),
-        _ => Compression::UNCOMPRESSED,
-    };
-    let props = WriterProperties::builder()
-        .set_compression(compression)
-        .build();
-    let mut writer = ArrowWriter::try_new(f, std::sync::Arc::new(schema), Some(props))
-        .map_err(|e| AppError::Internal(format!("arrow writer: {e}")))?;
-    writer
-        .write(&batch)
-        .map_err(|e| AppError::Internal(format!("write batch: {e}")))?;
-    writer
-        .close()
-        .map_err(|e| AppError::Internal(format!("close parquet: {e}")))?;
-    tracing::info!(
-        "统计归档完成: {} (rows={})",
-        file.display(),
-        batch.num_rows()
-    );
+    // 文件创建与 Parquet 写入属于同步 IO/CPU 密集任务，避免阻塞 Tokio worker：offload 到 blocking 线程池。
+    let file_path = file.clone();
+    let rows = batch.num_rows();
+    let compress = arcfg.compress.clone();
+    let join = tokio::task::spawn_blocking(move || -> Result<(), AppError> {
+        let f = std::fs::File::create(&file_path)
+            .map_err(|e| AppError::Internal(format!("create parquet: {e}")))?;
+
+        // 压缩设置
+        let compression = match compress.to_ascii_lowercase().as_str() {
+            "snappy" => Compression::SNAPPY,
+            "zstd" => Compression::ZSTD(ZstdLevel::default()),
+            _ => Compression::UNCOMPRESSED,
+        };
+        let props = WriterProperties::builder()
+            .set_compression(compression)
+            .build();
+        let mut writer = ArrowWriter::try_new(f, schema, Some(props))
+            .map_err(|e| AppError::Internal(format!("arrow writer: {e}")))?;
+        writer
+            .write(&batch)
+            .map_err(|e| AppError::Internal(format!("write batch: {e}")))?;
+        writer
+            .close()
+            .map_err(|e| AppError::Internal(format!("close parquet: {e}")))?;
+        Ok(())
+    })
+    .await;
+    match join {
+        Ok(r) => r?,
+        Err(e) => {
+            let e_str = e.to_string();
+            if let Ok(panic) = e.try_into_panic() {
+                std::panic::resume_unwind(panic);
+            }
+            return Err(AppError::Internal(format!(
+                "spawn_blocking cancelled: {e_str}"
+            )));
+        }
+    }
+    tracing::info!("统计归档完成: {} (rows={})", file.display(), rows);
     Ok(())
 }
 

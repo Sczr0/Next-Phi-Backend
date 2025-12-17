@@ -19,6 +19,9 @@ pub mod shutdown;
 /// systemd 看门狗模块
 pub mod watchdog;
 
+/// HTTP Client 复用工具
+pub mod http;
+
 // 导出常用类型供外部使用
 pub use config::AppConfig;
 pub use error::AppError;

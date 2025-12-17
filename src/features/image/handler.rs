@@ -1154,7 +1154,8 @@ async fn fetch_nickname(session_token: &str) -> Option<String> {
     const LC_ID: &str = "rAK3FfdieFob2Nn8Am";
     const LC_KEY: &str = "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0";
     let url = "https://rak3ffdi.cloud.tds1.tapapis.cn/1.1/users/me";
-    let client = reqwest::Client::new();
+    // 复用全局连接池，避免每次请求创建 Client。
+    let client = crate::http::client_default().ok()?;
     let resp = client
         .get(url)
         .header("X-LC-Id", LC_ID)

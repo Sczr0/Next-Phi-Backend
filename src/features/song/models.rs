@@ -65,32 +65,43 @@ impl SongCatalog {
         let mut result: Vec<Arc<SongInfo>> = Vec::new();
         let mut seen: HashSet<&str> = HashSet::new(); // 基于 id 去重
 
-        // 官方名：等于（忽略大小写）
+        // 预计算每首歌的 name_lower，避免在多轮遍历中反复 `to_lowercase()` 分配。
+        let mut items_with_lower: Vec<(&Arc<SongInfo>, String)> =
+            Vec::with_capacity(self.by_id.len());
         for item in self.by_id.values() {
+            items_with_lower.push((item, item.name.to_lowercase()));
+        }
+
+        // 官方名：等于（忽略大小写）
+        for (item, _name_lower) in items_with_lower.iter() {
             if item.name.eq_ignore_ascii_case(q) && seen.insert(item.id.as_str()) {
                 result.push(Arc::clone(item));
             }
         }
         // 官方名：前缀包含（忽略大小写）
-        for item in self.by_id.values() {
-            if item.name.to_lowercase().starts_with(q_lower.as_str())
-                && seen.insert(item.id.as_str())
-            {
+        for (item, name_lower) in items_with_lower.iter() {
+            if name_lower.starts_with(q_lower.as_str()) && seen.insert(item.id.as_str()) {
                 result.push(Arc::clone(item));
             }
         }
         // 官方名：子串包含（忽略大小写）
-        for item in self.by_id.values() {
-            if item.name.to_lowercase().contains(q_lower.as_str()) && seen.insert(item.id.as_str())
-            {
+        for (item, name_lower) in items_with_lower.iter() {
+            if name_lower.contains(q_lower.as_str()) && seen.insert(item.id.as_str()) {
                 result.push(Arc::clone(item));
             }
         }
 
-        // 3) 按别名索引：等于（忽略大小写）
+        // 3) 按别名索引：预计算 nick_lower，避免反复分配。
+        let mut nicks_with_lower: Vec<(&str, String, &Vec<Arc<SongInfo>>)> =
+            Vec::with_capacity(self.by_nickname.len());
         for (nick, list) in &self.by_nickname {
+            nicks_with_lower.push((nick.as_str(), nick.to_lowercase(), list));
+        }
+
+        // 按别名索引：等于（忽略大小写）
+        for (nick, _nick_lower, list) in nicks_with_lower.iter() {
             if nick.eq_ignore_ascii_case(q) {
-                for item in list {
+                for item in (*list).iter() {
                     if seen.insert(item.id.as_str()) {
                         result.push(Arc::clone(item));
                     }
@@ -98,9 +109,9 @@ impl SongCatalog {
             }
         }
         // 别名：前缀包含（忽略大小写）
-        for (nick, list) in &self.by_nickname {
-            if nick.to_lowercase().starts_with(q_lower.as_str()) {
-                for item in list {
+        for (_nick, nick_lower, list) in nicks_with_lower.iter() {
+            if nick_lower.starts_with(q_lower.as_str()) {
+                for item in (*list).iter() {
                     if seen.insert(item.id.as_str()) {
                         result.push(Arc::clone(item));
                     }
@@ -108,9 +119,9 @@ impl SongCatalog {
             }
         }
         // 别名：子串包含（忽略大小写）
-        for (nick, list) in &self.by_nickname {
-            if nick.to_lowercase().contains(q_lower.as_str()) {
-                for item in list {
+        for (_nick, nick_lower, list) in nicks_with_lower.iter() {
+            if nick_lower.contains(q_lower.as_str()) {
+                for item in (*list).iter() {
                     if seen.insert(item.id.as_str()) {
                         result.push(Arc::clone(item));
                     }

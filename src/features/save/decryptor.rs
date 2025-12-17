@@ -74,17 +74,17 @@ pub fn decrypt_zip_entry(
 
     match &meta.cipher {
         CipherSuite::Aes256CbcPkcs7 { iv } => {
-            let key_bytes = match &meta.kdf {
-                KdfSpec::None => DEFAULT_KEY.to_vec(),
-                KdfSpec::Pbkdf2Sha1 { .. } => derive_key(&meta.kdf, 32)?,
-            };
-            let mut key_arr = [0u8; 32];
-            key_arr.copy_from_slice(&key_bytes);
+            // KdfSpec::None 时直接复用默认 key，避免一次 Vec 分配。
+            let mut key_arr = DEFAULT_KEY;
+            if matches!(&meta.kdf, KdfSpec::Pbkdf2Sha1 { .. }) {
+                let key_bytes = derive_key(&meta.kdf, 32)?;
+                key_arr.copy_from_slice(&key_bytes);
+            }
             let ciphertext = &encrypted_data[1..];
             let mut out = Vec::with_capacity(1 + ciphertext.len());
             out.push(prefix);
-            let rest = decrypt_aes256_cbc(ciphertext, &key_arr, iv)?;
-            out.extend_from_slice(&rest);
+            let mut rest = decrypt_aes256_cbc(ciphertext, &key_arr, iv)?;
+            out.append(&mut rest);
             Ok(out)
         }
         CipherSuite::Aes128Gcm { nonce, tag_len } => {
@@ -101,7 +101,8 @@ pub fn decrypt_zip_entry(
             let tag = &encrypted_data[ct_end..];
             let aead = Aes128Gcm::new_from_slice(&DEFAULT_KEY[..16])
                 .map_err(|e| SaveProviderError::Decrypt(format!("GCM 初始化失败: {e}")))?;
-            let mut buf = ct.to_vec();
+            let mut buf = Vec::with_capacity(ct.len() + tag.len());
+            buf.extend_from_slice(ct);
             buf.extend_from_slice(tag);
             #[allow(deprecated)]
             let nonce_array = aes_gcm::Nonce::from_exact_iter(nonce.iter().copied())
@@ -138,7 +139,10 @@ fn decrypt_aes256_cbc(
     let decrypted = dec
         .decrypt_padded_mut::<Pkcs7>(&mut buffer)
         .map_err(|e| SaveProviderError::Decrypt(format!("AES 解密失败: {e:?}")))?;
-    Ok(decrypted.to_vec())
+    // `decrypted` 指向 `buffer` 的前缀区域，截断即可复用内存，避免一次额外拷贝。
+    let decrypted_len = decrypted.len();
+    buffer.truncate(decrypted_len);
+    Ok(buffer)
 }
 
 pub fn verify_integrity(

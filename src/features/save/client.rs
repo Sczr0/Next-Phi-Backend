@@ -113,9 +113,7 @@ pub async fn fetch_from_official(
     config: &crate::config::TapTapMultiConfig,
     version: Option<&str>,
 ) -> Result<(String, DecryptionMeta, Option<String>, Option<String>), SaveProviderError> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
+    let client = crate::http::client_timeout_30s()?;
 
     // 根据版本选择配置
     let tap_config = match version {
@@ -303,9 +301,7 @@ pub async fn fetch_from_external(
         api_token: credentials.api_token.clone(),
     };
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
-        .build()?;
+    let client = crate::http::client_timeout_30s()?;
 
     let response = client
         .post("https://phib19.top:8080/get/cloud/saves")
