@@ -38,7 +38,7 @@ pub async fn stats_middleware(
             .stats
             .user_hash_salt
             .as_deref()
-            .map(|salt| hmac_hex16(salt, &ip))
+            .map(|salt| hmac_hex16(salt, ip))
     });
     // 透传
     let res = next.run(req).await;
@@ -76,11 +76,11 @@ fn hmac_hex16(salt: &str, value: &str) -> String {
     hex::encode(&bytes[..16])
 }
 
-fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
+fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> Option<&str> {
     if let Some(ip) = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
+        .and_then(|v| v.split(',').next().map(|s| s.trim()))
         && !ip.is_empty()
     {
         return Some(ip);
@@ -88,8 +88,50 @@ fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> Option<String> {
     if let Some(v) = headers.get("x-real-ip").and_then(|v| v.to_str().ok()) {
         let s = v.trim();
         if !s.is_empty() {
-            return Some(s.to_string());
+            return Some(s);
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::client_ip_from_headers;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn client_ip_prefers_x_forwarded_for_first_item() {
+        let mut h = HeaderMap::new();
+        h.insert(
+            "x-forwarded-for",
+            HeaderValue::from_static(" 1.2.3.4 , 5.6.7.8 "),
+        );
+        h.insert("x-real-ip", HeaderValue::from_static("9.9.9.9"));
+        assert_eq!(client_ip_from_headers(&h), Some("1.2.3.4"));
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_x_real_ip() {
+        let mut h = HeaderMap::new();
+        h.insert("x-real-ip", HeaderValue::from_static(" 9.9.9.9 "));
+        assert_eq!(client_ip_from_headers(&h), Some("9.9.9.9"));
+    }
+
+    #[test]
+    fn client_ip_returns_none_for_missing_or_empty() {
+        let h = HeaderMap::new();
+        assert_eq!(client_ip_from_headers(&h), None);
+
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", HeaderValue::from_static("   "));
+        assert_eq!(client_ip_from_headers(&h), None);
+    }
+
+    #[test]
+    fn client_ip_returns_none_for_non_utf8_header() {
+        let mut h = HeaderMap::new();
+        let v = HeaderValue::from_bytes(&[0xff, 0xfe, 0xfd]).unwrap();
+        h.insert("x-forwarded-for", v);
+        assert_eq!(client_ip_from_headers(&h), None);
+    }
 }

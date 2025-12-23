@@ -317,7 +317,23 @@ pub async fn render_bn(
     let save_ms = t_save.elapsed().as_millis() as i64;
 
     // 扁平化为渲染记录 + 排序与推分预计算耗时
-    let t_flatten = Instant::now();
+    let n = req.n.max(1);
+    let (
+        top,
+        push_acc_map,
+        exact_rks,
+        ap_top_3_avg,
+        best_27_avg,
+        ap_top_3_scores,
+        challenge_rank,
+        data_string,
+        update_time,
+        flatten_ms,
+    ) = {
+        // 逻辑阶段（扁平化/排序/推分/统计）属于 CPU 密集 + 大量分配，避免阻塞 Tokio worker。
+        let state = state.clone();
+        let join = tokio::task::spawn_blocking(move || {
+            let t_flatten = Instant::now();
     let mut all: Vec<RenderRecord> = Vec::new();
     for (song_id, diffs) in parsed.game_record.iter() {
         // 查定数与曲名
@@ -370,7 +386,6 @@ pub async fn render_bn(
     });
     let sort_duration = t_sort_start.elapsed();
 
-    let n = req.n.max(1);
     let top: Vec<RenderRecord> = all.iter().take(n as usize).cloned().collect();
     tracing::info!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
 
@@ -489,6 +504,41 @@ pub async fn render_bn(
     let time_parse_duration = t_time_start.elapsed();
     tracing::info!(target: "bestn_performance", "更新时间解析完成, 耗时: {:?}ms", time_parse_duration.as_millis());
 
+            let ap_top_3_scores: Vec<RenderRecord> = all
+                .iter()
+                .filter(|r| r.acc >= 100.0)
+                .take(3)
+                .cloned()
+                .collect();
+
+            (
+                top,
+                push_acc_map,
+                exact_rks,
+                ap_top_3_avg,
+                best_27_avg,
+                ap_top_3_scores,
+                challenge_rank,
+                data_string,
+                update_time,
+                flatten_ms,
+            )
+        })
+        .await;
+        match join {
+            Ok(v) => v,
+            Err(e) => {
+                let e_str = e.to_string();
+                if let Ok(panic) = e.try_into_panic() {
+                    std::panic::resume_unwind(panic);
+                }
+                return Err(AppError::Internal(format!(
+                    "spawn_blocking cancelled: {e_str}"
+                )));
+            }
+        }
+    };
+
     let t_nickname_start = Instant::now();
     // 优先级：请求体昵称 > users/me 昵称 > 默认
     let mut nickname_ms: i64 = 0;
@@ -514,12 +564,7 @@ pub async fn render_bn(
         player_name: Some(display_name),
         update_time,
         n,
-        ap_top_3_scores: all
-            .iter()
-            .filter(|r| r.acc >= 100.0)
-            .take(3)
-            .cloned()
-            .collect(),
+        ap_top_3_scores,
         challenge_rank,
         data_string,
         custom_footer_text: Some(AppConfig::global().branding.footer_text.clone()),
@@ -1251,8 +1296,8 @@ pub async fn render_bn_user(
             .partial_cmp(&a.rks)
             .unwrap_or(core::cmp::Ordering::Equal)
     });
-    let n = records.len().max(1);
-    let top: Vec<RenderRecord> = records.iter().take(n).cloned().collect();
+    let records_len = records.len();
+    let n = records_len.max(1);
 
     // 推分 ACC
     let mut push_acc_map: HashMap<String, f64> = HashMap::new();
@@ -1276,7 +1321,7 @@ pub async fn render_bn_user(
             })
         })
         .collect();
-    for r in top
+    for r in records
         .iter()
         .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
     {
@@ -1371,7 +1416,7 @@ pub async fn render_bn_user(
     let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
         renderer::generate_svg_string(
-            &top,
+            &records,
             &stats,
             Some(&push_acc_map),
             &theme,
@@ -1403,7 +1448,7 @@ pub async fn render_bn_user(
     // 统计：用户自报 BestN 图片生成
     if let Some(stats_handle) = state.stats.as_ref() {
         let extra = serde_json::json!({
-            "scores_len": records.len(),
+            "scores_len": records_len,
             "unlocked": unlocked
         });
         stats_handle

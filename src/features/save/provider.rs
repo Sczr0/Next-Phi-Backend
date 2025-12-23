@@ -12,6 +12,14 @@ use super::summary_parser::{SummaryParsed, parse_summary_base64};
 use crate::error::SaveProviderError;
 use crate::startup::chart_loader::ChartConstantsMap;
 
+/// zip entry 的 size 可能来自元数据/上游返回值，直接用于 Vec::with_capacity 可能导致单次预分配过大。
+/// 这里做一个守护性 cap：只影响预分配策略，不影响最终读取/解密/解析结果（不改变对外行为）。
+const ZIP_ENTRY_PREALLOC_CAP: usize = 16 * 1024 * 1024;
+
+/// try_decompress 的输出 Vec 做守护性预分配，减少常见场景下的 reallocate；
+/// 仅影响内存分配策略，不改变“是否解压/如何回退”的语义（不改变对外行为）。
+const DECOMPRESS_PREALLOC_CAP: usize = 8 * 1024 * 1024;
+
 /// 存档元信息（用于缓存前移：先拿 updatedAt 再决定是否需要下载/解密）
 #[derive(Debug, Clone)]
 pub struct SaveMeta {
@@ -113,14 +121,16 @@ pub async fn get_decrypted_save_from_meta(
         let zip_bytes = try_decompress(encrypted_bytes)?;
         let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes))?;
 
-        let mut decrypted_entries: HashMap<String, Vec<u8>> = HashMap::new();
         let expected = ["gameRecord", "gameKey", "gameProgress", "user", "settings"];
+        let mut decrypted_entries: HashMap<String, Vec<u8>> =
+            HashMap::with_capacity(expected.len());
         for name in &expected {
             if let Ok(mut f) = archive.by_name(name) {
                 // zip entry 通常携带 size 信息，预分配可以显著减少扩容次数。
-                let mut enc = Vec::with_capacity(f.size() as usize);
+                let size = usize::try_from(f.size()).unwrap_or(usize::MAX);
+                let mut enc = Vec::with_capacity(size.min(ZIP_ENTRY_PREALLOC_CAP));
                 f.read_to_end(&mut enc)?;
-                let plain = decrypt_zip_entry(&enc, &decrypt_meta)?;
+                let plain = decrypt_zip_entry(enc, &decrypt_meta)?;
                 decrypted_entries.insert((*name).to_string(), plain);
             }
         }
@@ -205,7 +215,7 @@ fn try_decompress(bytes: Bytes) -> Result<Bytes, SaveProviderError> {
     // GZIP 魔数：1F 8B
     if raw.len() >= 2 && raw[0] == 0x1F && raw[1] == 0x8B {
         let mut gz = GzDecoder::new(raw);
-        let mut out = Vec::new();
+        let mut out = Vec::with_capacity(raw.len().min(DECOMPRESS_PREALLOC_CAP));
         if gz.read_to_end(&mut out).is_ok() {
             return Ok(Bytes::from(out));
         }
@@ -214,7 +224,7 @@ fn try_decompress(bytes: Bytes) -> Result<Bytes, SaveProviderError> {
 
     // 其他：尝试 Zlib，失败则回退 Raw Bytes。
     let mut z = ZlibDecoder::new(raw);
-    let mut out = Vec::new();
+    let mut out = Vec::with_capacity(raw.len().min(DECOMPRESS_PREALLOC_CAP));
     match z.read_to_end(&mut out) {
         Ok(_) => Ok(Bytes::from(out)),
         Err(_) => Ok(bytes),

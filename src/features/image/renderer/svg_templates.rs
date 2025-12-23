@@ -6,7 +6,7 @@ use chrono::{FixedOffset, Utc};
 use minijinja::Environment;
 use rand::prelude::*;
 use serde::{Deserialize, Serialize};
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::config::AppConfig;
 use crate::error::AppError;
@@ -90,7 +90,7 @@ fn wrap_by_display_width(text: &str, max_width: usize, max_lines: usize) -> Vec<
             continue;
         }
 
-        let ch_w = ch.to_string().width().max(1);
+        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
         if current_w + ch_w > max_width && !current.is_empty() {
             out.push(std::mem::take(&mut current));
             current_w = 0;
@@ -120,7 +120,7 @@ fn truncate_with_ellipsis(text: &str, max_width: usize) -> String {
     let mut acc = String::new();
     let mut w = 0usize;
     for ch in text.chars() {
-        let ch_w = ch.to_string().width().max(1);
+        let ch_w = UnicodeWidthChar::width(ch).unwrap_or(0).max(1);
         if w + ch_w > target {
             break;
         }

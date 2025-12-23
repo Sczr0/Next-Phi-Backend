@@ -291,3 +291,98 @@ pub fn derive_user_identity_from_auth(
     }
     (None, None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{derive_user_identity_from_auth, hmac_hex16};
+    use crate::features::save::{ExternalApiCredentials, UnifiedSaveRequest};
+
+    const SALT: &str = "test-salt";
+
+    #[test]
+    fn returns_none_when_salt_missing() {
+        let req = UnifiedSaveRequest {
+            session_token: Some("tok".into()),
+            external_credentials: None,
+            taptap_version: None,
+        };
+        let (id, kind) = derive_user_identity_from_auth(None, &req);
+        assert!(id.is_none());
+        assert!(kind.is_none());
+    }
+
+    #[test]
+    fn prefers_session_token_over_external_credentials() {
+        let req = UnifiedSaveRequest {
+            session_token: Some("tok".into()),
+            external_credentials: Some(ExternalApiCredentials {
+                platform: Some("TapTap".into()),
+                platform_id: Some("user_1".into()),
+                sessiontoken: Some("ext-st".into()),
+                api_user_id: Some("10086".into()),
+                api_token: None,
+            }),
+            taptap_version: None,
+        };
+        let (id, kind) = derive_user_identity_from_auth(Some(SALT), &req);
+        assert_eq!(kind.as_deref(), Some("session_token"));
+        assert_eq!(id.as_deref(), Some(hmac_hex16(SALT, "tok").as_str()));
+    }
+
+    #[test]
+    fn uses_external_api_user_id_when_present() {
+        let req = UnifiedSaveRequest {
+            session_token: None,
+            external_credentials: Some(ExternalApiCredentials {
+                platform: None,
+                platform_id: None,
+                sessiontoken: None,
+                api_user_id: Some("10086".into()),
+                api_token: None,
+            }),
+            taptap_version: None,
+        };
+        let (id, kind) = derive_user_identity_from_auth(Some(SALT), &req);
+        assert_eq!(kind.as_deref(), Some("external_api_user_id"));
+        assert_eq!(id.as_deref(), Some(hmac_hex16(SALT, "10086").as_str()));
+    }
+
+    #[test]
+    fn uses_external_sessiontoken_when_present() {
+        let req = UnifiedSaveRequest {
+            session_token: None,
+            external_credentials: Some(ExternalApiCredentials {
+                platform: None,
+                platform_id: None,
+                sessiontoken: Some("ext-st".into()),
+                api_user_id: None,
+                api_token: None,
+            }),
+            taptap_version: None,
+        };
+        let (id, kind) = derive_user_identity_from_auth(Some(SALT), &req);
+        assert_eq!(kind.as_deref(), Some("external_sessiontoken"));
+        assert_eq!(id.as_deref(), Some(hmac_hex16(SALT, "ext-st").as_str()));
+    }
+
+    #[test]
+    fn uses_platform_pair_when_present() {
+        let req = UnifiedSaveRequest {
+            session_token: None,
+            external_credentials: Some(ExternalApiCredentials {
+                platform: Some("TapTap".into()),
+                platform_id: Some("user_1".into()),
+                sessiontoken: None,
+                api_user_id: None,
+                api_token: None,
+            }),
+            taptap_version: None,
+        };
+        let (id, kind) = derive_user_identity_from_auth(Some(SALT), &req);
+        assert_eq!(kind.as_deref(), Some("platform_pair"));
+        assert_eq!(
+            id.as_deref(),
+            Some(hmac_hex16(SALT, "TapTap:user_1").as_str())
+        );
+    }
+}

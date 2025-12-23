@@ -64,7 +64,7 @@ impl Default for DecryptionMeta {
 }
 
 pub fn decrypt_zip_entry(
-    encrypted_data: &[u8],
+    mut encrypted_data: Vec<u8>,
     meta: &DecryptionMeta,
 ) -> Result<Vec<u8>, SaveProviderError> {
     if encrypted_data.is_empty() {
@@ -80,12 +80,13 @@ pub fn decrypt_zip_entry(
                 let key_bytes = derive_key(&meta.kdf, 32)?;
                 key_arr.copy_from_slice(&key_bytes);
             }
-            let ciphertext = &encrypted_data[1..];
-            let mut out = Vec::with_capacity(1 + ciphertext.len());
-            out.push(prefix);
-            let mut rest = decrypt_aes256_cbc(ciphertext, &key_arr, iv)?;
-            out.append(&mut rest);
-            Ok(out)
+            // AES-CBC 需要可变 buffer；这里直接复用 zip entry 的 Vec，避免一次 `to_vec()` 拷贝
+            let ciphertext = encrypted_data
+                .get_mut(1..)
+                .ok_or(SaveProviderError::InvalidHeader)?;
+            let decrypted_len = decrypt_aes256_cbc_in_place(ciphertext, &key_arr, iv)?;
+            encrypted_data.truncate(1 + decrypted_len);
+            Ok(encrypted_data)
         }
         CipherSuite::Aes128Gcm { nonce, tag_len } => {
             if encrypted_data.len() <= 1 + *tag_len {
@@ -124,25 +125,22 @@ pub fn decrypt_zip_entry(
     }
 }
 
-fn decrypt_aes256_cbc(
-    ciphertext: &[u8],
+fn decrypt_aes256_cbc_in_place(
+    ciphertext: &mut [u8],
     key: &[u8; 32],
     iv: &[u8; 16],
-) -> Result<Vec<u8>, SaveProviderError> {
+) -> Result<usize, SaveProviderError> {
     if ciphertext.is_empty() {
         return Err(SaveProviderError::Decrypt("空密文".into()));
     }
     use cipher::block_padding::Pkcs7;
     type Aes256CbcDec = CbcDecryptor<Aes256>;
     let dec = Aes256CbcDec::new(key.into(), iv.into());
-    let mut buffer = ciphertext.to_vec();
     let decrypted = dec
-        .decrypt_padded_mut::<Pkcs7>(&mut buffer)
+        .decrypt_padded_mut::<Pkcs7>(ciphertext)
         .map_err(|e| SaveProviderError::Decrypt(format!("AES 解密失败: {e:?}")))?;
-    // `decrypted` 指向 `buffer` 的前缀区域，截断即可复用内存，避免一次额外拷贝。
-    let decrypted_len = decrypted.len();
-    buffer.truncate(decrypted_len);
-    Ok(buffer)
+    // `decrypted` 指向 ciphertext 的前缀区域，长度即为去除 PKCS#7 padding 后的明文长度
+    Ok(decrypted.len())
 }
 
 pub fn verify_integrity(

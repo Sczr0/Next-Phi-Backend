@@ -186,24 +186,48 @@ pub async fn get_stats_summary(
     .map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
     let total: i64 = row.try_get("total").unwrap_or(0);
 
-    // by_kind via extra_json.user_kind （在应用端聚合，避免对 SQLite JSON1 的依赖）
-    let rows = sqlx::query("SELECT user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL")
-        .fetch_all(&storage.pool).await.map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?;
+    // by_kind via extra_json.user_kind（在应用端聚合，避免对 SQLite JSON1 的依赖）
+    //
+    // 性能优化：避免一次性 `fetch_all` 造成内存峰值，按 events.id 分批扫描。
     use std::collections::{HashMap, HashSet};
+    const BATCH: i64 = 5000;
+    let mut last_id: i64 = 0;
     let mut uniq: HashSet<(String, String)> = HashSet::new();
-    for r in rows {
-        let uh: String = match r.try_get("user_hash") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        let ej: String = match r.try_get("extra_json") {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej)
-            && let Some(kind) = val.get("user_kind").and_then(|v| v.as_str())
-        {
-            uniq.insert((uh.clone(), kind.to_string()));
+    loop {
+        let rows = sqlx::query(
+            "SELECT id, user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL AND id > ? ORDER BY id ASC LIMIT ?",
+        )
+        .bind(last_id)
+        .bind(BATCH)
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?;
+        if rows.is_empty() {
+            break;
+        }
+        let row_len = rows.len() as i64;
+        for r in rows {
+            let id: i64 = match r.try_get("id") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            last_id = id.max(last_id);
+            let uh: String = match r.try_get("user_hash") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let ej: String = match r.try_get("extra_json") {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej)
+                && let Some(kind) = val.get("user_kind").and_then(|v| v.as_str())
+            {
+                uniq.insert((uh, kind.to_string()));
+            }
+        }
+        if row_len < BATCH {
+            break;
         }
     }
     let mut by_kind_map: HashMap<String, i64> = HashMap::new();

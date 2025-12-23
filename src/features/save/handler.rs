@@ -51,7 +51,14 @@ pub async fn get_save_data(
     let (user_hash, user_kind) =
         crate::features::stats::derive_user_identity_from_auth(salt, &payload);
 
-    let source = validate_and_create_source(payload.clone())?;
+    let calc_rks = params
+        .get("calculate_rks")
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    // 排行榜写入需要：统计存储开启 + 能识别到用户身份
+    let need_leaderboard = state.stats_storage.is_some() && user_hash.is_some();
+
+    let source = validate_and_create_source(&payload)?;
     let taptap_version = payload.taptap_version.as_deref();
     let parsed = provider::get_decrypted_save(
         source,
@@ -68,16 +75,55 @@ pub async fn get_save_data(
             .track_feature("save", "get_save", user_hash.clone(), Some(extra))
             .await;
     }
+
+    // 计算 RKS / 文本详情属于 CPU 密集任务：移出 Tokio worker，避免影响吞吐与尾延迟。
+    let need_calc = calc_rks || need_leaderboard;
+    let (parsed, rks_res, best_top3_json, ap_top3_json, rks_comp_json) = if need_calc {
+        let state = state.clone();
+        let join = tokio::task::spawn_blocking(move || {
+            let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
+            let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
+                let (best_top3, ap_top3, rks_comp) =
+                    compute_textual_details(&parsed.game_record, &state);
+                (
+                    serde_json::to_string(&best_top3).ok(),
+                    serde_json::to_string(&ap_top3).ok(),
+                    serde_json::to_string(&rks_comp).ok(),
+                )
+            } else {
+                (None, None, None)
+            };
+            (
+                parsed,
+                Some(rks_res),
+                best_top3_json,
+                ap_top3_json,
+                rks_comp_json,
+            )
+        })
+        .await;
+        match join {
+            Ok(v) => v,
+            Err(e) => {
+                let e_str = e.to_string();
+                if let Ok(panic) = e.try_into_panic() {
+                    std::panic::resume_unwind(panic);
+                }
+                return Err(AppError::Internal(format!(
+                    "spawn_blocking cancelled: {e_str}"
+                )));
+            }
+        }
+    } else {
+        (parsed, None, None, None, None)
+    };
     // 排行榜入库（无论是否返回RKS）
     if let Some(storage) = state.stats_storage.as_ref()
         && let Some(user_hash_ref) = user_hash.as_ref()
     {
-        let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
-        let total_rks = rks_res.total_rks;
-        let (best_top3, ap_top3, rks_comp) = compute_textual_details(&parsed.game_record, &state);
-        let best_top3_json = serde_json::to_string(&best_top3).ok();
-        let ap_top3_json = serde_json::to_string(&ap_top3).ok();
-        let rks_comp_json = serde_json::to_string(&rks_comp).ok();
+        let total_rks = rks_res.as_ref().map(|v| v.total_rks).unwrap_or_else(|| {
+            calculate_player_rks(&parsed.game_record, &state.chart_constants).total_rks
+        });
         let now = chrono::Utc::now().to_rfc3339();
         // (2)B：写库改为 best-effort 后台任务，避免数据库波动影响 /save 主响应。
         let storage = storage.clone();
@@ -210,11 +256,6 @@ pub async fn get_save_data(
         // 默认公开资料创建已移动到后台 best-effort 任务中。
     }
 
-    let calc_rks = params
-        .get("calculate_rks")
-        .map(|v| v == "true")
-        .unwrap_or(false);
-
     if !calc_rks {
         let value = serde_json::to_value(&parsed)
             .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {e}")))?;
@@ -223,7 +264,8 @@ pub async fn get_save_data(
     }
 
     // 计算 RKS 并返回复合响应
-    let rks = calculate_player_rks(&parsed.game_record, &state.chart_constants);
+    let rks = rks_res
+        .unwrap_or_else(|| calculate_player_rks(&parsed.game_record, &state.chart_constants));
     let save_value = serde_json::to_value(&parsed)
         .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {e}")))?;
     let resp = SaveAndRksResponse {
@@ -235,7 +277,7 @@ pub async fn get_save_data(
     Ok((StatusCode::OK, Json(body)))
 }
 
-fn validate_and_create_source(payload: UnifiedSaveRequest) -> Result<SaveSource, AppError> {
+fn validate_and_create_source(payload: &UnifiedSaveRequest) -> Result<SaveSource, AppError> {
     match (&payload.session_token, &payload.external_credentials) {
         (Some(token), None) => {
             if token.is_empty() {
@@ -243,7 +285,7 @@ fn validate_and_create_source(payload: UnifiedSaveRequest) -> Result<SaveSource,
                     "sessionToken 不能为空".to_string(),
                 ));
             }
-            Ok(SaveSource::official(token))
+            Ok(SaveSource::official(token.clone()))
         }
         (None, Some(creds)) => {
             if !creds.is_valid() {

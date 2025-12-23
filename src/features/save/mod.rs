@@ -1,6 +1,7 @@
 pub mod client;
 pub mod decryptor;
 pub mod handler;
+pub mod inspector;
 pub mod models;
 pub mod parser;
 pub mod provider;

@@ -38,6 +38,9 @@
   返回 `qr_id`、`verification_url`、`qrcode_base64`(SVG data URL)。
 - `GET {prefix}/auth/qrcode/{qr_id}/status`  
   返回 `status`(Pending/Confirmed/Error/Expired)，可含 `session_token` 与 `retry_after`；二维码失效返回 404。
+- `POST {prefix}/auth/user-id`  
+  Body：`UnifiedSaveRequest` → `{ "user_id": "32-hex", "user_kind": "session_token|external_api_user_id|external_sessiontoken|platform_pair" }`。  
+  注意：该端点依赖 `stats.user_hash_salt`，请通过环境变量 `APP_STATS_USER_HASH_SALT` 配置，否则无法生成稳定的 user_id。
 
 ### 存档 / RKS
 - `POST {prefix}/save?[calculate_rks=true|false]`  

@@ -6,7 +6,8 @@ use axum::{
     routing::{get, post, put},
 };
 use serde::Deserialize;
-use sqlx::Row;
+use sqlx::{QueryBuilder, Row, Sqlite};
+use std::collections::HashMap;
 
 use crate::{error::AppError, state::AppState};
 
@@ -39,6 +40,44 @@ pub struct RankQuery {
 fn mask_user_prefix(hash: &str) -> String {
     let p = hash.chars().take(4).collect::<String>();
     format!("{p}****")
+}
+
+/// 批量查询 BestTop3/APTop3 文本详情，避免 N+1 往返。
+///
+/// 行为保持：详情查询失败时，仍然返回排行榜主数据（详情字段为 None）。
+async fn fetch_top3_details_map(
+    pool: &sqlx::SqlitePool,
+    user_hashes: &[String],
+) -> HashMap<String, (Option<String>, Option<String>)> {
+    if user_hashes.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        "SELECT user_hash, best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash IN (",
+    );
+    let mut separated = qb.separated(", ");
+    for uh in user_hashes {
+        separated.push_bind(uh);
+    }
+    separated.push_unseparated(")");
+
+    let rows = match qb.build().fetch_all(pool).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(target: "phi_backend::leaderboard", "batch query leaderboard_details failed (ignored): {e}");
+            return HashMap::new();
+        }
+    };
+
+    let mut map = HashMap::with_capacity(user_hashes.len());
+    for r in rows {
+        let user_hash: String = r.try_get("user_hash").unwrap_or_default();
+        let best: Option<String> = r.try_get("best_top3_json").unwrap_or(None);
+        let ap: Option<String> = r.try_get("ap_top3_json").unwrap_or(None);
+        map.insert(user_hash, (best, ap));
+    }
+    map
 }
 
 /// 检查字符是否为中日韩（CJK）字符
@@ -132,6 +171,19 @@ pub async fn get_top(
         last_updated = r.try_get::<String, _>("updated_at").ok();
         last_user_hash = r.try_get::<String, _>("user_hash").ok();
     }
+
+    let mut detail_users: Vec<String> = Vec::new();
+    for r in rows.iter() {
+        let sbt: i64 = r.try_get("sbt").unwrap_or(0);
+        let sat: i64 = r.try_get("sat").unwrap_or(0);
+        if (sbt != 0 || sat != 0)
+            && let Ok(uh) = r.try_get::<String, _>("user_hash")
+        {
+            detail_users.push(uh);
+        }
+    }
+    let details_map = fetch_top3_details_map(&storage.pool, &detail_users).await;
+
     for (idx, r) in rows.into_iter().enumerate() {
         let user_hash: String = r.try_get("user_hash").unwrap_or_default();
         let alias: Option<String> = r.try_get("alias").ok();
@@ -143,22 +195,17 @@ pub async fn get_top(
         let mut best_top3: Option<Vec<ChartTextItem>> = None;
         let mut ap_top3: Option<Vec<ChartTextItem>> = None;
         if (sbt != 0 || sat != 0)
-            && let Ok(Some(row)) = sqlx::query(
-                "SELECT best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash=?",
-            )
-            .bind(&user_hash)
-            .fetch_optional(&storage.pool)
-            .await
+            && let Some((best_json, ap_json)) = details_map.get(&user_hash)
         {
             if sbt != 0
-                && let Ok(Some(j)) = row.try_get::<String, _>("best_top3_json").map(Some)
+                && let Some(j) = best_json.as_deref()
             {
-                best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
+                best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(j).ok();
             }
             if sat != 0
-                && let Ok(Some(j)) = row.try_get::<String, _>("ap_top3_json").map(Some)
+                && let Some(j) = ap_json.as_deref()
             {
-                ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
+                ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(j).ok();
             }
         }
 
@@ -251,6 +298,19 @@ pub async fn get_by_rank(
         last_updated = r.try_get::<String, _>("updated_at").ok();
         last_user_hash = r.try_get::<String, _>("user_hash").ok();
     }
+
+    let mut detail_users: Vec<String> = Vec::new();
+    for r in rows.iter() {
+        let sbt: i64 = r.try_get("sbt").unwrap_or(0);
+        let sat: i64 = r.try_get("sat").unwrap_or(0);
+        if (sbt != 0 || sat != 0)
+            && let Ok(uh) = r.try_get::<String, _>("user_hash")
+        {
+            detail_users.push(uh);
+        }
+    }
+    let details_map = fetch_top3_details_map(&storage.pool, &detail_users).await;
+
     for (i, r) in rows.into_iter().enumerate() {
         let user_hash: String = r.try_get("user_hash").unwrap_or_default();
         let alias: Option<String> = r.try_get("alias").ok();
@@ -262,22 +322,17 @@ pub async fn get_by_rank(
         let mut best_top3: Option<Vec<ChartTextItem>> = None;
         let mut ap_top3: Option<Vec<ChartTextItem>> = None;
         if (sbt != 0 || sat != 0)
-            && let Ok(Some(row)) = sqlx::query(
-                "SELECT best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash=?",
-            )
-            .bind(&user_hash)
-            .fetch_optional(&storage.pool)
-            .await
+            && let Some((best_json, ap_json)) = details_map.get(&user_hash)
         {
             if sbt != 0
-                && let Ok(Some(j)) = row.try_get::<String, _>("best_top3_json").map(Some)
+                && let Some(j) = best_json.as_deref()
             {
-                best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
+                best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(j).ok();
             }
             if sat != 0
-                && let Ok(Some(j)) = row.try_get::<String, _>("ap_top3_json").map(Some)
+                && let Some(j) = ap_json.as_deref()
             {
-                ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
+                ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(j).ok();
             }
         }
 
