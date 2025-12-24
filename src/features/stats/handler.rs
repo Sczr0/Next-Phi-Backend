@@ -30,7 +30,21 @@ pub struct DailyQuery {
         ("end" = String, Query, description = "结束日期 YYYY-MM-DD"),
         ("feature" = Option<String>, Query, description = "可选功能名")
     ),
-    responses((status = 200, body = [DailyAggRow])),
+    responses(
+        (status = 200, description = "聚合结果", body = [DailyAggRow]),
+        (
+            status = 422,
+            description = "参数校验失败（日期格式等）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Stats"
 )]
 pub async fn get_daily_stats(
@@ -38,9 +52,9 @@ pub async fn get_daily_stats(
     Query(q): Query<DailyQuery>,
 ) -> Result<Json<Vec<DailyAggRow>>, AppError> {
     let start = NaiveDate::parse_from_str(&q.start, "%Y-%m-%d")
-        .map_err(|e| AppError::Internal(format!("start 日期无效: {e}")))?;
+        .map_err(|e| AppError::Validation(format!("start 日期无效（期望 YYYY-MM-DD）: {e}")))?;
     let end = NaiveDate::parse_from_str(&q.end, "%Y-%m-%d")
-        .map_err(|e| AppError::Internal(format!("end 日期无效: {e}")))?;
+        .map_err(|e| AppError::Validation(format!("end 日期无效（期望 YYYY-MM-DD）: {e}")))?;
     let storage = state
         .stats_storage
         .as_ref()
@@ -54,22 +68,43 @@ pub struct ArchiveQuery {
     date: Option<String>,
 }
 
+#[derive(Serialize, utoipa::ToSchema)]
+#[schema(example = json!({"ok": true, "date": "2025-12-23"}))]
+pub struct ArchiveNowResponse {
+    pub ok: bool,
+    pub date: String,
+}
+
 #[utoipa::path(
     post,
     path = "/stats/archive/now",
     summary = "手动触发某日归档",
     description = "将指定日期（默认昨天）的明细导出为 Parquet 文件，落地到配置的归档目录",
     params(("date" = Option<String>, Query, description = "归档日期 YYYY-MM-DD，默认为昨天")),
-    responses((status = 200, description = "归档已触发")),
+    responses(
+        (status = 200, description = "归档已触发", body = ArchiveNowResponse),
+        (
+            status = 422,
+            description = "参数校验失败（日期格式等）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/归档失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Stats"
 )]
 pub async fn trigger_archive_now(
     State(state): State<AppState>,
     Query(q): Query<ArchiveQuery>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<ArchiveNowResponse>, AppError> {
     let day = if let Some(d) = q.date {
         chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")
-            .map_err(|e| AppError::Internal(format!("date 无效: {e}")))?
+            .map_err(|e| AppError::Validation(format!("date 无效（期望 YYYY-MM-DD）: {e}")))?
     } else {
         (Utc::now() - chrono::Duration::days(1)).date_naive()
     };
@@ -78,9 +113,10 @@ pub async fn trigger_archive_now(
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
     archive_one_day(storage, &crate::config::StatsArchiveConfig::default(), day).await?;
-    Ok(Json(
-        serde_json::json!({"ok": true, "date": day.to_string()}),
-    ))
+    Ok(Json(ArchiveNowResponse {
+        ok: true,
+        date: day.to_string(),
+    }))
 }
 
 pub fn create_stats_router() -> Router<AppState> {
@@ -134,7 +170,15 @@ pub struct StatsSummaryResponse {
     path = "/stats/summary",
     summary = "统计总览（唯一用户与功能使用）",
     description = "提供统计模块关键指标：全局首末事件时间、按功能的使用次数与最近时间、唯一用户总量及来源分布。\n\n功能次数统计中的功能名可能值：\n- bestn：生成 BestN 汇总图\n- bestn_user：生成用户自报 BestN 图片\n- single_query：生成单曲成绩图\n- save：获取并解析玩家存档\n- song_search：歌曲检索",
-    responses((status = 200, body = StatsSummaryResponse)),
+    responses(
+        (status = 200, description = "汇总信息", body = StatsSummaryResponse),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Stats"
 )]
 pub async fn get_stats_summary(

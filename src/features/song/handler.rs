@@ -34,9 +34,30 @@ fn parse_bool(s: &str) -> bool {
     ),
     responses(
         (status = 200, description = "查询成功（unique=true 时返回单个对象，否则为列表）", body = SongSearchResult),
-        (status = 404, description = "未找到匹配项", body = AppError),
-        (status = 409, description = "结果不唯一（提供候选）", body = AppError),
-        (status = 400, description = "请求参数错误", body = AppError),
+        (
+            status = 400,
+            description = "请求参数错误（缺少 q 等）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 404,
+            description = "未找到匹配项",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 409,
+            description = "结果不唯一",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Song"
 )]

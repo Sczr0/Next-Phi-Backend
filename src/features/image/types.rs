@@ -2,20 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::features::save::models::UnifiedSaveRequest;
 
-/// 输出图片格式
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-#[derive(Default)]
-pub enum ImageFormat {
-    /// PNG（默认，保真但体积较大）
-    #[default]
-    Png,
-    /// JPEG（有损压缩，体积显著更小，适合照片/插画类背景）
-    Jpeg,
-    /// WebP（新一代图片格式，相比JPEG/PNG可减少25-35%的文件大小，同时支持有损和无损压缩）
-    Webp,
-}
-
 /// 渲染主题
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -47,12 +33,6 @@ pub struct RenderBnRequest {
     /// 可选：用于显示的玩家昵称（若未提供且无法从服务端获取，将使用默认占位）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
-    /// 输出图片格式（png/jpeg，默认 png）
-    #[serde(default)]
-    pub format: ImageFormat,
-    /// 目标宽度像素（可选；不填使用默认 1200）。用于下采样以减小体积。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub width: Option<u32>,
 }
 
 /// 单曲渲染请求体
@@ -104,3 +84,12 @@ pub struct UserScoreItem {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub score: Option<u32>,
 }
+
+/// OpenAPI 文档用：二进制图片响应体。
+///
+/// - 实际返回为原始字节（非 base64），具体类型由响应头 `Content-Type` 决定。
+/// - 主要用于提示 OpenAPI / SDK：`image/png` / `image/jpeg` / `image/webp`。
+#[allow(dead_code)]
+#[derive(Debug, Clone, utoipa::ToSchema)]
+#[schema(value_type = String, format = Binary)]
+pub struct BinaryImage(pub Vec<u8>);

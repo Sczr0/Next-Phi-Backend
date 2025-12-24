@@ -35,8 +35,18 @@ pub struct UserIdResponse {
     request_body = crate::features::save::models::UnifiedSaveRequest,
     responses(
         (status = 200, description = "生成成功", body = UserIdResponse),
-        (status = 422, description = "凭证缺失/无效，或无法识别用户", body = AppError),
-        (status = 500, description = "服务端未配置 user_hash_salt", body = AppError)
+        (
+            status = 422,
+            description = "凭证缺失/无效，或无法识别用户",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "服务端未配置 user_hash_salt",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Auth"
 )]
@@ -126,7 +136,18 @@ pub struct QrCodeStatusResponse {
     ),
     responses(
         (status = 200, description = "生成二维码成功", body = QrCodeCreateResponse),
-        (status = 500, description = "服务器内部错误", body = AppError)
+        (
+            status = 502,
+            description = "上游网络错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Auth"
 )]
@@ -211,8 +232,13 @@ pub async fn get_qrcode(
     params(("qr_id" = String, Path, description = "二维码ID")),
     responses(
         (status = 200, description = "状态返回", body = QrCodeStatusResponse),
-        (status = 404, description = "二维码不存在或已过期"),
-        (status = 500, description = "服务器内部错误", body = AppError)
+        (status = 404, description = "二维码不存在或已过期", body = QrCodeStatusResponse),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Auth"
 )]

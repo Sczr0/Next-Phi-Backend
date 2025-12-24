@@ -70,8 +70,18 @@ pub struct RksHistoryResponse {
     request_body = RksHistoryRequest,
     responses(
         (status = 200, body = RksHistoryResponse, description = "成功返回 RKS 历史"),
-        (status = 401, description = "认证失败"),
-        (status = 500, description = "服务器内部错误")
+        (
+            status = 401,
+            description = "认证失败/无法识别用户",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "RKS"
 )]

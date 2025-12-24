@@ -152,9 +152,46 @@ mod tests {
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
-        (status = 200, description = "PNG/JPEG/WebP bytes of BN image"),
-        (status = 400, description = "Bad request", body = AppError),
-        (status = 500, description = "Renderer error", body = AppError)
+        (
+            status = 200,
+            description = "图片（由 query format 决定）",
+            content(
+                (crate::features::image::types::BinaryImage = "image/png"),
+                (crate::features::image::types::BinaryImage = "image/jpeg"),
+                (crate::features::image::types::BinaryImage = "image/webp"),
+                (String = "image/svg+xml")
+            )
+        ),
+        (
+            status = 400,
+            description = "请求参数错误/认证缺失",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 401,
+            description = "认证失败",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败/渲染错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 502,
+            description = "上游网络错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Image"
 )]
@@ -760,9 +797,58 @@ pub async fn render_bn(
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
-        (status = 200, description = "PNG/JPEG/WebP bytes of song image"),
-        (status = 400, description = "Bad request", body = AppError),
-        (status = 500, description = "Renderer error", body = AppError)
+        (
+            status = 200,
+            description = "图片（由 query format 决定）",
+            content(
+                (crate::features::image::types::BinaryImage = "image/png"),
+                (crate::features::image::types::BinaryImage = "image/jpeg"),
+                (crate::features::image::types::BinaryImage = "image/webp"),
+                (String = "image/svg+xml")
+            )
+        ),
+        (
+            status = 400,
+            description = "请求参数错误/认证缺失",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 401,
+            description = "认证失败",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 404,
+            description = "歌曲未找到（unique search）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 409,
+            description = "歌曲结果不唯一（unique search）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败/渲染错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 502,
+            description = "上游网络错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Image"
 )]
@@ -1230,9 +1316,46 @@ async fn fetch_nickname(session_token: &str) -> Option<String> {
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
-        (status = 200, description = "PNG/JPEG/WebP bytes of user BN image"),
-        (status = 400, description = "Bad request", body = AppError),
-        (status = 500, description = "Renderer error", body = AppError)
+        (
+            status = 200,
+            description = "图片（由 query format 决定）",
+            content(
+                (crate::features::image::types::BinaryImage = "image/png"),
+                (crate::features::image::types::BinaryImage = "image/jpeg"),
+                (crate::features::image::types::BinaryImage = "image/webp"),
+                (String = "image/svg+xml")
+            )
+        ),
+        (
+            status = 400,
+            description = "请求参数错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 404,
+            description = "歌曲未找到（unique search）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 409,
+            description = "歌曲结果不唯一（unique search）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败/渲染错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Image"
 )]

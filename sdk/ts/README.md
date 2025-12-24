@@ -1,22 +1,66 @@
-# Phi Backend TypeScript SDK\n\n- ×Ô¶¯Éú³ÉÓÚ OpenAPI£¨Â·¾¶£º../openapi.json£©\n- ¿Í»§¶ËÊµÏÖ£ºÔ­Éú fetch\n\n## °²×°\n\nÔÚ sdk/ts Ä¿Â¼£º\n\n`ash\npnpm i # »ò npm i / yarn\npnpm run generate\npnpm run build\n`\n\n## Ê¹ÓÃ\n\n`	s
-import { OpenAPI, ImageService, SaveService, SongService, LeaderboardService, StatsService } from 'phi-backend-sdk';
+# Phi Backend TypeScript SDK
 
-// ÅäÖÃ·şÎñµØÖ·£¨±ØĞë£©
+> æ›´æ–°æ—¥æœŸï¼š2025-12-24 Â· ç¼–å†™ï¼šCodex
+
+æœ¬ç›®å½•ä¸ºæ ¹æ®åç«¯ OpenAPI è‡ªåŠ¨ç”Ÿæˆçš„ TypeScript SDKï¼ˆfetch å®¢æˆ·ç«¯ï¼‰ï¼Œç”¨äºå‰ç«¯/æ’ä»¶å¿«é€Ÿè°ƒç”¨ Phi Backend çš„ JSON APIã€‚
+
+- OpenAPI è§„èŒƒï¼š`sdk/openapi.json`
+- ä»£ç ç”Ÿæˆï¼š`sdk/ts/src`ï¼ˆ`openapi-typescript-codegen`ï¼‰
+- æ„å»ºäº§ç‰©ï¼š`sdk/ts/dist`
+
+## ç”Ÿæˆ
+
+åœ¨ä»“åº“æ ¹ç›®å½•å¯¼å‡º OpenAPIï¼ˆæ— éœ€å¯åŠ¨æœåŠ¡ï¼‰ï¼š
+
+```bash
+cargo run --example dump_openapi -q
+```
+
+åœ¨ `sdk/ts` ç›®å½•ç”Ÿæˆå¹¶æ„å»ºï¼š
+
+```bash
+pnpm i        # æˆ– npm i / yarn
+pnpm run generate
+pnpm run build
+```
+
+## ä½¿ç”¨
+
+```ts
+import { OpenAPI, SongService } from 'phi-backend-sdk';
+
+// ä¸šåŠ¡æ¥å£é»˜è®¤æŒ‚è½½åœ¨ /api/v1ï¼ˆè§ config.api.prefixï¼‰
 OpenAPI.BASE = 'http://localhost:3939/api/v1';
 
-// BN Í¼Æ¬£¨JPEG + Ö¸¶¨¿í¶È£©
-const resp = await fetch(${OpenAPI.BASE}/image/bn?format=jpeg&width=800, {
+const res = await SongService.searchSongs({ q: 'devil', unique: false });
+console.log(res);
+```
+
+å›¾ç‰‡æ¥å£è¿”å›äºŒè¿›åˆ¶ï¼ˆpng/jpeg/webpï¼‰æˆ– SVG æ–‡æœ¬ï¼ˆ`format=svg`ï¼‰ã€‚æ›´æ¨èç›´æ¥ç”¨ `fetch`ï¼š
+
+```ts
+const resp = await fetch(`${OpenAPI.BASE}/image/bn?format=jpeg&width=800`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ sessionToken: '...', n: 30, theme: 'black', embed_images: false }),
+  body: JSON.stringify({
+    sessionToken: '...',
+    n: 30,
+    theme: 'black',
+    embed_images: false,
+  }),
 });
+if (!resp.ok) throw new Error(await resp.text()); // é 2xx ä¸º text/plain
 const blob = await resp.blob();
+```
 
-// ÆäÓà JSON ½Ó¿Ú¿ÉÖ±½ÓÓÃ·şÎñÀà
-const songs = await SongService.searchSongs({ q: 'devil', unique: true });
-`
-\n## ¶ËµãÒ»ÀÀ\n- Save£ºPOST /save\n- Auth£ºPOST /auth/qrcode, GET /auth/qrcode/status\n- Song£ºGET /songs/search\n- Image£ºPOST /image/bn, /image/song, /image/bn/user£¨Ö§³Ö query: format, width£©\n- Leaderboard£ºGET /leaderboard/top, GET /leaderboard/by-rank, POST /leaderboard/me, PUT /leaderboard/alias, PUT /leaderboard/profile, GET /leaderboard/public-profile\n- Stats£ºGET /stats/summary, GET /stats/daily\n\n## ÔÙÉú³É\n- ĞŞ¸Äºó¶Ë½Ó¿Úºó£º\n`ash\n# ÔÚ²Ö¿â¸ùÄ¿Â¼£º
-cargo run --example dump_openapi -q > sdk/openapi.json
-# ÔÚ sdk/ts Ä¿Â¼£º
-pnpm run generate && pnpm run build
-`\n
+## ç«¯ç‚¹é€ŸæŸ¥ï¼ˆç›¸å¯¹ OpenAPI.BASEï¼‰
+
+- Saveï¼š`POST /save`
+- Authï¼š`GET /auth/qrcode`ï¼Œ`GET /auth/qrcode/{qr_id}/status`ï¼Œ`POST /auth/user-id`
+- Songï¼š`GET /songs/search`
+- Imageï¼š`POST /image/bn`ï¼Œ`POST /image/song`ï¼Œ`POST /image/bn/user`
+- Leaderboardï¼š`GET /leaderboard/rks/top`ï¼Œ`GET /leaderboard/rks/by-rank`ï¼Œ`POST /leaderboard/rks/me`ï¼Œ`PUT /leaderboard/alias`ï¼Œ`PUT /leaderboard/profile`ï¼Œ`GET /public/profile/{alias}`
+- Statsï¼š`GET /stats/summary`ï¼Œ`GET /stats/daily`ï¼Œ`POST /stats/archive/now`
+
+ç®¡ç†ç«¯æ¥å£éœ€è¦è¯·æ±‚å¤´ `X-Admin-Token`ï¼ˆè¯¦è§ `docs/LEADERBOARD_API.md`ï¼‰ã€‚
+

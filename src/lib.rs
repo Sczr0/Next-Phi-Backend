@@ -22,6 +22,9 @@ pub mod watchdog;
 /// HTTP Client 复用工具
 pub mod http;
 
+/// OpenAPI 文档（utoipa）
+pub mod openapi;
+
 // 导出常用类型供外部使用
 pub use config::AppConfig;
 pub use error::AppError;

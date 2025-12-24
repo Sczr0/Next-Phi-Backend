@@ -3,9 +3,10 @@ use axum::extract::Request;
 use axum::http::{HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
-use axum::{Router, http::StatusCode, response::Json, routing::get};
+use axum::{Router, routing::get};
 use moka::future::Cache;
 use phi_backend::features::auth::client::TapTapClient;
+use phi_backend::features::health::handler::health_check;
 use phi_backend::features::leaderboard::handler::create_leaderboard_router;
 use phi_backend::features::rks::handler::create_rks_router;
 use phi_backend::features::stats::{
@@ -14,21 +15,17 @@ use phi_backend::features::stats::{
     middleware::{StateWithStats, stats_middleware},
 };
 use phi_backend::features::{auth, save, song};
+use phi_backend::openapi::ApiDoc;
 use phi_backend::startup::chart_loader::{ChartConstantsMap, load_chart_constants};
 use phi_backend::startup::{run_startup_checks, song_loader};
 use phi_backend::state::AppState;
-use phi_backend::{
-    AppError, ShutdownManager, SystemdWatchdog, config::AppConfig, error::SaveProviderError,
-};
-use serde_json::json;
+use phi_backend::{ShutdownManager, SystemdWatchdog, config::AppConfig};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
-use utoipa::Modify;
 use utoipa::OpenApi;
-use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa_swagger_ui::SwaggerUi;
 
 fn compression_predicate() -> impl tower_http::compression::predicate::Predicate {
@@ -54,151 +51,6 @@ fn compression_predicate() -> impl tower_http::compression::predicate::Predicate
         .and(NotForContentType::const_new("application/vnd.rar"))
         .and(NotForContentType::const_new("video/"))
         .and(NotForContentType::const_new("audio/"))
-}
-
-#[cfg(test)]
-mod compression_predicate_tests {
-    use super::compression_predicate;
-    use axum::body::Body;
-    use axum::http::{Response as HttpResponse, header};
-    use tower_http::compression::predicate::Predicate;
-
-    fn should_compress_for(ct: &str) -> bool {
-        // 命中 SizeAbove（默认 32B），避免因为 body 太小导致测试不稳定。
-        let body_bytes = vec![b'x'; 2048];
-        let resp = HttpResponse::builder()
-            .header(header::CONTENT_TYPE, ct)
-            .body(Body::from(body_bytes))
-            .unwrap();
-        compression_predicate().should_compress(&resp)
-    }
-
-    #[test]
-    fn compression_predicate_disables_sse() {
-        assert!(!should_compress_for("text/event-stream"));
-    }
-
-    #[test]
-    fn compression_predicate_disables_images_but_allows_svg() {
-        assert!(!should_compress_for("image/png"));
-        assert!(should_compress_for("image/svg+xml"));
-    }
-
-    #[test]
-    fn compression_predicate_disables_common_binary_downloads() {
-        assert!(!should_compress_for("application/octet-stream"));
-        assert!(!should_compress_for("application/zip"));
-        assert!(!should_compress_for("application/gzip"));
-    }
-}
-
-#[derive(OpenApi)]
-#[openapi(
-    paths(
-        phi_backend::features::save::handler::get_save_data,
-        phi_backend::features::auth::handler::get_qrcode,
-        phi_backend::features::auth::handler::get_qrcode_status,
-        phi_backend::features::auth::handler::post_user_id,
-        phi_backend::features::song::handler::search_songs,
-        phi_backend::features::image::handler::render_bn,
-        phi_backend::features::image::handler::render_song,
-        phi_backend::features::image::handler::render_bn_user,
-        phi_backend::features::stats::handler::get_daily_stats,
-        phi_backend::features::stats::handler::get_stats_summary,
-        phi_backend::features::leaderboard::handler::get_top,
-        phi_backend::features::leaderboard::handler::get_by_rank,
-        phi_backend::features::leaderboard::handler::post_me,
-        phi_backend::features::leaderboard::handler::put_alias,
-        phi_backend::features::leaderboard::handler::put_profile,
-        phi_backend::features::leaderboard::handler::get_public_profile,
-        phi_backend::features::rks::handler::post_rks_history,
-        health_check,
-    ),
-    components(
-        schemas(
-            AppError,
-            SaveProviderError,
-            phi_backend::features::save::UnifiedSaveRequest,
-            phi_backend::features::save::SaveResponse,
-            phi_backend::features::save::models::ParsedSaveDoc,
-            phi_backend::features::save::models::SaveResponseDoc,
-            phi_backend::features::save::models::SaveAndRksResponseDoc,
-            phi_backend::features::save::ExternalApiCredentials,
-            phi_backend::features::save::handler::SaveAndRksResponse,
-            phi_backend::features::rks::engine::PlayerRksResult,
-            phi_backend::features::rks::engine::ChartRankingScore,
-            phi_backend::features::save::models::Difficulty,
-            phi_backend::features::auth::models::SessionData,
-            phi_backend::features::auth::handler::QrCodeCreateResponse,
-            phi_backend::features::auth::handler::QrCodeStatusResponse,
-            phi_backend::features::auth::handler::UserIdResponse,
-            phi_backend::features::song::models::SongInfo,
-            phi_backend::features::song::handler::SongSearchResult,
-            phi_backend::features::stats::models::DailyAggRow,
-            phi_backend::features::stats::handler::FeatureUsageSummary,
-            phi_backend::features::stats::handler::UniqueUsersSummary,
-            phi_backend::features::stats::handler::StatsSummaryResponse,
-            phi_backend::features::leaderboard::models::ChartTextItem,
-            phi_backend::features::leaderboard::models::RksCompositionText,
-            phi_backend::features::leaderboard::models::LeaderboardTopItem,
-            phi_backend::features::leaderboard::models::LeaderboardTopResponse,
-            phi_backend::features::leaderboard::models::MeResponse,
-            phi_backend::features::leaderboard::models::AliasRequest,
-            phi_backend::features::leaderboard::models::ProfileUpdateRequest,
-            phi_backend::features::leaderboard::models::PublicProfileResponse,
-            phi_backend::features::rks::handler::RksHistoryRequest,
-            phi_backend::features::rks::handler::RksHistoryItem,
-            phi_backend::features::rks::handler::RksHistoryResponse,
-        )
-    ),
-    modifiers(&AdminTokenSecurity),
-    tags(
-        (name = "Save", description = "Save APIs"),
-        (name = "Auth", description = "Auth APIs"),
-        (name = "Song", description = "Song APIs"),
-        (name = "Image", description = "Image APIs"),
-        (name = "Stats", description = "Stats APIs"),
-        (name = "Leaderboard", description = "Leaderboard APIs"),
-        (name = "RKS", description = "RKS APIs"),
-        (name = "Health", description = "Health APIs"),
-    ),
-    info(
-        title = "Phi Backend API",
-        version = "0.1.0",
-        description = "Phigros backend service (Axum)"
-    )
-)]
-pub struct ApiDoc;
-
-struct AdminTokenSecurity;
-
-impl Modify for AdminTokenSecurity {
-    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
-        let components = openapi.components.get_or_insert_with(Default::default);
-        components.add_security_scheme(
-            "AdminToken",
-            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-Admin-Token"))),
-        );
-    }
-}
-
-#[utoipa::path(
-    get,
-    path = "/health",
-    summary = "健康检查",
-    description = "用于探活的健康检查端点，返回服务状态与版本信息。",
-    responses((status = 200, description = "服务健康", body = serde_json::Value) ),
-    tag = "Health"
-)]
-async fn health_check() -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::OK,
-        Json(json!({
-            "status": "healthy",
-            "service": "phi-backend",
-            "version": env!("CARGO_PKG_VERSION")
-        })),
-    )
 }
 
 /// 为曲绘静态资源（`/_ill/*`）添加缓存头，降低 SVG 引用大量图片时的后端压力。
@@ -492,4 +344,40 @@ async fn main() {
     }
 
     tracing::info!("服务器已优雅关闭");
+}
+
+#[cfg(test)]
+mod compression_predicate_tests {
+    use super::compression_predicate;
+    use axum::body::Body;
+    use axum::http::{Response as HttpResponse, header};
+    use tower_http::compression::predicate::Predicate;
+
+    fn should_compress_for(ct: &str) -> bool {
+        // 命中 SizeAbove（默认 32B），避免因为 body 太小导致测试不稳定。
+        let body_bytes = vec![b'x'; 2048];
+        let resp = HttpResponse::builder()
+            .header(header::CONTENT_TYPE, ct)
+            .body(Body::from(body_bytes))
+            .unwrap();
+        compression_predicate().should_compress(&resp)
+    }
+
+    #[test]
+    fn compression_predicate_disables_sse() {
+        assert!(!should_compress_for("text/event-stream"));
+    }
+
+    #[test]
+    fn compression_predicate_disables_images_but_allows_svg() {
+        assert!(!should_compress_for("image/png"));
+        assert!(should_compress_for("image/svg+xml"));
+    }
+
+    #[test]
+    fn compression_predicate_disables_common_binary_downloads() {
+        assert!(!should_compress_for("application/octet-stream"));
+        assert!(!should_compress_for("application/zip"));
+        assert!(!should_compress_for("application/gzip"));
+    }
 }

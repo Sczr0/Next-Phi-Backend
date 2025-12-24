@@ -17,9 +17,17 @@ use crate::features::stats::storage::SubmissionRecord;
 use crate::state::AppState;
 
 use super::{
-    models::UnifiedSaveRequest,
+    models::{SaveAndRksResponseDoc, SaveResponseDoc, UnifiedSaveRequest},
     provider::{self, SaveSource},
 };
+
+/// oneOf 响应：仅解析存档，或解析存档并计算 RKS。
+#[derive(serde::Serialize, utoipa::ToSchema)]
+#[serde(untagged)]
+pub enum SaveApiResponse {
+    Save(SaveResponseDoc),
+    SaveAndRks(SaveAndRksResponseDoc),
+}
 
 #[utoipa::path(
     post,
@@ -31,10 +39,35 @@ use super::{
         ("calculate_rks" = Option<bool>, Query, description = "是否计算玩家RKS（true=计算，默认不计算）"),
     ),
     responses(
-        (status = 200, description = "成功解析存档，body 为 SaveResponse", body = crate::features::save::models::SaveResponseDoc),
-        (status = 200, description = "成功解析存档并计算RKS", body = crate::features::save::models::SaveAndRksResponseDoc),
-        (status = 400, description = "请求参数错误", body = AppError),
-        (status = 500, description = "服务器内部错误", body = AppError)
+        (
+            status = 200,
+            description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段",
+            body = SaveApiResponse
+        ),
+        (
+            status = 400,
+            description = "请求参数错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 401,
+            description = "认证失败",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 502,
+            description = "上游网络错误",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = String,
+            content_type = "text/plain"
+        )
     ),
     tag = "Save"
 )]

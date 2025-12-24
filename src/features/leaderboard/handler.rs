@@ -5,7 +5,7 @@ use axum::{
     response::Json,
     routing::{get, post, put},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
 use std::collections::HashMap;
 
@@ -35,6 +35,19 @@ pub struct RankQuery {
     pub end: Option<i64>,
     /// 返回数量（与 start 组合使用）
     pub count: Option<i64>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(example = json!({"ok": true}))]
+pub struct OkResponse {
+    pub ok: bool,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[schema(example = json!({"ok": true, "alias": "Alice"}))]
+pub struct OkAliasResponse {
+    pub ok: bool,
+    pub alias: String,
 }
 
 fn mask_user_prefix(hash: &str) -> String {
@@ -100,7 +113,15 @@ fn is_cjk_char(c: char) -> bool {
     summary = "排行榜TOP（按RKS）",
     description = "返回公开玩家的RKS排行榜。若玩家开启展示，将在条目中附带BestTop3/APTop3文字数据。",
     params(("limit" = Option<i64>, Query, description = "每页数量，默认50，最大200"),("offset" = Option<i64>, Query, description = "偏移量")),
-    responses((status = 200, body = LeaderboardTopResponse)),
+    responses(
+        (status = 200, description = "排行榜 TOP", body = LeaderboardTopResponse),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn get_top(
@@ -240,7 +261,21 @@ pub async fn get_top(
         ("end" = Option<i64>, Query, description = "结束排名（包含）"),
         ("count" = Option<i64>, Query, description = "返回数量（与 start 组合使用）")
     ),
-    responses((status = 200, body = LeaderboardTopResponse)),
+    responses(
+        (status = 200, description = "区间结果", body = LeaderboardTopResponse),
+        (
+            status = 422,
+            description = "参数校验失败（缺少 rank/start 等）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn get_by_rank(
@@ -362,7 +397,15 @@ pub async fn get_by_rank(
     summary = "我的名次（按RKS）",
     description = "通过认证信息推导用户身份，返回名次、分数、总量与百分位（竞争排名）",
     request_body = crate::features::save::models::UnifiedSaveRequest,
-    responses((status = 200, body = MeResponse)),
+    responses(
+        (status = 200, description = "查询成功", body = MeResponse),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败/无法识别用户",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn post_me(
@@ -435,13 +478,33 @@ pub async fn post_me(
     path = "/leaderboard/alias",
     summary = "设置/更新公开别名（幂等）",
     request_body = AliasRequest,
-    responses((status = 200, description = "ok"),(status=409, description="别名被占用"),(status=422, description="别名非法")),
+    responses(
+        (status = 200, description = "设置成功", body = OkAliasResponse),
+        (
+            status = 409,
+            description = "别名被占用",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 422,
+            description = "别名非法",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/写入失败/无法识别用户",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn put_alias(
     State(state): State<AppState>,
     Json(req): Json<AliasRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<OkAliasResponse>, AppError> {
     let storage = state
         .stats_storage
         .as_ref()
@@ -509,7 +572,10 @@ pub async fn put_alias(
         .execute(&storage.pool)
         .await;
     match res {
-        Ok(_) => Ok(Json(serde_json::json!({"ok": true, "alias": alias }))),
+        Ok(_) => Ok(Json(OkAliasResponse {
+            ok: true,
+            alias: alias.to_string(),
+        })),
         Err(e) => {
             if format!("{e}").to_lowercase().contains("unique") {
                 return Err(AppError::Conflict("别名已被占用".into()));
@@ -524,13 +590,27 @@ pub async fn put_alias(
     path = "/leaderboard/profile",
     summary = "更新公开资料开关（文字展示）",
     request_body = ProfileUpdateRequest,
-    responses((status = 200, description = "ok")),
+    responses(
+        (status = 200, description = "更新成功", body = OkResponse),
+        (
+            status = 422,
+            description = "参数校验失败（例如配置禁止公开）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/更新失败/无法识别用户",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn put_profile(
     State(state): State<AppState>,
     Json(req): Json<ProfileUpdateRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<OkResponse>, AppError> {
     let storage = state
         .stats_storage
         .as_ref()
@@ -605,7 +685,7 @@ pub async fn put_profile(
     q.execute(&storage.pool)
         .await
         .map_err(|e| AppError::Internal(format!("更新资料失败: {e}")))?;
-    Ok(Json(serde_json::json!({"ok": true})))
+    Ok(Json(OkResponse { ok: true }))
 }
 
 #[utoipa::path(
@@ -613,7 +693,21 @@ pub async fn put_profile(
     path = "/public/profile/{alias}",
     summary = "公开玩家资料（纯文字）",
     params(("alias" = String, Path, description = "公开别名")),
-    responses((status = 200, body = PublicProfileResponse), (status = 404, description = "not found")),
+    responses(
+        (status = 200, description = "公开资料", body = PublicProfileResponse),
+        (
+            status = 404,
+            description = "未找到（别名不存在或未公开）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn get_public_profile(
@@ -723,10 +817,24 @@ pub struct SuspiciousItem {
     params(
         ("X-Admin-Token" = String, Header, description = "管理员令牌（config.leaderboard.admin_tokens）"),
         ("min_score"= Option<f64>, Query, description="最小可疑分，默认0.6"),
-        ("limit"=Option<i64>, Query, description="返回数量，默认100")
+        ("limit"=Option<i64>, Query, description="返回数量，默认 100")
     ),
     security(("AdminToken" = [])),
-    responses((status=200, body= [SuspiciousItem])),
+    responses(
+        (status = 200, description = "可疑列表", body = [SuspiciousItem]),
+        (
+            status = 401,
+            description = "管理员令牌缺失/无效",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn get_suspicious(
@@ -789,14 +897,34 @@ pub struct ResolveRequest {
     params(("X-Admin-Token" = String, Header, description = "管理员令牌（config.leaderboard.admin_tokens）")),
     security(("AdminToken" = [])),
     request_body = ResolveRequest,
-    responses((status=200, description="ok")),
+    responses(
+        (status = 200, description = "处理成功", body = OkResponse),
+        (
+            status = 401,
+            description = "管理员令牌缺失/无效",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败（status 非法等）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/写入失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn post_resolve(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<ResolveRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<OkResponse>, AppError> {
     let admin = require_admin(&headers)?;
     let storage = state
         .stats_storage
@@ -823,7 +951,7 @@ pub async fn post_resolve(
     sqlx::query("INSERT INTO moderation_flags(user_hash,status,reason,severity,created_by,created_at) VALUES(?,?,?,?,?,?)")
         .bind(&req.user_hash).bind(st).bind(req.reason.unwrap_or_default()).bind(0_i64).bind(admin).bind(now)
         .execute(&storage.pool).await.map_err(|e| AppError::Internal(format!("resolve flag: {e}")))?;
-    Ok(Json(serde_json::json!({"ok": true})))
+    Ok(Json(OkResponse { ok: true }))
 }
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
@@ -841,14 +969,34 @@ pub struct ForceAliasRequest {
     params(("X-Admin-Token" = String, Header, description = "管理员令牌（config.leaderboard.admin_tokens）")),
     security(("AdminToken" = [])),
     request_body = ForceAliasRequest,
-    responses((status=200, description="ok")),
+    responses(
+        (status = 200, description = "设置成功", body = OkAliasResponse),
+        (
+            status = 401,
+            description = "管理员令牌缺失/无效",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败（别名非法等）",
+            body = String,
+            content_type = "text/plain"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/写入失败",
+            body = String,
+            content_type = "text/plain"
+        )
+    ),
     tag = "Leaderboard"
 )]
 pub async fn post_alias_force(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<ForceAliasRequest>,
-) -> Result<Json<serde_json::Value>, AppError> {
+) -> Result<Json<OkAliasResponse>, AppError> {
     require_admin(&headers)?;
     let storage = state
         .stats_storage
@@ -895,7 +1043,10 @@ pub async fn post_alias_force(
     tx.commit()
         .await
         .map_err(|e| AppError::Internal(format!("tx commit: {e}")))?;
-    Ok(Json(serde_json::json!({"ok": true, "alias": alias })))
+    Ok(Json(OkAliasResponse {
+        ok: true,
+        alias: alias.to_string(),
+    }))
 }
 
 pub fn create_leaderboard_router() -> Router<AppState> {
