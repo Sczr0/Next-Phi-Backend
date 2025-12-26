@@ -187,6 +187,8 @@ impl StatsStorage {
         start: NaiveDate,
         end: NaiveDate,
         feature: Option<String>,
+        route: Option<String>,
+        method: Option<String>,
     ) -> Result<Vec<DailyAggRow>, AppError> {
         // 若 daily_agg 尚未生成，临时从 events 动态聚合
         let start_dt = NaiveDateTime::new(start, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
@@ -204,6 +206,8 @@ impl StatsStorage {
             FROM events
             WHERE ts_utc BETWEEN ? AND ?
               AND (? IS NULL OR feature = ?)
+              AND (? IS NULL OR route = ?)
+              AND (? IS NULL OR method = ?)
             GROUP BY date, feature, route, method
             ORDER BY date ASC
         "#;
@@ -212,6 +216,10 @@ impl StatsStorage {
             .bind(&end_s)
             .bind(feature.as_ref())
             .bind(feature.as_ref())
+            .bind(route.as_ref())
+            .bind(route.as_ref())
+            .bind(method.as_ref())
+            .bind(method.as_ref())
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AppError::Internal(format!("query daily: {e}")))?;
