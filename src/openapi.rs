@@ -50,7 +50,7 @@ impl Modify for ApiServers {
     paths(
         crate::features::health::handler::health_check,
         crate::features::save::handler::get_save_data,
-        crate::features::auth::handler::get_qrcode,
+        crate::features::auth::handler::post_qrcode,
         crate::features::auth::handler::get_qrcode_status,
         crate::features::auth::handler::post_user_id,
         crate::features::song::handler::search_songs,

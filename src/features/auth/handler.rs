@@ -1,14 +1,13 @@
 use axum::{
     Router,
     extract::{Path, Query, State},
-    http::StatusCode,
-    response::Json,
+    http::{HeaderValue, StatusCode, header},
+    response::{IntoResponse, Json, Response},
     routing::{get, post},
 };
 use base64::Engine;
 use qrcode::{QrCode, render::svg};
-use serde::Serialize;
-use std::collections::HashMap;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -115,10 +114,13 @@ pub struct QrCodeCreateResponse {
 pub struct QrCodeStatusResponse {
     /// 当前状态：Pending/Scanned/Confirmed/Error/Expired
     #[schema(example = "Pending")]
-    pub status: String,
+    pub status: QrCodeStatusValue,
     /// 若 Confirmed，返回 LeanCloud Session Token
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_token: Option<String>,
+    /// 可选：机器可读的错误码（仅在 status=Error 时出现）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_code: Option<String>,
     /// 可选的人类可读提示消息
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -127,13 +129,57 @@ pub struct QrCodeStatusResponse {
     pub retry_after: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "PascalCase")]
+pub enum QrCodeStatusValue {
+    Pending,
+    Scanned,
+    Confirmed,
+    Error,
+    Expired,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QrCodeQuery {
+    /// TapTap 版本：cn（大陆版）或 global（国际版）
+    #[serde(default)]
+    taptap_version: Option<String>,
+}
+
+fn normalize_taptap_version(v: Option<&str>) -> Result<Option<&'static str>, AppError> {
+    let Some(v) = v else {
+        return Ok(None);
+    };
+    let v = v.trim();
+    if v.is_empty() {
+        return Ok(None);
+    }
+    match v.to_ascii_lowercase().as_str() {
+        "cn" => Ok(Some("cn")),
+        "global" => Ok(Some("global")),
+        _ => Err(AppError::Validation(
+            "taptapVersion 必须为 cn 或 global".to_string(),
+        )),
+    }
+}
+
+fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
+    let mut res = (status, Json(body)).into_response();
+    res.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
+    res
+}
+
 #[utoipa::path(
-    get,
+    post,
     path = "/auth/qrcode",
     summary = "生成登录二维码",
     description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。客户端需保存返回的 qrId 以轮询授权状态。",
     params(
-        ("version" = Option<String>, Query, description = "TapTap 版本：cn（大陆版，默认）或 global（国际版）")
+        ("taptapVersion" = Option<String>, Query, description = "TapTap 版本：cn（大陆版）或 global（国际版）")
     ),
     responses(
         (status = 200, description = "生成二维码成功", body = QrCodeCreateResponse),
@@ -152,16 +198,16 @@ pub struct QrCodeStatusResponse {
     ),
     tag = "Auth"
 )]
-pub async fn get_qrcode(
+pub(crate) async fn post_qrcode(
     State(state): State<AppState>,
-    Query(params): Query<HashMap<String, String>>,
-) -> Result<(StatusCode, Json<QrCodeCreateResponse>), AppError> {
+    Query(params): Query<QrCodeQuery>,
+) -> Result<Response, AppError> {
     // 生成 device_id 与 qr_id
     let device_id = Uuid::new_v4().to_string();
     let qr_id = Uuid::new_v4().to_string();
 
     // 获取版本参数
-    let version = params.get("version").map(|v| v.as_str());
+    let version = normalize_taptap_version(params.taptap_version.as_deref())?;
 
     // 请求 TapTap 设备码
     let device = state
@@ -213,6 +259,7 @@ pub async fn get_qrcode(
             device_code,
             device_id,
             interval_secs,
+            device.expires_in,
             version.map(|v| v.to_string()),
         )
         .await;
@@ -222,7 +269,7 @@ pub async fn get_qrcode(
         verification_url: verification_url_for_scan,
         qrcode_base64,
     };
-    Ok((StatusCode::OK, Json(resp)))
+    Ok(json_no_store(StatusCode::OK, resp))
 }
 
 #[utoipa::path(
@@ -232,32 +279,27 @@ pub async fn get_qrcode(
     description = "根据 qr_id 查询当前授权进度。若返回 Pending 且包含 retry_after，客户端应按该秒数后再发起轮询。",
     params(("qr_id" = String, Path, description = "二维码ID")),
     responses(
-        (status = 200, description = "状态返回", body = QrCodeStatusResponse),
-        (
-            status = 500,
-            description = "服务器内部错误",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        )
+        (status = 200, description = "状态返回", body = QrCodeStatusResponse)
     ),
     tag = "Auth"
 )]
 pub async fn get_qrcode_status(
     State(state): State<AppState>,
     Path(qr_id): Path<String>,
-) -> Result<(StatusCode, Json<QrCodeStatusResponse>), AppError> {
+) -> Result<Response, AppError> {
     let current = match state.qrcode_service.get(&qr_id).await {
         Some(c) => c,
         None => {
             // v2 契约：二维码状态接口始终返回 200 + 状态对象，避免出现“404 但仍返回 JSON body”的特例。
-            return Ok((
+            return Ok(json_no_store(
                 StatusCode::OK,
-                Json(QrCodeStatusResponse {
-                    status: "Expired".to_string(),
+                QrCodeStatusResponse {
+                    status: QrCodeStatusValue::Expired,
                     session_token: None,
+                    error_code: None,
                     message: Some("二维码不存在或已过期".to_string()),
                     retry_after: None,
-                }),
+                },
             ));
         }
     };
@@ -266,14 +308,15 @@ pub async fn get_qrcode_status(
         QrCodeStatus::Confirmed { session_data } => {
             // 命中确认，删除缓存并返回 token
             state.qrcode_service.remove(&qr_id).await;
-            Ok((
+            Ok(json_no_store(
                 StatusCode::OK,
-                Json(QrCodeStatusResponse {
-                    status: "Confirmed".to_string(),
+                QrCodeStatusResponse {
+                    status: QrCodeStatusValue::Confirmed,
                     session_token: Some(session_data.session_token),
+                    error_code: None,
                     message: None,
                     retry_after: None,
-                }),
+                },
             ))
         }
         QrCodeStatus::Pending {
@@ -281,20 +324,36 @@ pub async fn get_qrcode_status(
             device_id,
             interval_secs,
             next_poll_at,
+            expires_at,
             version,
         } => {
             // 频率限制：遵循 TapTap 建议的 interval
             let now = std::time::Instant::now();
+            // 先判断是否已过期（避免无意义轮询）
+            if now >= expires_at {
+                state.qrcode_service.remove(&qr_id).await;
+                return Ok(json_no_store(
+                    StatusCode::OK,
+                    QrCodeStatusResponse {
+                        status: QrCodeStatusValue::Expired,
+                        session_token: None,
+                        error_code: None,
+                        message: Some("二维码已过期".to_string()),
+                        retry_after: None,
+                    },
+                ));
+            }
             if now < next_poll_at {
                 let retry_secs = (next_poll_at - now).as_secs();
-                return Ok((
+                return Ok(json_no_store(
                     StatusCode::OK,
-                    Json(QrCodeStatusResponse {
-                        status: "Pending".to_string(),
+                    QrCodeStatusResponse {
+                        status: QrCodeStatusValue::Pending,
                         session_token: None,
+                        error_code: None,
                         message: None,
                         retry_after: Some(retry_secs),
-                    }),
+                    },
                 ));
             }
             // 轮询 TapTap，判断授权状态
@@ -311,14 +370,15 @@ pub async fn get_qrcode_status(
                         .set_confirmed(&qr_id, session.clone())
                         .await;
                     state.qrcode_service.remove(&qr_id).await;
-                    Ok((
+                    Ok(json_no_store(
                         StatusCode::OK,
-                        Json(QrCodeStatusResponse {
-                            status: "Confirmed".to_string(),
+                        QrCodeStatusResponse {
+                            status: QrCodeStatusValue::Confirmed,
                             session_token: Some(session.session_token),
+                            error_code: None,
                             message: None,
                             retry_after: None,
-                        }),
+                        },
                     ))
                 }
                 Err(AppError::AuthPending(_)) => {
@@ -330,45 +390,64 @@ pub async fn get_qrcode_status(
                             device_code,
                             device_id,
                             interval_secs,
+                            expires_at,
                             version,
                         )
                         .await;
-                    Ok((
+                    Ok(json_no_store(
                         StatusCode::OK,
-                        Json(QrCodeStatusResponse {
-                            status: "Pending".to_string(),
+                        QrCodeStatusResponse {
+                            status: QrCodeStatusValue::Pending,
                             session_token: None,
+                            error_code: None,
                             message: None,
                             retry_after: Some(interval_secs),
-                        }),
+                        },
                     ))
                 }
-                Err(e) => Ok((
-                    StatusCode::OK,
-                    Json(QrCodeStatusResponse {
-                        status: "Error".to_string(),
-                        session_token: None,
-                        message: Some(e.to_string()),
-                        retry_after: None,
-                    }),
-                )),
+                Err(e) => {
+                    tracing::warn!(err = %e, "qrcode poll failed");
+                    let (error_code, message) = match &e {
+                        AppError::Auth(_) => ("UNAUTHORIZED", "认证失败"),
+                        AppError::Network(_) => ("UPSTREAM_ERROR", "上游网络错误"),
+                        AppError::Json(_) => ("UPSTREAM_ERROR", "上游响应解析失败"),
+                        AppError::Validation(_) => ("VALIDATION_FAILED", "请求参数错误"),
+                        AppError::Conflict(_) => ("CONFLICT", "资源冲突"),
+                        AppError::Internal(_) => ("INTERNAL_ERROR", "服务器内部错误"),
+                        AppError::SaveProvider(_) | AppError::Search(_) | AppError::SaveHandlerError(_)
+                        | AppError::ImageRendererError(_) | AppError::AuthPending(_) => {
+                            ("INTERNAL_ERROR", "服务器内部错误")
+                        }
+                    };
+                    Ok(json_no_store(
+                        StatusCode::OK,
+                        QrCodeStatusResponse {
+                            status: QrCodeStatusValue::Error,
+                            session_token: None,
+                            error_code: Some(error_code.to_string()),
+                            message: Some(message.to_string()),
+                            retry_after: None,
+                        },
+                    ))
+                }
             }
         }
-        QrCodeStatus::Scanned => Ok((
+        QrCodeStatus::Scanned => Ok(json_no_store(
             StatusCode::OK,
-            Json(QrCodeStatusResponse {
-                status: "Scanned".to_string(),
+            QrCodeStatusResponse {
+                status: QrCodeStatusValue::Scanned,
                 session_token: None,
+                error_code: None,
                 message: None,
                 retry_after: None,
-            }),
+            },
         )),
     }
 }
 
 pub fn create_auth_router() -> Router<AppState> {
     Router::<AppState>::new()
-        .route("/qrcode", get(get_qrcode))
+        .route("/qrcode", post(post_qrcode))
         .route("/qrcode/:qr_id/status", get(get_qrcode_status))
         .route("/user-id", post(post_user_id))
 }

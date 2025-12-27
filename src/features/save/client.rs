@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 
 use super::decryptor::{CipherSuite, DEFAULT_IV, DecryptionMeta, KdfSpec};
 
+use crate::config::TapTapVersion;
 use crate::error::SaveProviderError;
 
 const USER_AGENT: &str = "LeanCloud-CSharp-SDK/1.0.3";
@@ -118,8 +119,15 @@ pub async fn fetch_from_official(
     // 根据版本选择配置
     let tap_config = match version {
         Some("global") => &config.global,
-        Some("cn") | None => &config.cn,
-        _ => &config.cn,
+        Some("cn") => &config.cn,
+        None => match config.default_version {
+            TapTapVersion::CN => &config.cn,
+            TapTapVersion::Global => &config.global,
+        },
+        _ => match config.default_version {
+            TapTapVersion::CN => &config.cn,
+            TapTapVersion::Global => &config.global,
+        },
     };
 
     let url = format!(

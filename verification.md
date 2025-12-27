@@ -137,3 +137,30 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 - OpenAPI 统一度（v2）：错误响应 content-type 全部收敛为 `application/problem+json`；schema 字段命名下划线占比为 0（详见 `.codex/context-question-13-openapi-v2-uniformity.json`）。
 - TypeScript SDK：已基于最新 OpenAPI 重新生成，默认 `OpenAPI.BASE` 为 `/api/v2`，并可将 `application/problem+json` 解析为 JSON（`ApiError.body` 为 `ProblemDetails`）。
 - 测试：`cargo test -q` 全部通过（新增 `tests/api_contract_v2.rs` 校验关键契约）。
+
+---
+
+# 验证记录（2025-12-28，Codex）
+
+## 任务
+
+按现状落地一版 Auth 改造：
+
+- `/auth/qrcode` 从 **GET -> POST**，并将版本参数统一为 `taptapVersion`
+- 扫码相关响应统一添加 `Cache-Control: no-store`
+- TapTapClient 日志与错误信息脱敏（禁止上游响应体进入对外 `detail`）
+- TapTap 默认版本选择遵循 `config.taptap.default_version`
+- 二维码过期语义使用上游 `expires_in` 驱动（过期后返回 Expired 并清理缓存）
+
+## 执行命令
+
+- `cargo test -q`
+
+## 结果摘要
+
+- 编译与测试：`cargo test -q` 通过（新增 `tests/auth_contract_v2.rs` 与 `src/features/auth/client.rs` 单元测试）。
+- 接口契约：扫码相关响应增加 `Cache-Control: no-store`；`/auth/qrcode` 的 OpenAPI 已切换为 POST 且 query 参数名为 `taptapVersion`。
+
+## 风险与兼容性说明
+
+- **破坏性变更**：调用方若仍以 GET 调用 `/auth/qrcode` 或继续使用旧参数名，将无法按预期工作；需同步更新客户端/SDK 调用方式。
