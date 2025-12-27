@@ -39,14 +39,14 @@ pub struct DailyQuery {
         (
             status = 422,
             description = "参数校验失败（日期格式等）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Stats"
@@ -76,6 +76,7 @@ pub struct ArchiveQuery {
 
 #[derive(Serialize, utoipa::ToSchema)]
 #[schema(example = json!({"ok": true, "date": "2025-12-23"}))]
+#[serde(rename_all = "camelCase")]
 pub struct ArchiveNowResponse {
     pub ok: bool,
     pub date: String,
@@ -92,14 +93,14 @@ pub struct ArchiveNowResponse {
         (
             status = 422,
             description = "参数校验失败（日期格式等）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/归档失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Stats"
@@ -133,6 +134,7 @@ pub fn create_stats_router() -> Router<AppState> {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct FeatureUsageSummary {
     /// 功能名（可能值：bestn、bestn_user、single_query、save、song_search）。
     /// - bestn：生成 BestN 汇总图
@@ -148,6 +150,7 @@ pub struct FeatureUsageSummary {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UniqueUsersSummary {
     /// 去敏后唯一用户总数
     total: i64,
@@ -172,6 +175,7 @@ pub struct StatsSummaryQuery {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RouteUsageSummary {
     route: String,
     count: i64,
@@ -180,18 +184,21 @@ pub struct RouteUsageSummary {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct MethodUsageSummary {
     method: String,
     count: i64,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct StatusCodeSummary {
     status: u16,
     count: i64,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct InstanceUsageSummary {
     instance: String,
     count: i64,
@@ -199,6 +206,7 @@ pub struct InstanceUsageSummary {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ActionUsageSummary {
     feature: String,
     action: String,
@@ -207,6 +215,7 @@ pub struct ActionUsageSummary {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct LatencySummary {
     sample_count: i64,
     avg_ms: Option<f64>,
@@ -216,6 +225,7 @@ pub struct LatencySummary {
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct StatsSummaryResponse {
     /// 展示使用的时区（IANA 名称）
     timezone: String,
@@ -275,14 +285,14 @@ pub struct StatsSummaryResponse {
         (
             status = 422,
             description = "参数校验失败（日期格式/timezone/top 等）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Stats"

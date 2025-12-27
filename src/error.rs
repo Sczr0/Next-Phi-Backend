@@ -1,7 +1,9 @@
 use axum::{
-    http::StatusCode,
+    Json,
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::features::song::models::SongInfo;
@@ -131,25 +133,152 @@ pub enum SearchError {
     NotUnique { candidates: Vec<SongInfo> },
 }
 
+/// RFC7807 风格的错误响应（Problem Details）。
+///
+/// 设计目标：
+/// - 让所有 API 错误返回结构化 JSON，便于 SDK/调用方稳定处理
+/// - 与 OpenAPI 一致（content-type = application/problem+json）
+/// - 允许在不破坏主结构的前提下扩展字段（如 requestId、字段级校验错误）
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProblemDetails {
+    /// 问题类型（URI）。若无更细分的类型，可使用 about:blank。
+    #[serde(rename = "type")]
+    #[schema(example = "about:blank")]
+    pub type_url: String,
+
+    /// 简短标题，用于概括错误。
+    #[schema(example = "Validation Failed")]
+    pub title: String,
+
+    /// HTTP 状态码（与响应 status 一致）。
+    #[schema(example = 422)]
+    pub status: u16,
+
+    /// 人类可读的详细信息（尽量稳定，不建议依赖解析）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+
+    /// 稳定的错误码，用于程序化处理。
+    #[schema(example = "VALIDATION_FAILED")]
+    pub code: String,
+
+    /// 可选：请求追踪 ID（如果后续加入 request-id middleware 可回填）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// 可选：字段级校验错误（如表单/参数校验）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub errors: Option<Vec<ProblemFieldError>>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProblemFieldError {
+    /// 字段名（camelCase）。
+    pub field: String,
+    /// 字段错误信息。
+    pub message: String,
+}
+
+impl AppError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            AppError::AuthPending(_) => StatusCode::ACCEPTED,
+            AppError::Network(_) => StatusCode::BAD_GATEWAY,
+            AppError::Json(_) => StatusCode::BAD_REQUEST,
+            AppError::Auth(_) => StatusCode::UNAUTHORIZED,
+            AppError::SaveHandlerError(_) => StatusCode::BAD_REQUEST,
+            AppError::ImageRendererError(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::SaveProvider(e) => match e {
+                SaveProviderError::Auth(_) | SaveProviderError::InvalidCredentials(_) => {
+                    StatusCode::UNAUTHORIZED
+                }
+                SaveProviderError::Timeout => StatusCode::GATEWAY_TIMEOUT,
+                SaveProviderError::Network(_) => StatusCode::BAD_GATEWAY,
+                // 其余情况更偏向“请求可理解但无法处理”（如解密/完整性/格式问题）
+                _ => StatusCode::UNPROCESSABLE_ENTITY,
+            },
+            AppError::Search(SearchError::NotFound) => StatusCode::NOT_FOUND,
+            AppError::Search(SearchError::NotUnique { .. }) => StatusCode::CONFLICT,
+        }
+    }
+
+    fn stable_code(&self) -> &'static str {
+        match self {
+            AppError::AuthPending(_) => "AUTH_PENDING",
+            AppError::Network(_) => "UPSTREAM_ERROR",
+            AppError::Json(_) => "BAD_REQUEST",
+            AppError::Auth(_) => "UNAUTHORIZED",
+            AppError::SaveHandlerError(_) => "SAVE_BAD_REQUEST",
+            AppError::ImageRendererError(_) => "IMAGE_RENDER_FAILED",
+            AppError::Validation(_) => "VALIDATION_FAILED",
+            AppError::Conflict(_) => "CONFLICT",
+            AppError::Internal(_) => "INTERNAL_ERROR",
+            AppError::SaveProvider(e) => match e {
+                SaveProviderError::Auth(_) | SaveProviderError::InvalidCredentials(_) => {
+                    "SAVE_AUTH_FAILED"
+                }
+                SaveProviderError::Timeout => "UPSTREAM_TIMEOUT",
+                SaveProviderError::Network(_) => "UPSTREAM_ERROR",
+                SaveProviderError::Decrypt(_)
+                | SaveProviderError::Integrity(_)
+                | SaveProviderError::InvalidPadding
+                | SaveProviderError::TagVerification => "SAVE_DECRYPT_FAILED",
+                SaveProviderError::ZipError(_)
+                | SaveProviderError::Io(_)
+                | SaveProviderError::Json(_)
+                | SaveProviderError::Metadata(_)
+                | SaveProviderError::MissingField(_)
+                | SaveProviderError::Unsupported(_)
+                | SaveProviderError::InvalidResponse(_)
+                | SaveProviderError::InvalidHeader => "SAVE_INVALID_DATA",
+            },
+            AppError::Search(SearchError::NotFound) => "NOT_FOUND",
+            AppError::Search(SearchError::NotUnique { .. }) => "SEARCH_NOT_UNIQUE",
+        }
+    }
+
+    fn title(&self) -> &'static str {
+        match self.status_code() {
+            StatusCode::BAD_REQUEST => "Bad Request",
+            StatusCode::UNAUTHORIZED => "Unauthorized",
+            StatusCode::FORBIDDEN => "Forbidden",
+            StatusCode::NOT_FOUND => "Not Found",
+            StatusCode::CONFLICT => "Conflict",
+            StatusCode::UNPROCESSABLE_ENTITY => "Validation Failed",
+            StatusCode::BAD_GATEWAY => "Bad Gateway",
+            StatusCode::GATEWAY_TIMEOUT => "Gateway Timeout",
+            StatusCode::INTERNAL_SERVER_ERROR => "Internal Server Error",
+            StatusCode::ACCEPTED => "Accepted",
+            _ => "Error",
+        }
+    }
+}
+
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            AppError::AuthPending(_) => (StatusCode::ACCEPTED, self.to_string()),
-            AppError::Network(_) => (StatusCode::BAD_GATEWAY, self.to_string()),
-            AppError::Json(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            AppError::Auth(_) => (StatusCode::UNAUTHORIZED, self.to_string()),
-            AppError::SaveHandlerError(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            AppError::ImageRendererError(_) => (StatusCode::UNPROCESSABLE_ENTITY, self.to_string()),
-            AppError::Validation(_) => (StatusCode::UNPROCESSABLE_ENTITY, self.to_string()),
-            AppError::Conflict(_) => (StatusCode::CONFLICT, self.to_string()),
-            AppError::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()),
-            AppError::SaveProvider(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            AppError::Search(SearchError::NotFound) => (StatusCode::NOT_FOUND, self.to_string()),
-            AppError::Search(SearchError::NotUnique { .. }) => {
-                (StatusCode::CONFLICT, self.to_string())
-            }
+        let status = self.status_code();
+        let problem = ProblemDetails {
+            type_url: "about:blank".to_string(),
+            title: self.title().to_string(),
+            status: status.as_u16(),
+            detail: Some(self.to_string()),
+            code: self.stable_code().to_string(),
+            request_id: None,
+            errors: None,
         };
-        (status, message).into_response()
+
+        let mut res = Json(problem).into_response();
+        *res.status_mut() = status;
+        res.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/problem+json"),
+        );
+        res
     }
 }
 

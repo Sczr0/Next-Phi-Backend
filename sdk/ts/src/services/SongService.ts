@@ -24,7 +24,7 @@ export class SongService {
         /**
          * 是否强制唯一匹配（可选）
          */
-        unique: boolean,
+        unique?: boolean,
     }): CancelablePromise<SongSearchResult> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -34,9 +34,10 @@ export class SongService {
                 'unique': unique,
             },
             errors: {
-                400: `请求参数错误`,
+                400: `请求参数错误（缺少 q 等）`,
                 404: `未找到匹配项`,
-                409: `结果不唯一（提供候选）`,
+                409: `结果不唯一`,
+                500: `服务器内部错误`,
             },
         });
     }

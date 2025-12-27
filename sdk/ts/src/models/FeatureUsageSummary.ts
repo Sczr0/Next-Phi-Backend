@@ -19,6 +19,6 @@ export type FeatureUsageSummary = {
     /**
      * 最近一次发生时间（本地时区 RFC3339）
      */
-    last_at?: string | null;
+    lastAt?: string | null;
 };
 

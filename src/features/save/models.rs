@@ -128,11 +128,10 @@ pub struct DifficultyRecord {
 
 // 仅用于 OpenAPI 文档展示的响应模型（包含 updatedAt 字段）
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ParsedSaveDoc {
-    #[serde(rename = "updatedAt")]
     #[schema(example = "2025-09-20T04:10:44.188Z")]
     pub updated_at: Option<String>,
-    #[serde(rename = "summaryParsed")]
     /// 解析自 summary 的关键摘要（如段位、RKS 等）
     pub summary_parsed: Option<serde_json::Value>,
     /// 结构化成绩（歌曲ID -> [四难度成绩]）

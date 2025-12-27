@@ -6,7 +6,7 @@ export type UniqueUsersSummary = {
     /**
      * 按用户来源/凭证类型聚合的唯一用户数，例如 ("official", 123)
      */
-    by_kind: Array<any[]>;
+    byKind: Array<any[]>;
     /**
      * 去敏后唯一用户总数
      */

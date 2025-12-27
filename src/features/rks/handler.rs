@@ -7,6 +7,7 @@ use crate::{error::AppError, state::AppState};
 
 /// RKS 历史查询请求
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
     "auth": {"sessionToken": "r:abcdefg.hijklmn"},
     "limit": 50,
@@ -25,10 +26,11 @@ pub struct RksHistoryRequest {
 
 /// 单条 RKS 历史记录
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
     "rks": 14.73,
-    "rks_jump": 0.05,
-    "created_at": "2025-11-28T10:30:00Z"
+    "rksJump": 0.05,
+    "createdAt": "2025-11-28T10:30:00Z"
 }))]
 pub struct RksHistoryItem {
     /// RKS 值
@@ -41,14 +43,15 @@ pub struct RksHistoryItem {
 
 /// RKS 历史查询响应
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
     "items": [
-        {"rks": 14.73, "rks_jump": 0.05, "created_at": "2025-11-28T10:30:00Z"},
-        {"rks": 14.68, "rks_jump": 0.12, "created_at": "2025-11-27T15:20:00Z"}
+        {"rks": 14.73, "rksJump": 0.05, "createdAt": "2025-11-28T10:30:00Z"},
+        {"rks": 14.68, "rksJump": 0.12, "createdAt": "2025-11-27T15:20:00Z"}
     ],
     "total": 42,
-    "current_rks": 14.73,
-    "peak_rks": 14.73
+    "currentRks": 14.73,
+    "peakRks": 14.73
 }))]
 pub struct RksHistoryResponse {
     /// 历史记录列表（按时间倒序）
@@ -73,14 +76,14 @@ pub struct RksHistoryResponse {
         (
             status = 401,
             description = "认证失败/无法识别用户",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "RKS"

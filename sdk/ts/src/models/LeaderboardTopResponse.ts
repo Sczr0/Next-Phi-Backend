@@ -5,9 +5,9 @@
 import type { LeaderboardTopItem } from './LeaderboardTopItem';
 export type LeaderboardTopResponse = {
     items: Array<LeaderboardTopItem>;
-    next_after_score?: number | null;
-    next_after_updated?: string | null;
-    next_after_user?: string | null;
+    nextAfterScore?: number | null;
+    nextAfterUpdated?: string | null;
+    nextAfterUser?: string | null;
     total: number;
 };
 

@@ -12,5 +12,9 @@ export type UnifiedSaveRequest = {
      * 官方 LeanCloud 会话令牌
      */
     sessionToken?: string | null;
+    /**
+     * TapTap 版本选择：cn（大陆版，默认）或 global（国际版）
+     */
+    taptapVersion?: string | null;
 };
 

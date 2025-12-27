@@ -47,26 +47,32 @@ pub enum SaveApiResponse {
         (
             status = 400,
             description = "请求参数错误",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 401,
             description = "认证失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 502,
-            description = "上游网络错误",
-            body = String,
-            content_type = "text/plain"
+            description = "上游网络错误（非超时）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 504,
+            description = "上游超时",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "服务器内部错误",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Save"

@@ -2,7 +2,6 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-import type { ImageFormat } from './ImageFormat';
 import type { Theme } from './Theme';
 import type { UnifiedSaveRequest } from './UnifiedSaveRequest';
 /**
@@ -12,11 +11,7 @@ export type RenderBnRequest = (UnifiedSaveRequest & {
     /**
      * 是否将封面等资源内嵌到 PNG（默认为 false）
      */
-    embed_images?: boolean;
-    /**
-     * 输出图片格式（png/jpeg，默认 png）
-     */
-    format?: ImageFormat;
+    embedImages?: boolean;
     /**
      * 取前 N 条 RKS 最高的成绩（默认 30）
      */
@@ -29,9 +24,5 @@ export type RenderBnRequest = (UnifiedSaveRequest & {
      * 渲染主题：white/black（默认 black）
      */
     theme?: Theme;
-    /**
-     * 目标宽度像素（可选；不填使用默认 1200）。用于下采样以减小体积。
-     */
-    width?: number | null;
 });
 

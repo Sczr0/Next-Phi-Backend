@@ -23,6 +23,6 @@ export type RenderUserBnRequest = {
     /**
      * 解除水印的口令（匹配配置或动态口令时，显式/隐式水印均关闭）
      */
-    unlock_password?: string | null;
+    unlockPassword?: string | null;
 };
 

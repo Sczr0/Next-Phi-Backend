@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
   "song": "Tempestissimo",
   "difficulty": "AT",
@@ -19,9 +20,10 @@ pub struct ChartTextItem {
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
-  "best27_sum": 390.12,
-  "ap_top3_sum": 49.20
+  "best27Sum": 390.12,
+  "apTop3Sum": 49.20
 }))]
 pub struct RksCompositionText {
     /// Best27 的 RKS 总和
@@ -31,14 +33,15 @@ pub struct RksCompositionText {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
   "rank": 1,
   "alias": "Alice",
   "user": "ab12****",
   "score": 14.73,
-  "updated_at": "2025-09-20T04:10:44Z",
-  "best_top3": [{"song":"Tempestissimo","difficulty":"AT","acc":99.43,"rks":15.12}],
-  "ap_top3": [{"song":"AP Song","difficulty":"IN","acc":100.0,"rks":13.45}]
+  "updatedAt": "2025-09-20T04:10:44Z",
+  "bestTop3": [{"song":"Tempestissimo","difficulty":"AT","acc":99.43,"rks":15.12}],
+  "apTop3": [{"song":"AP Song","difficulty":"IN","acc":100.0,"rks":13.45}]
 }))]
 pub struct LeaderboardTopItem {
     /// 名次（竞争排名）
@@ -60,6 +63,7 @@ pub struct LeaderboardTopItem {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
   "items": [
     {
@@ -67,13 +71,13 @@ pub struct LeaderboardTopItem {
       "alias": "Alice",
       "user": "ab12****",
       "score": 14.73,
-      "updated_at": "2025-09-20T04:10:44Z"
+      "updatedAt": "2025-09-20T04:10:44Z"
     }
   ],
   "total": 12345,
-  "next_after_score": 14.73,
-  "next_after_updated": "2025-09-20T04:10:44Z",
-  "next_after_user": "abcd1234"
+  "nextAfterScore": 14.73,
+  "nextAfterUpdated": "2025-09-20T04:10:44Z",
+  "nextAfterUser": "abcd1234"
 }))]
 pub struct LeaderboardTopResponse {
     pub items: Vec<LeaderboardTopItem>,
@@ -87,6 +91,7 @@ pub struct LeaderboardTopResponse {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
   "rank": 42,
   "score": 13.21,
@@ -101,6 +106,7 @@ pub struct MeResponse {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
   "auth": {"sessionToken": "r:abcdefg.hijklmn"},
   "alias": "Alice"
@@ -111,12 +117,13 @@ pub struct AliasRequest {
 }
 
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
   "auth": {"sessionToken": "r:abcdefg.hijklmn"},
-  "is_public": true,
-  "show_rks_composition": true,
-  "show_best_top3": true,
-  "show_ap_top3": true
+  "isPublic": true,
+  "showRksComposition": true,
+  "showBestTop3": true,
+  "showApTop3": true
 }))]
 pub struct ProfileUpdateRequest {
     pub auth: crate::features::save::models::UnifiedSaveRequest,
@@ -127,13 +134,14 @@ pub struct ProfileUpdateRequest {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({
   "alias": "Alice",
   "score": 14.73,
-  "updated_at": "2025-09-20T04:10:44Z",
-  "rks_composition": {"best27_sum": 390.12, "ap_top3_sum": 49.20},
-  "best_top3": [{"song":"Tempestissimo","difficulty":"AT","acc":99.43,"rks":15.12}],
-  "ap_top3": [{"song":"AP Song","difficulty":"IN","acc":100.0,"rks":13.45}]
+  "updatedAt": "2025-09-20T04:10:44Z",
+  "rksComposition": {"best27Sum": 390.12, "apTop3Sum": 49.20},
+  "bestTop3": [{"song":"Tempestissimo","difficulty":"AT","acc":99.43,"rks":15.12}],
+  "apTop3": [{"song":"AP Song","difficulty":"IN","acc":100.0,"rks":13.45}]
 }))]
 pub struct PublicProfileResponse {
     pub alias: String,

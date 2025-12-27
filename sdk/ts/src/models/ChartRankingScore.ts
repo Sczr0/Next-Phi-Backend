@@ -15,6 +15,6 @@ export type ChartRankingScore = {
     /**
      * 歌曲 ID
      */
-    song_id: string;
+    songId: string;
 };
 

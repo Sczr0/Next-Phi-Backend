@@ -38,12 +38,14 @@ pub struct RankQuery {
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({"ok": true}))]
 pub struct OkResponse {
     pub ok: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 #[schema(example = json!({"ok": true, "alias": "Alice"}))]
 pub struct OkAliasResponse {
     pub ok: bool,
@@ -118,8 +120,8 @@ fn is_cjk_char(c: char) -> bool {
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -266,14 +268,14 @@ pub async fn get_top(
         (
             status = 422,
             description = "参数校验失败（缺少 rank/start 等）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -402,8 +404,8 @@ pub async fn get_by_rank(
         (
             status = 500,
             description = "统计存储未初始化/查询失败/无法识别用户",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -483,20 +485,20 @@ pub async fn post_me(
         (
             status = 409,
             description = "别名被占用",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 422,
             description = "别名非法",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/写入失败/无法识别用户",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -595,14 +597,14 @@ pub async fn put_alias(
         (
             status = 422,
             description = "参数校验失败（例如配置禁止公开）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/更新失败/无法识别用户",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -698,14 +700,14 @@ pub async fn put_profile(
         (
             status = 404,
             description = "未找到（别名不存在或未公开）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -799,8 +801,9 @@ pub(crate) fn require_admin(headers: &HeaderMap) -> Result<String, AppError> {
   "alias": "Alice",
   "score": 14.73,
   "suspicion": 1.10,
-  "updated_at": "2025-09-20T04:10:44Z"
+  "updatedAt": "2025-09-20T04:10:44Z"
 }))]
+#[serde(rename_all = "camelCase")]
 pub struct SuspiciousItem {
     user: String,
     alias: Option<String>,
@@ -825,14 +828,14 @@ pub struct SuspiciousItem {
         (
             status = 401,
             description = "管理员令牌缺失/无效",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -882,7 +885,8 @@ pub async fn get_suspicious(
 }
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
-#[schema(example = json!({"user_hash":"abcde12345","status":"shadow","reason":"suspicious jump"}))]
+#[schema(example = json!({"userHash":"abcde12345","status":"shadow","reason":"suspicious jump"}))]
+#[serde(rename_all = "camelCase")]
 pub struct ResolveRequest {
     pub user_hash: String,
     pub status: String,
@@ -902,20 +906,20 @@ pub struct ResolveRequest {
         (
             status = 401,
             description = "管理员令牌缺失/无效",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 422,
             description = "参数校验失败（status 非法等）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/写入失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"
@@ -955,7 +959,8 @@ pub async fn post_resolve(
 }
 
 #[derive(serde::Deserialize, utoipa::ToSchema)]
-#[schema(example = json!({"user_hash":"abcde12345","alias":"Alice"}))]
+#[schema(example = json!({"userHash":"abcde12345","alias":"Alice"}))]
+#[serde(rename_all = "camelCase")]
 pub struct ForceAliasRequest {
     pub user_hash: String,
     pub alias: String,
@@ -974,20 +979,20 @@ pub struct ForceAliasRequest {
         (
             status = 401,
             description = "管理员令牌缺失/无效",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 422,
             description = "参数校验失败（别名非法等）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "统计存储未初始化/写入失败",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Leaderboard"

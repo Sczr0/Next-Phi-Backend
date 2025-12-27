@@ -2,14 +2,14 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-export type RksCompositionText = {
+export type ProblemFieldError = {
     /**
-     * AP Top3 的 RKS 总和
+     * 字段名（camelCase）。
      */
-    apTop3Sum: number;
+    field: string;
     /**
-     * Best27 的 RKS 总和
+     * 字段错误信息。
      */
-    best27Sum: number;
+    message: string;
 };
 

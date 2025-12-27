@@ -7,6 +7,7 @@ use crate::startup::chart_loader::ChartConstants;
 
 /// 单曲信息（来源：info/info.csv）
 #[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SongInfo {
     /// 歌曲唯一 ID（与封面/定数等资源对应）
     #[schema(example = "97f9466b2e77")]

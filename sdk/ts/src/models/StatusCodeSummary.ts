@@ -2,10 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-export type SessionData = {
-    /**
-     * LeanCloud Session Token
-     */
-    session_token: string;
+export type StatusCodeSummary = {
+    count: number;
+    status: number;
 };
 

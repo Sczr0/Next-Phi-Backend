@@ -10,7 +10,7 @@ export type RenderSongRequest = (UnifiedSaveRequest & {
     /**
      * 是否将封面等资源内嵌到 PNG（默认为 false）
      */
-    embed_images?: boolean;
+    embedImages?: boolean;
     /**
      * 可选：用于显示的玩家昵称
      */

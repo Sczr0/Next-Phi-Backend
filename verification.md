@@ -112,3 +112,28 @@ running 0 tests
 test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
 ```
 
+---
+
+# 验证记录（2025-12-28，Codex）
+
+## 任务
+
+在 `feat` 分支落地 API v2 契约：
+
+- 默认 API 前缀切换为 `/api/v2`
+- JSON 字段命名统一为 `camelCase`
+- 错误响应统一为 RFC7807 `ProblemDetails`（`application/problem+json`）
+- 重新导出 OpenAPI，并重新生成 TypeScript SDK
+
+## 执行命令
+
+- `cargo run --example dump_openapi -q`
+- `python -c ...`（统计 OpenAPI 统一度，结果写入 `.codex/context-question-13-openapi-v2-uniformity.json`）
+- `cd sdk/ts; pnpm i; pnpm run generate; pnpm run build`
+- `cargo test -q`
+
+## 结果摘要
+
+- OpenAPI 统一度（v2）：错误响应 content-type 全部收敛为 `application/problem+json`；schema 字段命名下划线占比为 0（详见 `.codex/context-question-13-openapi-v2-uniformity.json`）。
+- TypeScript SDK：已基于最新 OpenAPI 重新生成，默认 `OpenAPI.BASE` 为 `/api/v2`，并可将 `application/problem+json` 解析为 JSON（`ApiError.body` 为 `ProblemDetails`）。
+- 测试：`cargo test -q` 全部通过（新增 `tests/api_contract_v2.rs` 校验关键契约）。

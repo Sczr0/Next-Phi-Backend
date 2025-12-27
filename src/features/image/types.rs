@@ -16,6 +16,7 @@ pub enum Theme {
 
 /// BN 渲染请求体
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RenderBnRequest {
     /// 认证方式（二选一）：sessionToken 或 externalCredentials
     #[serde(flatten)]
@@ -37,6 +38,7 @@ pub struct RenderBnRequest {
 
 /// 单曲渲染请求体
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RenderSongRequest {
     /// 认证方式（二选一）：sessionToken 或 externalCredentials
     #[serde(flatten)]
@@ -58,6 +60,7 @@ fn default_n() -> u32 {
 
 /// 用户自定义 BN 渲染请求（未验证成绩）
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RenderUserBnRequest {
     /// 主题（默认 black）
     #[serde(default)]
@@ -73,6 +76,7 @@ pub struct RenderUserBnRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct UserScoreItem {
     /// 歌曲 ID 或名称
     pub song: String,

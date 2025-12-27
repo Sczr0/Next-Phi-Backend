@@ -30,33 +30,33 @@ fn parse_bool(s: &str) -> bool {
     description = "按 ID/官方名/别名进行模糊搜索。`unique=true` 时期望唯一命中，未命中返回 404，多命中返回 409。",
     params(
         ("q" = String, Query, description = "查询字符串"),
-        ("unique" = bool, Query, description = "是否强制唯一匹配（可选）")
+        ("unique" = Option<bool>, Query, description = "是否强制唯一匹配（可选）")
     ),
     responses(
         (status = 200, description = "查询成功（unique=true 时返回单个对象，否则为列表）", body = SongSearchResult),
         (
             status = 400,
             description = "请求参数错误（缺少 q 等）",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 404,
             description = "未找到匹配项",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 409,
             description = "结果不唯一",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "服务器内部错误",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Song"

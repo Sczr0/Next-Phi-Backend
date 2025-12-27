@@ -10,11 +10,11 @@ export type LeaderboardTopItem = {
     /**
      * （可选）AP Top3 列表（当用户允许展示时）
      */
-    ap_top3?: any[] | null;
+    apTop3?: any[] | null;
     /**
      * （可选）BestTop3 列表（当用户允许展示时）
      */
-    best_top3?: any[] | null;
+    bestTop3?: any[] | null;
     /**
      * 名次（竞争排名）
      */
@@ -26,7 +26,7 @@ export type LeaderboardTopItem = {
     /**
      * 最近更新时间（UTC RFC3339）
      */
-    updated_at: string;
+    updatedAt: string;
     /**
      * 去敏化用户标识（hash 前缀）
      */

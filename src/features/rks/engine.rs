@@ -6,6 +6,7 @@ use serde::Serialize;
 
 /// 单张谱面的 RKS 结果
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ChartRankingScore {
     /// 歌曲 ID
     #[schema(example = "97f9466b2e77")]
@@ -37,6 +38,7 @@ pub fn calculate_single_chart_rks(accuracy: f32, chart_constant: f32) -> f64 {
 
 /// 玩家 RKS 计算结果
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct PlayerRksResult {
     /// 玩家总 RKS （Best27 + AP3）/ 30
     #[schema(example = 14.56)]

@@ -14,7 +14,7 @@ export type DailyAggRow = {
     /**
      * 错误次数（status >= 400）
      */
-    err_count: number;
+    errCount: number;
     /**
      * 业务功能名（bestn/single_query/save 等）
      */

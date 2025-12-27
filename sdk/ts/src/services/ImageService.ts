@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { BinaryImage } from '../models/BinaryImage';
 import type { RenderBnRequest } from '../models/RenderBnRequest';
 import type { RenderSongRequest } from '../models/RenderSongRequest';
 import type { RenderUserBnRequest } from '../models/RenderUserBnRequest';
@@ -12,108 +13,173 @@ export class ImageService {
     /**
      * 生成 BestN 汇总图片
      * 从官方/外部存档解析玩家成绩，按 RKS 值排序取前 N 条生成 BestN 概览（PNG）。可选内嵌封面与主题切换。
-     * @returns any PNG bytes of BN image
+     * @returns BinaryImage 图片（由 query format 决定）
      * @throws ApiError
      */
     public static renderBn({
         requestBody,
         format,
+        template,
         width,
+        webpQuality,
+        webpLossless,
     }: {
         requestBody: RenderBnRequest,
         /**
-         * 输出格式：png|jpeg，默认 png
+         * 输出格式：png|jpeg|webp|svg，默认 png
          */
         format?: string,
+        /**
+         * SVG 模板 ID：对应 resources/templates/image/bn/{id}.svg.jinja（不传则使用内置手写 SVG）
+         */
+        template?: string,
         /**
          * 目标宽度像素：按宽度同比例缩放
          */
         width?: number,
-    }): CancelablePromise<any> {
+        /**
+         * WebP 质量：1-100（仅在 format=webp 时有效，默认 80）
+         */
+        webpQuality?: number,
+        /**
+         * WebP 无损模式（仅在 format=webp 时有效，默认 false）
+         */
+        webpLossless?: boolean,
+    }): CancelablePromise<BinaryImage> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/image/bn',
             query: {
                 'format': format,
+                'template': template,
                 'width': width,
+                'webp_quality': webpQuality,
+                'webp_lossless': webpLossless,
             },
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad request`,
-                500: `Renderer error`,
+                400: `请求参数错误/认证缺失`,
+                401: `认证失败`,
+                422: `参数校验失败/渲染错误`,
+                500: `服务器内部错误`,
+                502: `上游网络错误`,
             },
         });
     }
     /**
      * 生成用户自报成绩的 BestN 图片
      * 无需存档，直接提交若干条用户自报成绩，计算 RKS 排序并生成 BestN 图片；支持水印解除口令。
-     * @returns any PNG bytes of user BN image
+     * @returns BinaryImage 图片（由 query format 决定）
      * @throws ApiError
      */
     public static renderBnUser({
         requestBody,
         format,
+        template,
         width,
+        webpQuality,
+        webpLossless,
     }: {
         requestBody: RenderUserBnRequest,
         /**
-         * 输出格式：png|jpeg，默认 png
+         * 输出格式：png|jpeg|webp|svg，默认 png
          */
         format?: string,
+        /**
+         * SVG 模板 ID：对应 resources/templates/image/bn/{id}.svg.jinja（不传则使用内置手写 SVG）
+         */
+        template?: string,
         /**
          * 目标宽度像素：按宽度同比例缩放
          */
         width?: number,
-    }): CancelablePromise<any> {
+        /**
+         * WebP 质量：1-100（仅在 format=webp 时有效，默认 80）
+         */
+        webpQuality?: number,
+        /**
+         * WebP 无损模式（仅在 format=webp 时有效，默认 false）
+         */
+        webpLossless?: boolean,
+    }): CancelablePromise<BinaryImage> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/image/bn/user',
             query: {
                 'format': format,
+                'template': template,
                 'width': width,
+                'webp_quality': webpQuality,
+                'webp_lossless': webpLossless,
             },
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad request`,
-                500: `Renderer error`,
+                400: `请求参数错误`,
+                404: `歌曲未找到（unique search）`,
+                409: `歌曲结果不唯一（unique search）`,
+                422: `参数校验失败/渲染错误`,
+                500: `服务器内部错误`,
             },
         });
     }
     /**
      * 生成单曲成绩图片
      * 从存档中定位指定歌曲（支持 ID/名称），展示四难度成绩、RKS、推分建议等信息（PNG）。
-     * @returns any PNG bytes of song image
+     * @returns BinaryImage 图片（由 query format 决定）
      * @throws ApiError
      */
     public static renderSong({
         requestBody,
         format,
+        template,
         width,
+        webpQuality,
+        webpLossless,
     }: {
         requestBody: RenderSongRequest,
         /**
-         * 输出格式：png|jpeg，默认 png
+         * 输出格式：png|jpeg|webp|svg，默认 png
          */
         format?: string,
+        /**
+         * SVG 模板 ID：对应 resources/templates/image/song/{id}.svg.jinja（不传则使用内置手写 SVG）
+         */
+        template?: string,
         /**
          * 目标宽度像素：按宽度同比例缩放
          */
         width?: number,
-    }): CancelablePromise<any> {
+        /**
+         * WebP 质量：1-100（仅在 format=webp 时有效，默认 80）
+         */
+        webpQuality?: number,
+        /**
+         * WebP 无损模式（仅在 format=webp 时有效，默认 false）
+         */
+        webpLossless?: boolean,
+    }): CancelablePromise<BinaryImage> {
         return __request(OpenAPI, {
             method: 'POST',
             url: '/image/song',
             query: {
                 'format': format,
+                'template': template,
                 'width': width,
+                'webp_quality': webpQuality,
+                'webp_lossless': webpLossless,
             },
             body: requestBody,
             mediaType: 'application/json',
             errors: {
-                400: `Bad request`,
-                500: `Renderer error`,
+                400: `请求参数错误/认证缺失`,
+                401: `认证失败`,
+                404: `歌曲未找到（unique search）`,
+                409: `歌曲结果不唯一（unique search）`,
+                422: `参数校验失败/渲染错误`,
+                500: `服务器内部错误`,
+                502: `上游网络错误`,
             },
         });
     }

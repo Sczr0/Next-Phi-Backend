@@ -2,7 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-/**
- * 输出图片格式
- */
-export type ImageFormat = 'png' | 'jpeg' | 'webp';
+export type InstanceUsageSummary = {
+    count: number;
+    instance: string;
+    lastAt?: string | null;
+};
+

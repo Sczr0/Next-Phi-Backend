@@ -5,10 +5,10 @@
 import type { RksCompositionText } from './RksCompositionText';
 export type PublicProfileResponse = {
     alias: string;
-    ap_top3?: any[] | null;
-    best_top3?: any[] | null;
-    rks_composition?: (null | RksCompositionText);
+    apTop3?: any[] | null;
+    bestTop3?: any[] | null;
+    rksComposition?: (null | RksCompositionText);
     score: number;
-    updated_at: string;
+    updatedAt: string;
 };
 

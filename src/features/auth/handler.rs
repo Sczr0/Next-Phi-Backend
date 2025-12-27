@@ -38,14 +38,14 @@ pub struct UserIdResponse {
         (
             status = 422,
             description = "凭证缺失/无效，或无法识别用户",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "服务端未配置 user_hash_salt",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Auth"
@@ -97,6 +97,7 @@ pub async fn post_user_id(
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct QrCodeCreateResponse {
     /// 二维码标识，用于轮询状态
     #[schema(example = "8b8f2f8a-1a2b-4c3d-9e0f-112233445566")]
@@ -130,7 +131,7 @@ pub struct QrCodeStatusResponse {
     get,
     path = "/auth/qrcode",
     summary = "生成登录二维码",
-    description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。客户端需保存返回的 qr_id 以轮询授权状态。",
+    description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。客户端需保存返回的 qrId 以轮询授权状态。",
     params(
         ("version" = Option<String>, Query, description = "TapTap 版本：cn（大陆版，默认）或 global（国际版）")
     ),
@@ -139,14 +140,14 @@ pub struct QrCodeStatusResponse {
         (
             status = 502,
             description = "上游网络错误",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         ),
         (
             status = 500,
             description = "服务器内部错误",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Auth"
@@ -232,12 +233,11 @@ pub async fn get_qrcode(
     params(("qr_id" = String, Path, description = "二维码ID")),
     responses(
         (status = 200, description = "状态返回", body = QrCodeStatusResponse),
-        (status = 404, description = "二维码不存在或已过期", body = QrCodeStatusResponse),
         (
             status = 500,
             description = "服务器内部错误",
-            body = String,
-            content_type = "text/plain"
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "Auth"
@@ -249,8 +249,9 @@ pub async fn get_qrcode_status(
     let current = match state.qrcode_service.get(&qr_id).await {
         Some(c) => c,
         None => {
+            // v2 契约：二维码状态接口始终返回 200 + 状态对象，避免出现“404 但仍返回 JSON body”的特例。
             return Ok((
-                StatusCode::NOT_FOUND,
+                StatusCode::OK,
                 Json(QrCodeStatusResponse {
                     status: "Expired".to_string(),
                     session_token: None,

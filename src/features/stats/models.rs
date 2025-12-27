@@ -17,6 +17,7 @@ pub struct EventInsert {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct DailyAggRow {
     /// 日期（本地时区）YYYY-MM-DD
     pub date: String,

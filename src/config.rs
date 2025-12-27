@@ -248,7 +248,7 @@ impl Default for AppConfig {
                 format: "full".to_string(),
             },
             api: ApiConfig {
-                prefix: "/api/v1".to_string(),
+                prefix: "/api/v2".to_string(),
             },
             taptap: TapTapMultiConfig::default(),
             stats: StatsConfig::default(),

@@ -10,7 +10,7 @@ export type SongInfo = {
     /**
      * 四难度定数（可为空）
      */
-    chart_constants: ChartConstants;
+    chartConstants: ChartConstants;
     /**
      * 作曲者
      */

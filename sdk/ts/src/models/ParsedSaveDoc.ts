@@ -6,15 +6,15 @@ export type ParsedSaveDoc = {
     /**
      * 游戏密钥块
      */
-    game_key: any;
+    gameKey: any;
     /**
      * 进度信息（如金钱、拓展信息）
      */
-    game_progress: any;
+    gameProgress: any;
     /**
      * 结构化成绩（歌曲ID -> [四难度成绩]）
      */
-    game_record: any;
+    gameRecord: any;
     /**
      * 客户端设置
      */

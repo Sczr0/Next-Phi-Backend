@@ -17,7 +17,7 @@ impl Modify for AdminTokenSecurity {
 
 /// 为 Swagger UI 提供正确的“业务接口前缀”Servers 配置。
 ///
-/// - 业务接口默认前缀为 `/api/v1`（对应 `config.api.prefix` / `APP_API_PREFIX`）。
+/// - 业务接口默认前缀为 `/api/v2`（对应 `config.api.prefix` / `APP_API_PREFIX`）。
 /// - `/health` 不带前缀，因此额外提供 `/` 作为备用 server 以便在 Swagger UI 中切换测试。
 struct ApiServers;
 
@@ -25,11 +25,11 @@ impl Modify for ApiServers {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let api = ServerBuilder::new()
             .url("{api_prefix}")
-            .description(Some("业务接口（默认 /api/v1）"))
+            .description(Some("业务接口（默认 /api/v2）"))
             .parameter(
                 "api_prefix",
                 ServerVariableBuilder::new()
-                    .default_value("/api/v1")
+                    .default_value("/api/v2")
                     .description(Some(
                         "业务接口前缀：对应 config.api.prefix（可通过 APP_API_PREFIX 覆盖）",
                     )),
@@ -97,7 +97,7 @@ impl Modify for ApiServers {
     info(
         title = "Phi Backend API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "后端服务 API（Axum + utoipa）。注意：除 /health 外，其余业务接口实际挂载在 `config.api.prefix`（默认 /api/v1）下，OpenAPI 的 paths 不包含该前缀。"
+        description = "后端服务 API（Axum + utoipa）。注意：除 /health 外，其余业务接口实际挂载在 `config.api.prefix`（默认 /api/v2）下，OpenAPI 的 paths 不包含该前缀。"
     )
 )]
 pub struct ApiDoc;

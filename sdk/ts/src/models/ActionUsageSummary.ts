@@ -2,13 +2,10 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
-/**
- * 存档响应结构
- */
-export type SaveResponse = {
-    /**
-     * 存档数据
-     */
-    data: Record<string, any>;
+export type ActionUsageSummary = {
+    action: string;
+    count: number;
+    feature: string;
+    lastAt?: string | null;
 };
 
