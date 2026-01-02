@@ -169,20 +169,8 @@ mod tests {
             content_type = "application/problem+json"
         ),
         (
-            status = 401,
-            description = "认证失败",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
             status = 422,
             description = "参数校验失败/渲染错误",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
-            status = 502,
-            description = "上游网络错误",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -814,12 +802,6 @@ pub async fn render_bn(
             content_type = "application/problem+json"
         ),
         (
-            status = 401,
-            description = "认证失败",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
             status = 404,
             description = "歌曲未找到（unique search）",
             body = crate::error::ProblemDetails,
@@ -834,12 +816,6 @@ pub async fn render_bn(
         (
             status = 422,
             description = "参数校验失败/渲染错误",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
-            status = 502,
-            description = "上游网络错误",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),

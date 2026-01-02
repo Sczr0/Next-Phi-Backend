@@ -323,3 +323,33 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
      Running `target\\debug\\examples\\dump_openapi.exe`
 wrote sdk/openapi.json
 ```
+
+---
+
+# 验证记录（2026-01-02，Codex）
+## 任务
+
+OpenAPI 一致性二次修复：
+- `/save`：补充 422（存档解密/校验/解析失败等）
+- `/auth/qrcode`：补充 401（TapTap 认证错误）
+- `/image/bn`、`/image/song`：移除 401/502（当前实现不会返回这些状态码）
+
+## 执行命令
+
+- `cmd /c "cargo run --example dump_openapi 2>&1" | Tee-Object -FilePath .codex/logs/dump-openapi-20260102-231916.log`
+- `cmd /c "cargo fmt 2>&1" | Out-File -FilePath .codex/logs/cargo-fmt-20260102-232235.log -Encoding utf8`
+- `cmd /c "cargo test 2>&1" | Tee-Object -FilePath .codex/logs/cargo-test-20260102-232252.log`
+- `python -c "import json; spec=json.load(open('sdk/openapi.json','r',encoding='utf-8')); print('/save', sorted(spec['paths']['/save']['post']['responses'].keys())); print('/auth/qrcode', sorted(spec['paths']['/auth/qrcode']['post']['responses'].keys())); print('/image/bn', sorted(spec['paths']['/image/bn']['post']['responses'].keys())); print('/image/song', sorted(spec['paths']['/image/song']['post']['responses'].keys()));"`
+
+## 结果摘要
+
+- OpenAPI 已重导出（`sdk/openapi.json`）
+- `cargo test`：通过（完整输出见 `.codex/logs/cargo-test-20260102-232252.log`）
+- responses keys 校验结果：
+
+```text
+/save ['200', '400', '401', '422', '500', '502', '504']
+/auth/qrcode ['200', '401', '422', '500', '502']
+/image/bn ['200', '400', '422', '500']
+/image/song ['200', '400', '404', '409', '422', '500']
+```

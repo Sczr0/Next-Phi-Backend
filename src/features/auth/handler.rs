@@ -182,6 +182,12 @@ fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
     responses(
         (status = 200, description = "生成二维码成功", body = QrCodeCreateResponse),
         (
+            status = 401,
+            description = "认证失败（TapTap 返回认证错误）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
             status = 422,
             description = "参数校验失败（taptapVersion 非法等）",
             body = crate::error::ProblemDetails,

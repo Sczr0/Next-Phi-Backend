@@ -57,6 +57,12 @@ pub enum SaveApiResponse {
             content_type = "application/problem+json"
         ),
         (
+            status = 422,
+            description = "参数校验失败/存档数据无效（解密、校验或解析失败等）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
             status = 502,
             description = "上游网络错误（非超时）",
             body = crate::error::ProblemDetails,
