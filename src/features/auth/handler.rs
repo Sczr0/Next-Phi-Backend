@@ -166,10 +166,8 @@ fn normalize_taptap_version(v: Option<&str>) -> Result<Option<&'static str>, App
 
 fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
     let mut res = (status, Json(body)).into_response();
-    res.headers_mut().insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static("no-store"),
-    );
+    res.headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res
 }
 
@@ -414,10 +412,11 @@ pub async fn get_qrcode_status(
                         AppError::Validation(_) => ("VALIDATION_FAILED", "请求参数错误"),
                         AppError::Conflict(_) => ("CONFLICT", "资源冲突"),
                         AppError::Internal(_) => ("INTERNAL_ERROR", "服务器内部错误"),
-                        AppError::SaveProvider(_) | AppError::Search(_) | AppError::SaveHandlerError(_)
-                        | AppError::ImageRendererError(_) | AppError::AuthPending(_) => {
-                            ("INTERNAL_ERROR", "服务器内部错误")
-                        }
+                        AppError::SaveProvider(_)
+                        | AppError::Search(_)
+                        | AppError::SaveHandlerError(_)
+                        | AppError::ImageRendererError(_)
+                        | AppError::AuthPending(_) => ("INTERNAL_ERROR", "服务器内部错误"),
                     };
                     Ok(json_no_store(
                         StatusCode::OK,

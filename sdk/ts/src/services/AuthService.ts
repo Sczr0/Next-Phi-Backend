@@ -16,19 +16,19 @@ export class AuthService {
      * @returns QrCodeCreateResponse 生成二维码成功
      * @throws ApiError
      */
-    public static getQrcode({
-        version,
+    public static postQrcode({
+        taptapVersion,
     }: {
         /**
-         * TapTap 版本：cn（大陆版，默认）或 global（国际版）
+         * TapTap 版本：cn（大陆版）或 global（国际版）
          */
-        version?: string,
+        taptapVersion?: string,
     }): CancelablePromise<QrCodeCreateResponse> {
         return __request(OpenAPI, {
-            method: 'GET',
+            method: 'POST',
             url: '/auth/qrcode',
             query: {
-                'version': version,
+                'taptapVersion': taptapVersion,
             },
             errors: {
                 500: `服务器内部错误`,
@@ -55,9 +55,6 @@ export class AuthService {
             url: '/auth/qrcode/{qr_id}/status',
             path: {
                 'qr_id': qrId,
-            },
-            errors: {
-                500: `服务器内部错误`,
             },
         });
     }

@@ -2,7 +2,12 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { QrCodeStatusValue } from './QrCodeStatusValue';
 export type QrCodeStatusResponse = {
+    /**
+     * 可选：机器可读的错误码（仅在 status=Error 时出现）
+     */
+    errorCode?: string | null;
     /**
      * 可选的人类可读提示消息
      */
@@ -18,6 +23,6 @@ export type QrCodeStatusResponse = {
     /**
      * 当前状态：Pending/Scanned/Confirmed/Error/Expired
      */
-    status: string;
+    status: QrCodeStatusValue;
 };
 

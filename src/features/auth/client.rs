@@ -115,7 +115,9 @@ impl TapTapClient {
 
         if !status.is_success() {
             tracing::warn!("TapTap 设备码请求失败：HTTP {status}");
-            return Err(AppError::Network(format!("TapTap 设备码请求失败: HTTP {status}")));
+            return Err(AppError::Network(format!(
+                "TapTap 设备码请求失败: HTTP {status}"
+            )));
         }
 
         let body: Value = serde_json::from_str(&body_text)
@@ -198,7 +200,9 @@ impl TapTapClient {
             .map_err(|e| AppError::Network(format!("读取 Token 响应体失败: {e}")))?;
         if !status.is_success() {
             tracing::warn!("TapTap token 请求失败：HTTP {status}");
-            return Err(AppError::Network(format!("TapTap token 请求失败: HTTP {status}")));
+            return Err(AppError::Network(format!(
+                "TapTap token 请求失败: HTTP {status}"
+            )));
         }
         let body: Value = serde_json::from_str(&body_text)
             .map_err(|e| AppError::Network(format!("TapTap token 响应解析失败: {e}")))?;
@@ -270,7 +274,9 @@ impl TapTapClient {
             .map_err(|e| AppError::Network(format!("读取账号信息响应体失败: {e}")))?;
         if !status.is_success() {
             tracing::warn!("TapTap 账号信息请求失败：HTTP {status}");
-            return Err(AppError::Network(format!("TapTap 账号信息请求失败: HTTP {status}")));
+            return Err(AppError::Network(format!(
+                "TapTap 账号信息请求失败: HTTP {status}"
+            )));
         }
         let account_wrap: Wrap<Account> = serde_json::from_str(&body_text)
             .map_err(|e| AppError::Network(format!("TapTap 账号信息响应解析失败: {e}")))?;

@@ -3,8 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { SongInfo } from './SongInfo';
+import type { SongSearchPage } from './SongSearchPage';
 /**
- * oneOf 响应：单个 SongInfo 或 Vec<SongInfo>
+ * oneOf 响应：单个 SongInfo 或 SongSearchPage
  */
-export type SongSearchResult = (SongInfo | Array<SongInfo>);
+export type SongSearchResult = (SongInfo | SongSearchPage);
 

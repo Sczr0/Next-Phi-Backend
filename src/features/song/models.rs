@@ -41,22 +41,39 @@ pub struct SongCatalog {
 impl SongCatalog {
     /// 重建搜索缓存（在加载/更新索引后调用）。
     pub fn rebuild_search_cache(&mut self) {
-        self.search_cache_name_lower.clear();
-        self.search_cache_name_lower.reserve(self.by_id.len());
-        for item in self.by_id.values() {
-            self.search_cache_name_lower
-                .push((Arc::clone(item), item.name.to_lowercase()));
-        }
+        // 注意：HashMap 迭代顺序不稳定。这里将缓存构建为“稳定排序”的 Vec，确保搜索结果顺序跨进程一致。
 
-        self.search_cache_nick_lower.clear();
-        self.search_cache_nick_lower.reserve(self.by_nickname.len());
+        // 1) name cache：按 name_lower，再按 id 排序
+        let mut name_entries: Vec<(Arc<SongInfo>, String)> = self
+            .by_id
+            .values()
+            .map(|item| (Arc::clone(item), item.name.to_lowercase()))
+            .collect();
+        name_entries.sort_by(|(a_item, a_lower), (b_item, b_lower)| {
+            a_lower.cmp(b_lower).then_with(|| a_item.id.cmp(&b_item.id))
+        });
+        self.search_cache_name_lower = name_entries;
+
+        // 2) nickname cache：先按 nick_lower/nick 排序；每个 nick 下的歌曲也按 name_lower/id 稳定排序
+        let mut nick_entries: Vec<(String, String, Vec<Arc<SongInfo>>)> =
+            Vec::with_capacity(self.by_nickname.len());
         for (nick, list) in &self.by_nickname {
-            self.search_cache_nick_lower.push((
-                nick.clone(),
-                nick.to_lowercase(),
-                list.iter().map(Arc::clone).collect(),
-            ));
+            // 为避免在 sort 比较中反复分配 to_lowercase，这里预先计算 key
+            let mut sortable: Vec<(String, String, Arc<SongInfo>)> = list
+                .iter()
+                .map(|s| (s.name.to_lowercase(), s.id.clone(), Arc::clone(s)))
+                .collect();
+            sortable.sort_by(|(a_name, a_id, _), (b_name, b_id, _)| {
+                a_name.cmp(b_name).then_with(|| a_id.cmp(b_id))
+            });
+            let sorted_list: Vec<Arc<SongInfo>> = sortable.into_iter().map(|(_, _, s)| s).collect();
+
+            nick_entries.push((nick.clone(), nick.to_lowercase(), sorted_list));
         }
+        nick_entries.sort_by(|(a_nick, a_lower, _), (b_nick, b_lower, _)| {
+            a_lower.cmp(b_lower).then_with(|| a_nick.cmp(b_nick))
+        });
+        self.search_cache_nick_lower = nick_entries;
     }
 
     /// 通用查询：按 ID -> 官方名 -> 别名 的顺序查找。

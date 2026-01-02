@@ -4,7 +4,7 @@ use axum::{
     response::Json,
     routing::{get, post},
 };
-use chrono::{LocalResult, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono::{LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -17,6 +17,8 @@ use super::{archive::archive_one_day, models::DailyAggRow};
 pub struct DailyQuery {
     start: String,
     end: String,
+    /// 可选时区（IANA 名称，如 Asia/Shanghai），覆盖配置
+    timezone: Option<String>,
     feature: Option<String>,
     route: Option<String>,
     method: Option<String>,
@@ -30,6 +32,7 @@ pub struct DailyQuery {
     params(
         ("start" = String, Query, description = "开始日期 YYYY-MM-DD"),
         ("end" = String, Query, description = "结束日期 YYYY-MM-DD"),
+        ("timezone" = Option<String>, Query, description = "可选时区 IANA 名称（覆盖配置）"),
         ("feature" = Option<String>, Query, description = "可选功能名"),
         ("route" = Option<String>, Query, description = "可选路由模板（MatchedPath）"),
         ("method" = Option<String>, Query, description = "可选 HTTP 方法（GET/POST 等）")
@@ -55,18 +58,329 @@ pub async fn get_daily_stats(
     State(state): State<AppState>,
     Query(q): Query<DailyQuery>,
 ) -> Result<Json<Vec<DailyAggRow>>, AppError> {
-    let start = NaiveDate::parse_from_str(&q.start, "%Y-%m-%d")
-        .map_err(|e| AppError::Validation(format!("start 日期无效（期望 YYYY-MM-DD）: {e}")))?;
-    let end = NaiveDate::parse_from_str(&q.end, "%Y-%m-%d")
-        .map_err(|e| AppError::Validation(format!("end 日期无效（期望 YYYY-MM-DD）: {e}")))?;
+    let start = parse_ymd(&q.start, "start")?;
+    let end = parse_ymd(&q.end, "end")?;
+    validate_date_range(start, end)?;
+
+    let cfg = crate::config::AppConfig::global();
+    let (_, tz) = resolve_timezone(cfg.stats.timezone.as_str(), q.timezone.as_deref())?;
     let storage = state
         .stats_storage
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
-    let rows = storage
-        .query_daily(start, end, q.feature, q.route, q.method)
-        .await?;
+
+    let rows = query_daily_agg(
+        storage,
+        tz,
+        start,
+        end,
+        q.feature.as_deref(),
+        q.route.as_deref(),
+        q.method.as_deref(),
+    )
+    .await?;
     Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+pub struct DailyFeaturesQuery {
+    start: String,
+    end: String,
+    /// 可选时区（IANA 名称，如 Asia/Shanghai），覆盖配置
+    timezone: Option<String>,
+    /// 可选功能名过滤（bestn/save 等）
+    feature: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyFeatureUsageRow {
+    /// 日期（按 timezone 输出）YYYY-MM-DD
+    date: String,
+    /// 功能名（bestn/save 等）
+    feature: String,
+    /// 使用次数
+    count: i64,
+    /// 当日唯一用户数（基于 user_hash 去敏标识；若事件未记录 user_hash，则不会计入）
+    unique_users: i64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyFeaturesResponse {
+    /// 展示统计的时区（IANA 名称）
+    timezone: String,
+    /// 查询开始日期（YYYY-MM-DD，按 timezone 解释）
+    start: String,
+    /// 查询结束日期（YYYY-MM-DD，按 timezone 解释）
+    end: String,
+    /// 可选功能过滤
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feature_filter: Option<String>,
+    rows: Vec<DailyFeatureUsageRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/stats/daily/features",
+    summary = "按天输出功能使用次数",
+    description = "基于 stats 事件明细（feature/action）按天聚合，输出每天各功能的调用次数与当日唯一用户数（user_hash）。",
+    params(
+        ("start" = String, Query, description = "开始日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("end" = String, Query, description = "结束日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("timezone" = Option<String>, Query, description = "可选时区 IANA 名称（覆盖配置）"),
+        ("feature" = Option<String>, Query, description = "可选功能名过滤（bestn/save 等）")
+    ),
+    responses(
+        (status = 200, description = "按天功能使用次数", body = DailyFeaturesResponse),
+        (
+            status = 422,
+            description = "参数校验失败（日期格式/timezone 等）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Stats"
+)]
+pub async fn get_daily_features(
+    State(state): State<AppState>,
+    Query(q): Query<DailyFeaturesQuery>,
+) -> Result<Json<DailyFeaturesResponse>, AppError> {
+    let start = parse_ymd(&q.start, "start")?;
+    let end = parse_ymd(&q.end, "end")?;
+    validate_date_range(start, end)?;
+
+    let cfg = crate::config::AppConfig::global();
+    let (tz_name, tz) = resolve_timezone(cfg.stats.timezone.as_str(), q.timezone.as_deref())?;
+
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+
+    let rows = query_daily_feature_usage(storage, tz, start, end, q.feature.as_deref()).await?;
+
+    Ok(Json(DailyFeaturesResponse {
+        timezone: tz_name,
+        start: q.start,
+        end: q.end,
+        feature_filter: q.feature,
+        rows,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct DailyDauQuery {
+    start: String,
+    end: String,
+    /// 可选时区（IANA 名称，如 Asia/Shanghai），覆盖配置
+    timezone: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyDauRow {
+    /// 日期（按 timezone 输出）YYYY-MM-DD
+    date: String,
+    /// 当日活跃用户数（distinct user_hash；仅统计能去敏识别的用户）
+    active_users: i64,
+    /// 当日活跃 IP 数（distinct client_ip_hash；用于覆盖匿名访问）
+    active_ips: i64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyDauResponse {
+    timezone: String,
+    start: String,
+    end: String,
+    rows: Vec<DailyDauRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/stats/daily/dau",
+    summary = "按天输出 DAU（活跃用户数）",
+    description = "按天聚合统计活跃用户数：active_users 基于去敏 user_hash；active_ips 基于去敏 client_ip_hash（HTTP 请求采集）。",
+    params(
+        ("start" = String, Query, description = "开始日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("end" = String, Query, description = "结束日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("timezone" = Option<String>, Query, description = "可选时区 IANA 名称（覆盖配置）")
+    ),
+    responses(
+        (status = 200, description = "按天 DAU", body = DailyDauResponse),
+        (
+            status = 422,
+            description = "参数校验失败（日期格式/timezone 等）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Stats"
+)]
+pub async fn get_daily_dau(
+    State(state): State<AppState>,
+    Query(q): Query<DailyDauQuery>,
+) -> Result<Json<DailyDauResponse>, AppError> {
+    let start = parse_ymd(&q.start, "start")?;
+    let end = parse_ymd(&q.end, "end")?;
+    validate_date_range(start, end)?;
+
+    let cfg = crate::config::AppConfig::global();
+    let (tz_name, tz) = resolve_timezone(cfg.stats.timezone.as_str(), q.timezone.as_deref())?;
+
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+
+    let rows = query_daily_dau(storage, tz, start, end).await?;
+
+    Ok(Json(DailyDauResponse {
+        timezone: tz_name,
+        start: q.start,
+        end: q.end,
+        rows,
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct DailyHttpQuery {
+    start: String,
+    end: String,
+    /// 可选时区（IANA 名称，如 Asia/Shanghai），覆盖配置
+    timezone: Option<String>,
+    /// 可选路由模板过滤（MatchedPath）
+    route: Option<String>,
+    /// 可选 HTTP 方法过滤（GET/POST 等）
+    method: Option<String>,
+    /// 每天最多返回的路由明细条数（默认 200）
+    top: Option<i64>,
+}
+
+#[derive(Serialize, utoipa::ToSchema, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyHttpTotalRow {
+    date: String,
+    total: i64,
+    errors: i64,
+    /// errors / total（total=0 时为 0）
+    error_rate: f64,
+    client_errors: i64,
+    server_errors: i64,
+    client_error_rate: f64,
+    server_error_rate: f64,
+}
+
+#[derive(Serialize, utoipa::ToSchema, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyHttpRouteRow {
+    date: String,
+    route: String,
+    method: String,
+    total: i64,
+    errors: i64,
+    error_rate: f64,
+    client_errors: i64,
+    server_errors: i64,
+    client_error_rate: f64,
+    server_error_rate: f64,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyHttpResponse {
+    timezone: String,
+    start: String,
+    end: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route_filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method_filter: Option<String>,
+    totals: Vec<DailyHttpTotalRow>,
+    routes: Vec<DailyHttpRouteRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/stats/daily/http",
+    summary = "按天输出 HTTP 错误率（含总错误率）",
+    description = "按天聚合所有 HTTP 请求（route+method）并计算错误率：overall(>=400)、4xx、5xx；同时给出每天总错误率与路由明细。",
+    params(
+        ("start" = String, Query, description = "开始日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("end" = String, Query, description = "结束日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("timezone" = Option<String>, Query, description = "可选时区 IANA 名称（覆盖配置）"),
+        ("route" = Option<String>, Query, description = "可选路由模板过滤（MatchedPath）"),
+        ("method" = Option<String>, Query, description = "可选 HTTP 方法过滤（GET/POST 等）"),
+        ("top" = Option<i64>, Query, description = "每天最多返回的路由明细条数（默认 200，最多 200）")
+    ),
+    responses(
+        (status = 200, description = "按天 HTTP 错误率", body = DailyHttpResponse),
+        (
+            status = 422,
+            description = "参数校验失败（日期格式/timezone/top 等）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Stats"
+)]
+pub async fn get_daily_http(
+    State(state): State<AppState>,
+    Query(q): Query<DailyHttpQuery>,
+) -> Result<Json<DailyHttpResponse>, AppError> {
+    let start = parse_ymd(&q.start, "start")?;
+    let end = parse_ymd(&q.end, "end")?;
+    validate_date_range(start, end)?;
+
+    let top = normalize_top_per_day(q.top)?;
+
+    let cfg = crate::config::AppConfig::global();
+    let (tz_name, tz) = resolve_timezone(cfg.stats.timezone.as_str(), q.timezone.as_deref())?;
+
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+
+    let (totals, routes) = query_daily_http(
+        storage,
+        tz,
+        start,
+        end,
+        q.route.as_deref(),
+        q.method.as_deref(),
+        top,
+    )
+    .await?;
+
+    Ok(Json(DailyHttpResponse {
+        timezone: tz_name,
+        start: q.start,
+        end: q.end,
+        route_filter: q.route,
+        method_filter: q.method,
+        totals,
+        routes,
+    }))
 }
 
 #[derive(Deserialize)]
@@ -129,6 +443,9 @@ pub async fn trigger_archive_now(
 pub fn create_stats_router() -> Router<AppState> {
     Router::new()
         .route("/stats/daily", get(get_daily_stats))
+        .route("/stats/daily/features", get(get_daily_features))
+        .route("/stats/daily/dau", get(get_daily_dau))
+        .route("/stats/daily/http", get(get_daily_http))
         .route("/stats/archive/now", post(trigger_archive_now))
         .route("/stats/summary", get(get_stats_summary))
 }
@@ -731,6 +1048,538 @@ fn convert_tz(ts_rfc3339: &str, tz: chrono_tz::Tz) -> Option<String> {
     Some(as_utc.with_timezone(&tz).to_rfc3339())
 }
 
+fn parse_ymd(s: &str, field: &str) -> Result<NaiveDate, AppError> {
+    NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
+        AppError::Validation(format!("{field} 日期无效（期望 YYYY-MM-DD）: {s} ({e})"))
+    })
+}
+
+fn validate_date_range(start: NaiveDate, end: NaiveDate) -> Result<(), AppError> {
+    if end < start {
+        return Err(AppError::Validation("end 不能早于 start".into()));
+    }
+    const MAX_DAYS: i64 = 366;
+    let days = (end - start).num_days() + 1;
+    if days > MAX_DAYS {
+        return Err(AppError::Validation(format!(
+            "日期范围过大：{days} 天（上限 {MAX_DAYS} 天）"
+        )));
+    }
+    Ok(())
+}
+
+fn sqlite_minutes_modifier(offset_minutes: i32) -> String {
+    format!("{offset_minutes:+} minutes")
+}
+
+fn fixed_offset_minutes_for_range(
+    tz: chrono_tz::Tz,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Option<i32> {
+    let mut cur = start;
+    let mut offset: Option<i32> = None;
+    while cur <= end {
+        // noon 一般不会处于 DST 的 ambiguous/none 区间，作为稳定采样点
+        let local_noon = NaiveDateTime::new(cur, NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+        let dt = match tz.from_local_datetime(&local_noon) {
+            LocalResult::Single(v) => v,
+            LocalResult::Ambiguous(a, _) => a,
+            LocalResult::None => tz.from_utc_datetime(&local_noon),
+        };
+        let off_secs = dt.offset().fix().local_minus_utc();
+        let off_min = (off_secs / 60) as i32;
+        match offset {
+            None => offset = Some(off_min),
+            Some(prev) if prev == off_min => {}
+            Some(_) => return None,
+        }
+        cur += chrono::Duration::days(1);
+    }
+    offset
+}
+
+fn rate(n: i64, d: i64) -> f64 {
+    if d <= 0 { 0.0 } else { (n as f64) / (d as f64) }
+}
+
+fn normalize_top_per_day(top: Option<i64>) -> Result<i64, AppError> {
+    const DEFAULT_TOP: i64 = 200;
+    const MAX_TOP: i64 = 200;
+    match top {
+        None => Ok(DEFAULT_TOP),
+        Some(v) if v <= 0 => Err(AppError::Validation("top 必须为正整数".into())),
+        Some(v) => Ok(v.min(MAX_TOP)),
+    }
+}
+
+async fn query_daily_agg(
+    storage: &super::storage::StatsStorage,
+    tz: chrono_tz::Tz,
+    start: NaiveDate,
+    end: NaiveDate,
+    feature: Option<&str>,
+    route: Option<&str>,
+    method: Option<&str>,
+) -> Result<Vec<DailyAggRow>, AppError> {
+    let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
+    let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+
+    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
+        let modifier = sqlite_minutes_modifier(off_min);
+        let rows = sqlx::query(
+            r#"
+            SELECT date(ts_utc, ?) as date,
+                   feature,
+                   route,
+                   method,
+                   COUNT(1) as count,
+                   COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as err_count
+            FROM events
+            WHERE ts_utc BETWEEN ? AND ?
+              AND (? IS NULL OR feature = ?)
+              AND (? IS NULL OR route = ?)
+              AND (? IS NULL OR method = ?)
+            GROUP BY date, feature, route, method
+            ORDER BY date ASC
+        "#,
+        )
+        .bind(modifier)
+        .bind(&start_utc)
+        .bind(&end_utc)
+        .bind(feature)
+        .bind(feature)
+        .bind(route)
+        .bind(route)
+        .bind(method)
+        .bind(method)
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("query daily: {e}")))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(DailyAggRow {
+                date: r.get::<String, _>("date"),
+                feature: r.try_get::<String, _>("feature").ok(),
+                route: r.try_get::<String, _>("route").ok(),
+                method: r.try_get::<String, _>("method").ok(),
+                count: r.get::<i64, _>("count"),
+                err_count: r.get::<i64, _>("err_count"),
+            });
+        }
+        return Ok(out);
+    }
+
+    // DST（或 offset 不固定）fallback：按天窗口聚合，确保本地日期口径正确
+    let mut out: Vec<DailyAggRow> = Vec::new();
+    let mut cur = start;
+    while cur <= end {
+        let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+        let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+        let rows = sqlx::query(
+            r#"
+            SELECT feature,
+                   route,
+                   method,
+                   COUNT(1) as count,
+                   COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as err_count
+            FROM events
+            WHERE ts_utc BETWEEN ? AND ?
+              AND (? IS NULL OR feature = ?)
+              AND (? IS NULL OR route = ?)
+              AND (? IS NULL OR method = ?)
+            GROUP BY feature, route, method
+        "#,
+        )
+        .bind(&day_start)
+        .bind(&day_end)
+        .bind(feature)
+        .bind(feature)
+        .bind(route)
+        .bind(route)
+        .bind(method)
+        .bind(method)
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("query daily (fallback): {e}")))?;
+
+        for r in rows {
+            out.push(DailyAggRow {
+                date: cur.to_string(),
+                feature: r.try_get::<String, _>("feature").ok(),
+                route: r.try_get::<String, _>("route").ok(),
+                method: r.try_get::<String, _>("method").ok(),
+                count: r.get::<i64, _>("count"),
+                err_count: r.get::<i64, _>("err_count"),
+            });
+        }
+        cur += chrono::Duration::days(1);
+    }
+
+    // 保持与 fixed-offset 路径一致的输出顺序：按 date ASC
+    out.sort_by(|a, b| a.date.cmp(&b.date));
+    Ok(out)
+}
+
+async fn query_daily_feature_usage(
+    storage: &super::storage::StatsStorage,
+    tz: chrono_tz::Tz,
+    start: NaiveDate,
+    end: NaiveDate,
+    feature: Option<&str>,
+) -> Result<Vec<DailyFeatureUsageRow>, AppError> {
+    let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
+    let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+
+    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
+        let modifier = sqlite_minutes_modifier(off_min);
+        let rows = sqlx::query(
+            r#"
+            SELECT date(ts_utc, ?) as date,
+                   feature,
+                   COUNT(1) as count,
+                   COUNT(DISTINCT user_hash) as unique_users
+            FROM events
+            WHERE feature IS NOT NULL
+              AND ts_utc BETWEEN ? AND ?
+              AND (? IS NULL OR feature = ?)
+            GROUP BY date, feature
+            ORDER BY date ASC
+        "#,
+        )
+        .bind(modifier)
+        .bind(&start_utc)
+        .bind(&end_utc)
+        .bind(feature)
+        .bind(feature)
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("daily features: {e}")))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(DailyFeatureUsageRow {
+                date: r.get::<String, _>("date"),
+                feature: r.get::<String, _>("feature"),
+                count: r.get::<i64, _>("count"),
+                unique_users: r.get::<i64, _>("unique_users"),
+            });
+        }
+        return Ok(out);
+    }
+
+    let mut out = Vec::new();
+    let mut cur = start;
+    while cur <= end {
+        let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+        let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+        let rows = sqlx::query(
+            r#"
+            SELECT feature,
+                   COUNT(1) as count,
+                   COUNT(DISTINCT user_hash) as unique_users
+            FROM events
+            WHERE feature IS NOT NULL
+              AND ts_utc BETWEEN ? AND ?
+              AND (? IS NULL OR feature = ?)
+            GROUP BY feature
+        "#,
+        )
+        .bind(&day_start)
+        .bind(&day_end)
+        .bind(feature)
+        .bind(feature)
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("daily features (fallback): {e}")))?;
+
+        for r in rows {
+            out.push(DailyFeatureUsageRow {
+                date: cur.to_string(),
+                feature: r.get::<String, _>("feature"),
+                count: r.get::<i64, _>("count"),
+                unique_users: r.get::<i64, _>("unique_users"),
+            });
+        }
+        cur += chrono::Duration::days(1);
+    }
+
+    out.sort_by(|a, b| a.date.cmp(&b.date));
+    Ok(out)
+}
+
+async fn query_daily_dau(
+    storage: &super::storage::StatsStorage,
+    tz: chrono_tz::Tz,
+    start: NaiveDate,
+    end: NaiveDate,
+) -> Result<Vec<DailyDauRow>, AppError> {
+    use std::collections::HashMap;
+
+    let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
+    let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+
+    let mut map: HashMap<String, (i64, i64)> = HashMap::new();
+
+    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
+        let modifier = sqlite_minutes_modifier(off_min);
+        let rows = sqlx::query(
+            r#"
+            SELECT date(ts_utc, ?) as date,
+                   COUNT(DISTINCT user_hash) as active_users,
+                   COUNT(DISTINCT client_ip_hash) as active_ips
+            FROM events
+            WHERE ts_utc BETWEEN ? AND ?
+            GROUP BY date
+            ORDER BY date ASC
+        "#,
+        )
+        .bind(modifier)
+        .bind(&start_utc)
+        .bind(&end_utc)
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("daily dau: {e}")))?;
+
+        for r in rows {
+            let date = r.get::<String, _>("date");
+            let u = r.get::<i64, _>("active_users");
+            let ip = r.get::<i64, _>("active_ips");
+            map.insert(date, (u, ip));
+        }
+    } else {
+        // DST fallback: per-day query
+        let mut cur = start;
+        while cur <= end {
+            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+            let r = sqlx::query(
+                r#"
+                SELECT COUNT(DISTINCT user_hash) as active_users,
+                       COUNT(DISTINCT client_ip_hash) as active_ips
+                FROM events
+                WHERE ts_utc BETWEEN ? AND ?
+            "#,
+            )
+            .bind(&day_start)
+            .bind(&day_end)
+            .fetch_one(&storage.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("daily dau (fallback): {e}")))?;
+            let u = r.get::<i64, _>("active_users");
+            let ip = r.get::<i64, _>("active_ips");
+            map.insert(cur.to_string(), (u, ip));
+            cur += chrono::Duration::days(1);
+        }
+    }
+
+    // 兜底补齐：确保 start..end 每天都有一条记录（无数据则为 0）
+    let mut out = Vec::new();
+    let mut cur = start;
+    while cur <= end {
+        let key = cur.to_string();
+        let (u, ip) = map.get(&key).copied().unwrap_or((0, 0));
+        out.push(DailyDauRow {
+            date: key,
+            active_users: u,
+            active_ips: ip,
+        });
+        cur += chrono::Duration::days(1);
+    }
+    Ok(out)
+}
+
+async fn query_daily_http(
+    storage: &super::storage::StatsStorage,
+    tz: chrono_tz::Tz,
+    start: NaiveDate,
+    end: NaiveDate,
+    route: Option<&str>,
+    method: Option<&str>,
+    top_per_day: i64,
+) -> Result<(Vec<DailyHttpTotalRow>, Vec<DailyHttpRouteRow>), AppError> {
+    use std::collections::HashMap;
+
+    let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
+    let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+
+    let mut route_rows: Vec<DailyHttpRouteRow> = Vec::new();
+
+    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
+        let modifier = sqlite_minutes_modifier(off_min);
+        let rows = sqlx::query(
+            r#"
+            SELECT date(ts_utc, ?) as date,
+                   route,
+                   method,
+                   COUNT(1) as total,
+                   COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as errors,
+                   COALESCE(SUM(CASE WHEN status BETWEEN 400 AND 499 THEN 1 ELSE 0 END), 0) as client_errors,
+                   COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END), 0) as server_errors
+            FROM events
+            WHERE route IS NOT NULL
+              AND status IS NOT NULL
+              AND ts_utc BETWEEN ? AND ?
+              AND (? IS NULL OR route = ?)
+              AND (? IS NULL OR method = ?)
+            GROUP BY date, route, method
+            ORDER BY date ASC
+        "#,
+        )
+        .bind(modifier)
+        .bind(&start_utc)
+        .bind(&end_utc)
+        .bind(route)
+        .bind(route)
+        .bind(method)
+        .bind(method)
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("daily http: {e}")))?;
+
+        route_rows.reserve(rows.len());
+        for r in rows {
+            let date = r.get::<String, _>("date");
+            let route = r.get::<String, _>("route");
+            let method = r.get::<String, _>("method");
+            let total = r.get::<i64, _>("total");
+            let errors = r.get::<i64, _>("errors");
+            let client_errors = r.get::<i64, _>("client_errors");
+            let server_errors = r.get::<i64, _>("server_errors");
+            route_rows.push(DailyHttpRouteRow {
+                date,
+                route,
+                method,
+                total,
+                errors,
+                error_rate: rate(errors, total),
+                client_errors,
+                server_errors,
+                client_error_rate: rate(client_errors, total),
+                server_error_rate: rate(server_errors, total),
+            });
+        }
+    } else {
+        // DST fallback: per-day query
+        let mut cur = start;
+        while cur <= end {
+            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+            let rows = sqlx::query(
+                r#"
+                SELECT route,
+                       method,
+                       COUNT(1) as total,
+                       COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as errors,
+                       COALESCE(SUM(CASE WHEN status BETWEEN 400 AND 499 THEN 1 ELSE 0 END), 0) as client_errors,
+                       COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END), 0) as server_errors
+                FROM events
+                WHERE route IS NOT NULL
+                  AND status IS NOT NULL
+                  AND ts_utc BETWEEN ? AND ?
+                  AND (? IS NULL OR route = ?)
+                  AND (? IS NULL OR method = ?)
+                GROUP BY route, method
+            "#,
+            )
+            .bind(&day_start)
+            .bind(&day_end)
+            .bind(route)
+            .bind(route)
+            .bind(method)
+            .bind(method)
+            .fetch_all(&storage.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("daily http (fallback): {e}")))?;
+
+            for r in rows {
+                let route = r.get::<String, _>("route");
+                let method = r.get::<String, _>("method");
+                let total = r.get::<i64, _>("total");
+                let errors = r.get::<i64, _>("errors");
+                let client_errors = r.get::<i64, _>("client_errors");
+                let server_errors = r.get::<i64, _>("server_errors");
+                route_rows.push(DailyHttpRouteRow {
+                    date: cur.to_string(),
+                    route,
+                    method,
+                    total,
+                    errors,
+                    error_rate: rate(errors, total),
+                    client_errors,
+                    server_errors,
+                    client_error_rate: rate(client_errors, total),
+                    server_error_rate: rate(server_errors, total),
+                });
+            }
+
+            cur += chrono::Duration::days(1);
+        }
+
+        route_rows.sort_by(|a, b| a.date.cmp(&b.date));
+    }
+
+    // totals: sum(route rows) per day, and fill missing days with 0
+    let mut totals_map: HashMap<String, (i64, i64, i64, i64)> = HashMap::new();
+    for r in route_rows.iter() {
+        let e = totals_map.entry(r.date.clone()).or_insert((0, 0, 0, 0));
+        e.0 += r.total;
+        e.1 += r.errors;
+        e.2 += r.client_errors;
+        e.3 += r.server_errors;
+    }
+
+    let mut totals: Vec<DailyHttpTotalRow> = Vec::new();
+    let mut cur = start;
+    while cur <= end {
+        let key = cur.to_string();
+        let (total, errors, client_errors, server_errors) =
+            totals_map.get(&key).copied().unwrap_or((0, 0, 0, 0));
+        totals.push(DailyHttpTotalRow {
+            date: key,
+            total,
+            errors,
+            error_rate: rate(errors, total),
+            client_errors,
+            server_errors,
+            client_error_rate: rate(client_errors, total),
+            server_error_rate: rate(server_errors, total),
+        });
+        cur += chrono::Duration::days(1);
+    }
+
+    // apply per-day top limit on routes (totals 不受影响)
+    if top_per_day > 0 {
+        let mut grouped: HashMap<String, Vec<DailyHttpRouteRow>> = HashMap::new();
+        for r in route_rows.into_iter() {
+            grouped.entry(r.date.clone()).or_default().push(r);
+        }
+
+        let mut dates: Vec<String> = grouped.keys().cloned().collect();
+        dates.sort();
+
+        let mut out_routes: Vec<DailyHttpRouteRow> = Vec::new();
+        for d in dates {
+            if let Some(mut v) = grouped.remove(&d) {
+                v.sort_by(|a, b| {
+                    b.errors
+                        .cmp(&a.errors)
+                        .then(b.total.cmp(&a.total))
+                        .then(a.route.cmp(&b.route))
+                        .then(a.method.cmp(&b.method))
+                });
+                v.truncate(top_per_day as usize);
+                // 保持输出按 date ASC，再按排序 key
+                out_routes.extend(v);
+            }
+        }
+        return Ok((totals, out_routes));
+    }
+
+    Ok((totals, route_rows))
+}
+
 #[derive(Default, Clone, Copy)]
 struct IncludeFlags {
     routes: bool,
@@ -1138,6 +1987,7 @@ mod tests {
         let q = DailyQuery {
             start: "2025-12-24".into(),
             end: "2025-12-24".into(),
+            timezone: Some("Asia/Shanghai".into()),
             feature: None,
             route: Some("/image/bn".into()),
             method: Some("GET".into()),
@@ -1147,5 +1997,263 @@ mod tests {
         assert_eq!(rows[0].route.as_deref(), Some("/image/bn"));
         assert_eq!(rows[0].method.as_deref(), Some("GET"));
         assert_eq!(rows[0].count, 1);
+    }
+
+    #[tokio::test]
+    async fn daily_stats_respects_timezone_day_boundary() {
+        let sqlite_path = tmp_sqlite_path("stats_daily_tz");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        // Asia/Shanghai: 2025-12-24 16:00:00Z == 2025-12-25 00:00:00+08
+        storage
+            .insert_events(&[
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 15, 59, 59),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: Some("ip1".into()),
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 16, 0, 0),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: Some("ip2".into()),
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+            ])
+            .await
+            .unwrap();
+
+        // local day: 2025-12-24 should only include the first event
+        let q = DailyQuery {
+            start: "2025-12-24".into(),
+            end: "2025-12-24".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            feature: None,
+            route: Some("/song/search".into()),
+            method: Some("GET".into()),
+        };
+        let Json(rows) = get_daily_stats(State(state.clone()), Query(q))
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].date, "2025-12-24");
+        assert_eq!(rows[0].count, 1);
+
+        // local day: 2025-12-25 should only include the second event
+        let q = DailyQuery {
+            start: "2025-12-25".into(),
+            end: "2025-12-25".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            feature: None,
+            route: Some("/song/search".into()),
+            method: Some("GET".into()),
+        };
+        let Json(rows) = get_daily_stats(State(state), Query(q)).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].date, "2025-12-25");
+        assert_eq!(rows[0].count, 1);
+    }
+
+    #[tokio::test]
+    async fn daily_features_outputs_counts_and_unique_users() {
+        let sqlite_path = tmp_sqlite_path("stats_daily_features");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        storage
+            .insert_events(&[
+                // local 2025-12-24 (+8) -> utc 2025-12-23 16:00..
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 1, 0, 0),
+                    route: None,
+                    feature: Some("bestn".into()),
+                    action: Some("generate_image".into()),
+                    method: None,
+                    status: None,
+                    duration_ms: None,
+                    user_hash: Some("u1".into()),
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 2, 0, 0),
+                    route: None,
+                    feature: Some("bestn".into()),
+                    action: Some("generate_image".into()),
+                    method: None,
+                    status: None,
+                    duration_ms: None,
+                    user_hash: Some("u1".into()),
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                // another day
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 25, 1, 0, 0),
+                    route: None,
+                    feature: Some("save".into()),
+                    action: Some("get_save".into()),
+                    method: None,
+                    status: None,
+                    duration_ms: None,
+                    user_hash: Some("u2".into()),
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+            ])
+            .await
+            .unwrap();
+
+        let q = DailyFeaturesQuery {
+            start: "2025-12-24".into(),
+            end: "2025-12-25".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            feature: None,
+        };
+        let Json(resp) = get_daily_features(State(state), Query(q)).await.unwrap();
+        assert_eq!(resp.timezone, "Asia/Shanghai");
+        assert_eq!(resp.rows.len(), 2);
+
+        let r0 = &resp.rows[0];
+        assert_eq!(r0.date, "2025-12-24");
+        assert_eq!(r0.feature, "bestn");
+        assert_eq!(r0.count, 2);
+        assert_eq!(r0.unique_users, 1);
+
+        let r1 = &resp.rows[1];
+        assert_eq!(r1.date, "2025-12-25");
+        assert_eq!(r1.feature, "save");
+        assert_eq!(r1.count, 1);
+        assert_eq!(r1.unique_users, 1);
+    }
+
+    #[tokio::test]
+    async fn daily_dau_fills_missing_days_with_zero() {
+        let sqlite_path = tmp_sqlite_path("stats_daily_dau");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        storage
+            .insert_events(&[EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 1, 0, 0),
+                route: Some("/song/search".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(10),
+                user_hash: Some("u1".into()),
+                client_ip_hash: Some("ip1".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            }])
+            .await
+            .unwrap();
+
+        let q = DailyDauQuery {
+            start: "2025-12-24".into(),
+            end: "2025-12-25".into(),
+            timezone: Some("Asia/Shanghai".into()),
+        };
+        let Json(resp) = get_daily_dau(State(state), Query(q)).await.unwrap();
+        assert_eq!(resp.rows.len(), 2);
+        assert_eq!(resp.rows[0].date, "2025-12-24");
+        assert_eq!(resp.rows[0].active_users, 1);
+        assert_eq!(resp.rows[0].active_ips, 1);
+        assert_eq!(resp.rows[1].date, "2025-12-25");
+        assert_eq!(resp.rows[1].active_users, 0);
+        assert_eq!(resp.rows[1].active_ips, 0);
+    }
+
+    #[tokio::test]
+    async fn daily_http_computes_error_rates_and_respects_top_per_day() {
+        let sqlite_path = tmp_sqlite_path("stats_daily_http");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        storage
+            .insert_events(&[
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 1, 0, 0),
+                    route: Some("/image/bn".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: Some("ip1".into()),
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 1, 0, 1),
+                    route: Some("/image/bn".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(404),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: Some("ip2".into()),
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 1, 0, 2),
+                    route: Some("/save".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("POST".into()),
+                    status: Some(500),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: Some("ip3".into()),
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+            ])
+            .await
+            .unwrap();
+
+        let q = DailyHttpQuery {
+            start: "2025-12-24".into(),
+            end: "2025-12-24".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            route: None,
+            method: None,
+            top: Some(1),
+        };
+        let Json(resp) = get_daily_http(State(state), Query(q)).await.unwrap();
+        assert_eq!(resp.totals.len(), 1);
+        assert_eq!(resp.totals[0].date, "2025-12-24");
+        assert_eq!(resp.totals[0].total, 3);
+        assert_eq!(resp.totals[0].errors, 2);
+        assert_eq!(resp.totals[0].client_errors, 1);
+        assert_eq!(resp.totals[0].server_errors, 1);
+        assert!((resp.totals[0].error_rate - (2.0 / 3.0)).abs() < 1e-9);
+
+        // top=1: only one route row should be returned, but totals must reflect all routes
+        assert_eq!(resp.routes.len(), 1);
+        assert_eq!(resp.routes[0].date, "2025-12-24");
+        assert_eq!(resp.routes[0].errors, 1);
     }
 }
