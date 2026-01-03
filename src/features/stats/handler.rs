@@ -4,7 +4,7 @@ use axum::{
     response::Json,
     routing::{get, post},
 };
-use chrono::{LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
+use chrono::{Datelike, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
@@ -384,6 +384,133 @@ pub async fn get_daily_http(
 }
 
 #[derive(Deserialize)]
+pub struct LatencyAggQuery {
+    start: String,
+    end: String,
+    /// 可选时区（IANA 名称，如 Asia/Shanghai），覆盖配置
+    timezone: Option<String>,
+    /// 聚合粒度：day/week/month（默认 day）
+    bucket: Option<String>,
+    /// 可选功能名过滤（仅当事件写入了 feature 时生效）
+    feature: Option<String>,
+    /// 可选路由模板过滤（MatchedPath）
+    route: Option<String>,
+    /// 可选 HTTP 方法过滤（GET/POST 等）
+    method: Option<String>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyAggRow {
+    /// bucket 标签：day=YYYY-MM-DD；week=week_start(YYYY-MM-DD)；month=month_start(YYYY-MM-01)
+    bucket: String,
+    /// 事件中的 feature（可为空）
+    feature: Option<String>,
+    /// 事件中的 route（MatchedPath）
+    route: Option<String>,
+    /// 事件中的 method（GET/POST 等）
+    method: Option<String>,
+    /// 样本数
+    count: i64,
+    /// 最小耗时（毫秒）
+    min_ms: Option<i64>,
+    /// 平均耗时（毫秒）
+    avg_ms: Option<f64>,
+    /// 最大耗时（毫秒）
+    max_ms: Option<i64>,
+}
+
+#[derive(Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct LatencyAggResponse {
+    timezone: String,
+    start: String,
+    end: String,
+    /// day/week/month
+    bucket: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    feature_filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route_filter: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method_filter: Option<String>,
+    rows: Vec<LatencyAggRow>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/stats/latency",
+    summary = "按天/周/月聚合各端点请求耗时（min/avg/max）",
+    description = "基于 stats events 明细（route IS NOT NULL 且 duration_ms IS NOT NULL）按 bucket 聚合输出各端点（route+method，可选 feature）的耗时统计：min/avg/max + 样本数。",
+    params(
+        ("start" = String, Query, description = "开始日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("end" = String, Query, description = "结束日期 YYYY-MM-DD（按 timezone 解释）"),
+        ("timezone" = Option<String>, Query, description = "可选时区 IANA 名称（覆盖配置）"),
+        ("bucket" = Option<String>, Query, description = "聚合粒度：day/week/month（默认 day）"),
+        ("feature" = Option<String>, Query, description = "可选 feature 过滤（仅当事件写入了 feature 时生效）"),
+        ("route" = Option<String>, Query, description = "可选路由模板过滤（MatchedPath）"),
+        ("method" = Option<String>, Query, description = "可选 HTTP 方法过滤（GET/POST 等）")
+    ),
+    responses(
+        (status = 200, description = "聚合结果", body = LatencyAggResponse),
+        (
+            status = 422,
+            description = "参数校验失败（日期格式、bucket、timezone 等）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Stats"
+)]
+pub async fn get_latency_agg(
+    State(state): State<AppState>,
+    Query(q): Query<LatencyAggQuery>,
+) -> Result<Json<LatencyAggResponse>, AppError> {
+    let start = parse_ymd(&q.start, "start")?;
+    let end = parse_ymd(&q.end, "end")?;
+    validate_date_range(start, end)?;
+
+    let bucket = parse_latency_bucket(q.bucket.as_deref())?;
+
+    let cfg = crate::config::AppConfig::global();
+    let (tz_name, tz) = resolve_timezone(cfg.stats.timezone.as_str(), q.timezone.as_deref())?;
+
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+
+    let rows = query_latency_agg(
+        storage,
+        tz,
+        bucket,
+        start,
+        end,
+        q.feature.as_deref(),
+        q.route.as_deref(),
+        q.method.as_deref(),
+    )
+    .await?;
+
+    Ok(Json(LatencyAggResponse {
+        timezone: tz_name,
+        start: q.start,
+        end: q.end,
+        bucket: bucket.as_str().to_string(),
+        feature_filter: q.feature,
+        route_filter: q.route,
+        method_filter: q.method,
+        rows,
+    }))
+}
+
+#[derive(Deserialize)]
 pub struct ArchiveQuery {
     date: Option<String>,
 }
@@ -446,6 +573,7 @@ pub fn create_stats_router() -> Router<AppState> {
         .route("/stats/daily/features", get(get_daily_features))
         .route("/stats/daily/dau", get(get_daily_dau))
         .route("/stats/daily/http", get(get_daily_http))
+        .route("/stats/latency", get(get_latency_agg))
         .route("/stats/archive/now", post(trigger_archive_now))
         .route("/stats/summary", get(get_stats_summary))
 }
@@ -1113,6 +1241,59 @@ fn normalize_top_per_day(top: Option<i64>) -> Result<i64, AppError> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LatencyBucket {
+    Day,
+    Week,
+    Month,
+}
+
+impl LatencyBucket {
+    fn as_str(&self) -> &'static str {
+        match self {
+            LatencyBucket::Day => "day",
+            LatencyBucket::Week => "week",
+            LatencyBucket::Month => "month",
+        }
+    }
+}
+
+fn parse_latency_bucket(s: Option<&str>) -> Result<LatencyBucket, AppError> {
+    match s.unwrap_or("day") {
+        "day" => Ok(LatencyBucket::Day),
+        "week" => Ok(LatencyBucket::Week),
+        "month" => Ok(LatencyBucket::Month),
+        other => Err(AppError::Validation(format!(
+            "bucket 无效（可选：day/week/month）：{other}"
+        ))),
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DateBucket {
+    label: String,
+    start: NaiveDate,
+    end: NaiveDate,
+}
+
+fn week_start_monday(d: NaiveDate) -> NaiveDate {
+    let delta = d.weekday().num_days_from_monday() as i64;
+    d - chrono::Duration::days(delta)
+}
+
+fn month_start_day1(d: NaiveDate) -> NaiveDate {
+    NaiveDate::from_ymd_opt(d.year(), d.month(), 1).expect("valid ymd")
+}
+
+fn next_month_start(d: NaiveDate) -> NaiveDate {
+    let (y, m) = if d.month() == 12 {
+        (d.year() + 1, 1)
+    } else {
+        (d.year(), d.month() + 1)
+    };
+    NaiveDate::from_ymd_opt(y, m, 1).expect("valid ymd")
+}
+
 async fn query_daily_agg(
     storage: &super::storage::StatsStorage,
     tz: chrono_tz::Tz,
@@ -1220,6 +1401,253 @@ async fn query_daily_agg(
     // 保持与 fixed-offset 路径一致的输出顺序：按 date ASC
     out.sort_by(|a, b| a.date.cmp(&b.date));
     Ok(out)
+}
+
+async fn query_latency_agg(
+    storage: &super::storage::StatsStorage,
+    tz: chrono_tz::Tz,
+    bucket: LatencyBucket,
+    start: NaiveDate,
+    end: NaiveDate,
+    feature: Option<&str>,
+    route: Option<&str>,
+    method: Option<&str>,
+) -> Result<Vec<LatencyAggRow>, AppError> {
+    // 统计口径：只统计“请求返回耗时”事件
+    // - route IS NOT NULL：来自 HTTP stats_middleware 的 MatchedPath
+    // - duration_ms IS NOT NULL：有耗时样本
+    const SQL_BUCKET: &str = r#"
+        SELECT feature,
+               route,
+               method,
+               COUNT(1) as count,
+               MIN(duration_ms) as min_ms,
+               AVG(duration_ms) as avg_ms,
+               MAX(duration_ms) as max_ms
+        FROM events
+        WHERE route IS NOT NULL
+          AND duration_ms IS NOT NULL
+          AND ts_utc BETWEEN ? AND ?
+          AND (? IS NULL OR feature = ?)
+          AND (? IS NULL OR route = ?)
+          AND (? IS NULL OR method = ?)
+        GROUP BY feature, route, method
+        ORDER BY route ASC, method ASC
+    "#;
+
+    match bucket {
+        LatencyBucket::Day => {
+            let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
+            let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+
+            // fixed-offset（无 DST）优化：单 SQL 按天分组
+            if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
+                let modifier = sqlite_minutes_modifier(off_min);
+                let rows = sqlx::query(
+                    r#"
+                    SELECT date(ts_utc, ?) as bucket,
+                           feature,
+                           route,
+                           method,
+                           COUNT(1) as count,
+                           MIN(duration_ms) as min_ms,
+                           AVG(duration_ms) as avg_ms,
+                           MAX(duration_ms) as max_ms
+                    FROM events
+                    WHERE route IS NOT NULL
+                      AND duration_ms IS NOT NULL
+                      AND ts_utc BETWEEN ? AND ?
+                      AND (? IS NULL OR feature = ?)
+                      AND (? IS NULL OR route = ?)
+                      AND (? IS NULL OR method = ?)
+                    GROUP BY bucket, feature, route, method
+                    ORDER BY bucket ASC, route ASC, method ASC
+                "#,
+                )
+                .bind(modifier)
+                .bind(&start_utc)
+                .bind(&end_utc)
+                .bind(feature)
+                .bind(feature)
+                .bind(route)
+                .bind(route)
+                .bind(method)
+                .bind(method)
+                .fetch_all(&storage.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("latency agg day: {e}")))?;
+
+                let mut out = Vec::with_capacity(rows.len());
+                for r in rows {
+                    out.push(LatencyAggRow {
+                        bucket: r.get::<String, _>("bucket"),
+                        feature: r.try_get::<String, _>("feature").ok(),
+                        route: r.try_get::<String, _>("route").ok(),
+                        method: r.try_get::<String, _>("method").ok(),
+                        count: r.get::<i64, _>("count"),
+                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
+                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
+                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                    });
+                }
+                return Ok(out);
+            }
+
+            // DST（或 offset 不固定）fallback：按天窗口查询
+            let mut out: Vec<LatencyAggRow> = Vec::new();
+            let mut cur = start;
+            while cur <= end {
+                let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+                let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+                let rows = sqlx::query(SQL_BUCKET)
+                    .bind(&day_start)
+                    .bind(&day_end)
+                    .bind(feature)
+                    .bind(feature)
+                    .bind(route)
+                    .bind(route)
+                    .bind(method)
+                    .bind(method)
+                    .fetch_all(&storage.pool)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("latency agg day (fallback): {e}")))?;
+
+                for r in rows {
+                    out.push(LatencyAggRow {
+                        bucket: cur.to_string(),
+                        feature: r.try_get::<String, _>("feature").ok(),
+                        route: r.try_get::<String, _>("route").ok(),
+                        method: r.try_get::<String, _>("method").ok(),
+                        count: r.get::<i64, _>("count"),
+                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
+                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
+                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                    });
+                }
+                cur += chrono::Duration::days(1);
+            }
+
+            out.sort_by(|a, b| {
+                a.bucket
+                    .cmp(&b.bucket)
+                    .then_with(|| a.route.cmp(&b.route))
+                    .then_with(|| a.method.cmp(&b.method))
+                    .then_with(|| a.feature.cmp(&b.feature))
+            });
+            Ok(out)
+        }
+        LatencyBucket::Week => {
+            let mut buckets: Vec<DateBucket> = Vec::new();
+            let mut cur = week_start_monday(start);
+            while cur <= end {
+                let week_end = cur + chrono::Duration::days(6);
+                let eff_start = cur.max(start);
+                let eff_end = week_end.min(end);
+                buckets.push(DateBucket {
+                    label: cur.to_string(),
+                    start: eff_start,
+                    end: eff_end,
+                });
+                cur += chrono::Duration::days(7);
+            }
+
+            let mut out: Vec<LatencyAggRow> = Vec::new();
+            for b in buckets {
+                let start_utc = parse_date_bound_utc(&b.start.to_string(), tz, false)?;
+                let end_utc = parse_date_bound_utc(&b.end.to_string(), tz, true)?;
+                let rows = sqlx::query(SQL_BUCKET)
+                    .bind(&start_utc)
+                    .bind(&end_utc)
+                    .bind(feature)
+                    .bind(feature)
+                    .bind(route)
+                    .bind(route)
+                    .bind(method)
+                    .bind(method)
+                    .fetch_all(&storage.pool)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("latency agg week: {e}")))?;
+
+                for r in rows {
+                    out.push(LatencyAggRow {
+                        bucket: b.label.clone(),
+                        feature: r.try_get::<String, _>("feature").ok(),
+                        route: r.try_get::<String, _>("route").ok(),
+                        method: r.try_get::<String, _>("method").ok(),
+                        count: r.get::<i64, _>("count"),
+                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
+                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
+                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                    });
+                }
+            }
+
+            out.sort_by(|a, b| {
+                a.bucket
+                    .cmp(&b.bucket)
+                    .then_with(|| a.route.cmp(&b.route))
+                    .then_with(|| a.method.cmp(&b.method))
+                    .then_with(|| a.feature.cmp(&b.feature))
+            });
+            Ok(out)
+        }
+        LatencyBucket::Month => {
+            let mut buckets: Vec<DateBucket> = Vec::new();
+            let mut cur = month_start_day1(start);
+            while cur <= end {
+                let next = next_month_start(cur);
+                let month_end = next - chrono::Duration::days(1);
+                let eff_start = cur.max(start);
+                let eff_end = month_end.min(end);
+                buckets.push(DateBucket {
+                    label: cur.to_string(),
+                    start: eff_start,
+                    end: eff_end,
+                });
+                cur = next;
+            }
+
+            let mut out: Vec<LatencyAggRow> = Vec::new();
+            for b in buckets {
+                let start_utc = parse_date_bound_utc(&b.start.to_string(), tz, false)?;
+                let end_utc = parse_date_bound_utc(&b.end.to_string(), tz, true)?;
+                let rows = sqlx::query(SQL_BUCKET)
+                    .bind(&start_utc)
+                    .bind(&end_utc)
+                    .bind(feature)
+                    .bind(feature)
+                    .bind(route)
+                    .bind(route)
+                    .bind(method)
+                    .bind(method)
+                    .fetch_all(&storage.pool)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("latency agg month: {e}")))?;
+
+                for r in rows {
+                    out.push(LatencyAggRow {
+                        bucket: b.label.clone(),
+                        feature: r.try_get::<String, _>("feature").ok(),
+                        route: r.try_get::<String, _>("route").ok(),
+                        method: r.try_get::<String, _>("method").ok(),
+                        count: r.get::<i64, _>("count"),
+                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
+                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
+                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                    });
+                }
+            }
+
+            out.sort_by(|a, b| {
+                a.bucket
+                    .cmp(&b.bucket)
+                    .then_with(|| a.route.cmp(&b.route))
+                    .then_with(|| a.method.cmp(&b.method))
+                    .then_with(|| a.feature.cmp(&b.feature))
+            });
+            Ok(out)
+        }
+    }
 }
 
 async fn query_daily_feature_usage(
@@ -2255,5 +2683,294 @@ mod tests {
         assert_eq!(resp.routes.len(), 1);
         assert_eq!(resp.routes[0].date, "2025-12-24");
         assert_eq!(resp.routes[0].errors, 1);
+    }
+
+    #[tokio::test]
+    async fn latency_agg_supports_day_week_month_and_filters() {
+        let sqlite_path = tmp_sqlite_path("stats_latency_agg");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        storage
+            .insert_events(&[
+                // week_start=2025-12-22, month_start=2025-12-01
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 1, 0, 0),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(100),
+                    user_hash: None,
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                // week_start=2025-12-29, month_start=2025-12-01
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 30, 1, 0, 0),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(300),
+                    user_hash: None,
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 30, 2, 0, 0),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(100),
+                    user_hash: None,
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 30, 3, 0, 0),
+                    route: Some("/image/bn".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("POST".into()),
+                    status: Some(200),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                // week_start=2026-01-05, month_start=2026-01-01
+                EventInsert {
+                    ts_utc: dt_utc(2026, 1, 5, 1, 0, 0),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(50),
+                    user_hash: None,
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+            ])
+            .await
+            .unwrap();
+
+        // day
+        let q = LatencyAggQuery {
+            start: "2025-12-24".into(),
+            end: "2026-01-05".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            bucket: Some("day".into()),
+            feature: None,
+            route: None,
+            method: None,
+        };
+        let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+            .await
+            .unwrap();
+        assert_eq!(resp.bucket, "day");
+
+        let r = resp
+            .rows
+            .iter()
+            .find(|r| r.bucket == "2025-12-24" && r.route.as_deref() == Some("/song/search"))
+            .unwrap();
+        assert_eq!(r.count, 1);
+        assert_eq!(r.min_ms, Some(100));
+        assert_eq!(r.max_ms, Some(100));
+        assert_eq!(r.avg_ms, Some(100.0));
+
+        let r = resp
+            .rows
+            .iter()
+            .find(|r| r.bucket == "2025-12-30" && r.route.as_deref() == Some("/song/search"))
+            .unwrap();
+        assert_eq!(r.count, 2);
+        assert_eq!(r.min_ms, Some(100));
+        assert_eq!(r.max_ms, Some(300));
+        assert_eq!(r.avg_ms, Some(200.0));
+
+        let r = resp
+            .rows
+            .iter()
+            .find(|r| r.bucket == "2025-12-30" && r.route.as_deref() == Some("/image/bn"))
+            .unwrap();
+        assert_eq!(r.count, 1);
+        assert_eq!(r.min_ms, Some(10));
+        assert_eq!(r.max_ms, Some(10));
+        assert_eq!(r.avg_ms, Some(10.0));
+
+        let r = resp
+            .rows
+            .iter()
+            .find(|r| r.bucket == "2026-01-05" && r.route.as_deref() == Some("/song/search"))
+            .unwrap();
+        assert_eq!(r.count, 1);
+        assert_eq!(r.min_ms, Some(50));
+        assert_eq!(r.max_ms, Some(50));
+        assert_eq!(r.avg_ms, Some(50.0));
+
+        // week（bucket 标签为 week_start）
+        let q = LatencyAggQuery {
+            start: "2025-12-24".into(),
+            end: "2026-01-05".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            bucket: Some("week".into()),
+            feature: None,
+            route: None,
+            method: None,
+        };
+        let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+            .await
+            .unwrap();
+        assert_eq!(resp.bucket, "week");
+        assert!(
+            resp.rows
+                .iter()
+                .any(|r| r.bucket == "2025-12-22" && r.route.as_deref() == Some("/song/search"))
+        );
+        assert!(
+            resp.rows
+                .iter()
+                .any(|r| r.bucket == "2025-12-29" && r.route.as_deref() == Some("/image/bn"))
+        );
+        assert!(
+            resp.rows
+                .iter()
+                .any(|r| r.bucket == "2026-01-05" && r.route.as_deref() == Some("/song/search"))
+        );
+
+        // month（bucket 标签为 month_start）
+        let q = LatencyAggQuery {
+            start: "2025-12-24".into(),
+            end: "2026-01-05".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            bucket: Some("month".into()),
+            feature: None,
+            route: None,
+            method: None,
+        };
+        let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+            .await
+            .unwrap();
+        assert_eq!(resp.bucket, "month");
+
+        let dec = resp
+            .rows
+            .iter()
+            .find(|r| r.bucket == "2025-12-01" && r.route.as_deref() == Some("/song/search"))
+            .unwrap();
+        assert_eq!(dec.count, 3);
+        assert_eq!(dec.min_ms, Some(100));
+        assert_eq!(dec.max_ms, Some(300));
+        assert!((dec.avg_ms.unwrap() - (500.0 / 3.0)).abs() < 1e-9);
+
+        let jan = resp
+            .rows
+            .iter()
+            .find(|r| r.bucket == "2026-01-01" && r.route.as_deref() == Some("/song/search"))
+            .unwrap();
+        assert_eq!(jan.count, 1);
+        assert_eq!(jan.min_ms, Some(50));
+        assert_eq!(jan.max_ms, Some(50));
+        assert_eq!(jan.avg_ms, Some(50.0));
+
+        // filters（只看 /song/search GET）
+        let q = LatencyAggQuery {
+            start: "2025-12-24".into(),
+            end: "2026-01-05".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            bucket: Some("day".into()),
+            feature: None,
+            route: Some("/song/search".into()),
+            method: Some("GET".into()),
+        };
+        let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+        assert!(
+            resp.rows
+                .iter()
+                .all(|r| r.route.as_deref() == Some("/song/search"))
+        );
+        assert!(resp.rows.iter().all(|r| r.method.as_deref() == Some("GET")));
+    }
+
+    #[tokio::test]
+    async fn latency_agg_respects_timezone_day_boundary() {
+        let sqlite_path = tmp_sqlite_path("stats_latency_agg_tz");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        // Asia/Shanghai: 2025-12-24 16:00:00Z == 2025-12-25 00:00:00+08
+        storage
+            .insert_events(&[
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 15, 59, 59),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 16, 0, 0),
+                    route: Some("/song/search".into()),
+                    feature: None,
+                    action: None,
+                    method: Some("GET".into()),
+                    status: Some(200),
+                    duration_ms: Some(10),
+                    user_hash: None,
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: None,
+                },
+            ])
+            .await
+            .unwrap();
+
+        let q = LatencyAggQuery {
+            start: "2025-12-24".into(),
+            end: "2025-12-24".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            bucket: Some("day".into()),
+            feature: None,
+            route: Some("/song/search".into()),
+            method: Some("GET".into()),
+        };
+        let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+            .await
+            .unwrap();
+        assert_eq!(resp.rows.len(), 1);
+        assert_eq!(resp.rows[0].bucket, "2025-12-24");
+        assert_eq!(resp.rows[0].count, 1);
+
+        let q = LatencyAggQuery {
+            start: "2025-12-25".into(),
+            end: "2025-12-25".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            bucket: Some("day".into()),
+            feature: None,
+            route: Some("/song/search".into()),
+            method: Some("GET".into()),
+        };
+        let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+        assert_eq!(resp.rows.len(), 1);
+        assert_eq!(resp.rows[0].bucket, "2025-12-25");
+        assert_eq!(resp.rows[0].count, 1);
     }
 }

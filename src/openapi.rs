@@ -61,6 +61,7 @@ impl Modify for ApiServers {
         crate::features::stats::handler::get_daily_features,
         crate::features::stats::handler::get_daily_dau,
         crate::features::stats::handler::get_daily_http,
+        crate::features::stats::handler::get_latency_agg,
         crate::features::stats::handler::get_stats_summary,
         crate::features::stats::handler::trigger_archive_now,
         crate::features::leaderboard::handler::get_top,

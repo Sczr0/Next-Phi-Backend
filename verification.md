@@ -353,3 +353,33 @@ OpenAPI 一致性二次修复：
 /image/bn ['200', '400', '422', '500']
 /image/song ['200', '400', '404', '409', '422', '500']
 ```
+
+---
+
+# 验证记录：2026-01-03，Codex
+## 任务
+
+新增统计接口：支持按天/周/月聚合各端点请求返回耗时（平均/最大/最小）。
+
+## 变更点
+
+- 新增 `GET /stats/latency`（Query：start/end/timezone/bucket/day|week|month + 可选 route/method/feature 过滤；Response：timezone/start/end/bucket/filters/rows）。
+- OpenAPI 已更新并重新导出到 `sdk/openapi.json`，TS SDK 已重新生成/构建。
+
+## 执行命令
+
+- `cargo test -q 2>&1 | Tee-Object -FilePath .\\.codex\\cargo-test-2026-01-03.log`
+- `cargo run --example dump_openapi -q`
+- `cd sdk/ts && pnpm i && pnpm run generate && pnpm run build`
+
+## 结果摘要
+
+- `cargo test`：通过（完整输出见 `.codex/cargo-test-2026-01-03.log`）
+- `dump_openapi`：成功写入 `sdk/openapi.json`
+- `sdk/ts`：generate/build 成功
+
+## 使用示例
+
+```bash
+curl \"http://localhost:3939/api/v2/stats/latency?start=2025-12-24&end=2026-01-05&timezone=Asia/Shanghai&bucket=week\"
+```

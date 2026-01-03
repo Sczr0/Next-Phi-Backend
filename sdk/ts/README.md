@@ -72,6 +72,6 @@ const blob = await resp.blob();
 - Song：`GET /songs/search`
 - Image：`POST /image/bn`，`POST /image/song`，`POST /image/bn/user`
 - Leaderboard：`GET /leaderboard/rks/top`，`GET /leaderboard/rks/by-rank`，`POST /leaderboard/rks/me`，`PUT /leaderboard/alias`，`PUT /leaderboard/profile`，`GET /public/profile/{alias}`
-- Stats：`GET /stats/summary`，`GET /stats/daily`，`POST /stats/archive/now`
+- Stats：`GET /stats/summary`，`GET /stats/daily`，`GET /stats/latency`，`POST /stats/archive/now`
 
 管理端接口需要请求头 `X-Admin-Token`（详见 `docs/LEADERBOARD_API.md`）。

@@ -7,6 +7,7 @@ import type { DailyAggRow } from '../models/DailyAggRow';
 import type { DailyDauResponse } from '../models/DailyDauResponse';
 import type { DailyFeaturesResponse } from '../models/DailyFeaturesResponse';
 import type { DailyHttpResponse } from '../models/DailyHttpResponse';
+import type { LatencyAggResponse } from '../models/LatencyAggResponse';
 import type { StatsSummaryResponse } from '../models/StatsSummaryResponse';
 import type { CancelablePromise } from '../core/CancelablePromise';
 import { OpenAPI } from '../core/OpenAPI';
@@ -228,6 +229,68 @@ export class StatsService {
             },
             errors: {
                 422: `参数校验失败（日期格式/timezone/top 等）`,
+                500: `统计存储未初始化/查询失败`,
+            },
+        });
+    }
+    /**
+     * 按天/周/月聚合各端点请求耗时（min/avg/max）
+     * 基于 stats events 明细（route IS NOT NULL 且 duration_ms IS NOT NULL）按 bucket 聚合输出各端点（route+method，可选 feature）的耗时统计：min/avg/max + 样本数。
+     * @returns LatencyAggResponse 聚合结果
+     * @throws ApiError
+     */
+    public static getLatencyAgg({
+        start,
+        end,
+        timezone,
+        bucket,
+        feature,
+        route,
+        method,
+    }: {
+        /**
+         * 开始日期 YYYY-MM-DD（按 timezone 解释）
+         */
+        start: string,
+        /**
+         * 结束日期 YYYY-MM-DD（按 timezone 解释）
+         */
+        end: string,
+        /**
+         * 可选时区 IANA 名称（覆盖配置）
+         */
+        timezone?: string,
+        /**
+         * 聚合粒度：day/week/month（默认 day）
+         */
+        bucket?: string,
+        /**
+         * 可选 feature 过滤（仅当事件写入了 feature 时生效）
+         */
+        feature?: string,
+        /**
+         * 可选路由模板过滤（MatchedPath）
+         */
+        route?: string,
+        /**
+         * 可选 HTTP 方法过滤（GET/POST 等）
+         */
+        method?: string,
+    }): CancelablePromise<LatencyAggResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/stats/latency',
+            query: {
+                'start': start,
+                'end': end,
+                'timezone': timezone,
+                'bucket': bucket,
+                'feature': feature,
+                'route': route,
+                'method': method,
+            },
+            errors: {
+                422: `参数校验失败（日期格式、bucket、timezone 等）`,
                 500: `统计存储未初始化/查询失败`,
             },
         });

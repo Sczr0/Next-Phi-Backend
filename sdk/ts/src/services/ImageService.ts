@@ -60,10 +60,8 @@ export class ImageService {
             mediaType: 'application/json',
             errors: {
                 400: `请求参数错误/认证缺失`,
-                401: `认证失败`,
                 422: `参数校验失败/渲染错误`,
                 500: `服务器内部错误`,
-                502: `上游网络错误`,
             },
         });
     }
@@ -174,12 +172,10 @@ export class ImageService {
             mediaType: 'application/json',
             errors: {
                 400: `请求参数错误/认证缺失`,
-                401: `认证失败`,
                 404: `歌曲未找到（unique search）`,
                 409: `歌曲结果不唯一（unique search）`,
                 422: `参数校验失败/渲染错误`,
                 500: `服务器内部错误`,
-                502: `上游网络错误`,
             },
         });
     }

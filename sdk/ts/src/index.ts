@@ -28,6 +28,8 @@ export type { FeatureUsageSummary } from './models/FeatureUsageSummary';
 export type { ForceAliasRequest } from './models/ForceAliasRequest';
 export type { HealthResponse } from './models/HealthResponse';
 export type { InstanceUsageSummary } from './models/InstanceUsageSummary';
+export type { LatencyAggResponse } from './models/LatencyAggResponse';
+export type { LatencyAggRow } from './models/LatencyAggRow';
 export type { LatencySummary } from './models/LatencySummary';
 export type { LeaderboardTopItem } from './models/LeaderboardTopItem';
 export type { LeaderboardTopResponse } from './models/LeaderboardTopResponse';

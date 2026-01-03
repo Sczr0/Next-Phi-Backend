@@ -31,6 +31,8 @@ export class AuthService {
                 'taptapVersion': taptapVersion,
             },
             errors: {
+                401: `认证失败（TapTap 返回认证错误）`,
+                422: `参数校验失败（taptapVersion 非法等）`,
                 500: `服务器内部错误`,
                 502: `上游网络错误`,
             },
