@@ -467,3 +467,34 @@ curl \"http://localhost:3939/api/v2/stats/latency?start=2025-12-24&end=2026-01-0
 ['game_key', 'game_progress', 'game_record', 'settings', 'summaryParsed', 'updatedAt', 'user']
 required= ['game_record', 'game_progress', 'user', 'settings', 'game_key']
 ```
+
+---
+
+# 验证记录：2026-01-04（性能无行为变更优化），Codex
+## 任务
+
+从全局性能角度审计并优先落地“不影响现有行为”的优化：
+1) template 模式布局 JSON 覆盖缓存（mtime/len 失效，保留热更新语义）
+2) `/image/bn` TopN 构造去除 RenderRecord clone
+
+## 变更点
+
+- `src/features/image/renderer/svg_templates.rs`
+  - 为 `{bn|song}/{template_id}.json` 覆盖读取引入缓存，避免每次渲染读盘与反序列化
+  - 增加单元测试覆盖：文件变更/删除/无效 JSON 的行为
+- `src/features/image/handler.rs`
+  - `/image/bn` 计算块 TopN 由 clone 改为 drain move（统计计算完成后再 move TopN，保持统计仍基于全量 all）
+  - 增加等价性单元测试：drain 方案与 clone+take 方案结果一致
+
+## 执行命令
+
+- `cargo fmt`
+- `cargo test -q 2>&1 | Tee-Object -FilePath .\\.codex\\logs\\cargo-test-2026-01-04-performance.log`
+
+## 结果摘要
+
+- `cargo test`：通过（完整输出见 `.codex/logs/cargo-test-2026-01-04-performance.log`）
+
+## 未执行项与风险
+
+- 未执行 `tests/b27_performance_test.rs`（需要 `PHI_SESSION_TOKEN` + 网络，且属于性能基准/火焰图而非功能回归）。风险：无法在本机无 token 环境量化“模板模式读盘减少/TopN clone 去除”的实际收益，但功能等价性已由单元测试与全量回归覆盖。

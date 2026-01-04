@@ -136,6 +136,80 @@ mod tests {
             "image/svg+xml; charset=utf-8"
         );
     }
+
+    #[test]
+    fn topn_drain_is_equivalent_to_clone_take() {
+        use crate::features::image::RenderRecord;
+
+        let mut all = vec![
+            RenderRecord {
+                song_id: "A".into(),
+                song_name: "SongA".into(),
+                difficulty: "IN".into(),
+                score: Some(1_000_000.0),
+                acc: 99.0,
+                rks: 10.0,
+                difficulty_value: 15.0,
+                is_fc: false,
+            },
+            RenderRecord {
+                song_id: "B".into(),
+                song_name: "SongB".into(),
+                difficulty: "HD".into(),
+                score: Some(900_000.0),
+                acc: 98.0,
+                rks: 12.0,
+                difficulty_value: 14.0,
+                is_fc: false,
+            },
+            RenderRecord {
+                song_id: "C".into(),
+                song_name: "SongC".into(),
+                difficulty: "EZ".into(),
+                score: Some(1_000_000.0),
+                acc: 100.0,
+                rks: 15.0,
+                difficulty_value: 9.0,
+                is_fc: true,
+            },
+            RenderRecord {
+                song_id: "D".into(),
+                song_name: "SongD".into(),
+                difficulty: "AT".into(),
+                score: Some(800_000.0),
+                acc: 97.0,
+                rks: 9.0,
+                difficulty_value: 16.0,
+                is_fc: false,
+            },
+        ];
+
+        let n = 3usize;
+
+        let mut all_old = all.clone();
+        all_old.sort_by(|a, b| {
+            b.rks
+                .partial_cmp(&a.rks)
+                .unwrap_or(core::cmp::Ordering::Equal)
+        });
+        let top_old: Vec<RenderRecord> = all_old.iter().take(n).cloned().collect();
+
+        all.sort_by(|a, b| {
+            b.rks
+                .partial_cmp(&a.rks)
+                .unwrap_or(core::cmp::Ordering::Equal)
+        });
+        let top_len = n.min(all.len());
+        let top_new: Vec<RenderRecord> = all.drain(..top_len).collect();
+
+        assert_eq!(top_new.len(), top_old.len());
+        for (a, b) in top_new.iter().zip(top_old.iter()) {
+            assert_eq!(a.song_id, b.song_id);
+            assert_eq!(a.difficulty, b.difficulty);
+            assert_eq!(a.rks, b.rks);
+            assert_eq!(a.acc, b.acc);
+        }
+    }
 }
 
 #[utoipa::path(
@@ -411,7 +485,7 @@ pub async fn render_bn(
     });
     let sort_duration = t_sort_start.elapsed();
 
-    let top: Vec<RenderRecord> = all.iter().take(n as usize).cloned().collect();
+    let top_len = (n as usize).min(all.len());
     tracing::info!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
 
     let t_push_start = Instant::now();
@@ -419,8 +493,9 @@ pub async fn render_bn(
     let mut push_acc_map: HashMap<String, f64> = HashMap::new();
     let engine_all: Vec<crate::features::rks::engine::RksRecord> =
         all.iter().filter_map(to_engine_record).collect();
-    for s in top
+    for s in all
         .iter()
+        .take(top_len)
         .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
     {
         let key = format!("{}-{}", s.song_id, s.difficulty);
@@ -535,6 +610,8 @@ pub async fn render_bn(
                 .take(3)
                 .cloned()
                 .collect();
+
+            let top: Vec<RenderRecord> = all.drain(..top_len).collect();
 
             (
                 top,

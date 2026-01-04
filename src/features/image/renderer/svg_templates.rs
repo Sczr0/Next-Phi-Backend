@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
+use std::time::SystemTime;
 
 use chrono::{FixedOffset, Utc};
 use minijinja::Environment;
 use rand::prelude::*;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -562,6 +564,108 @@ fn choose_random_blur_background(
     Some(href)
 }
 
+#[derive(Clone)]
+struct JsonOverrideCacheEntry<T> {
+    mtime: Option<SystemTime>,
+    len: u64,
+    status: JsonOverrideStatus,
+    value: Option<T>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum JsonOverrideStatus {
+    Ok,
+    ParseError,
+    ReadError,
+}
+
+static BN_TEMPLATE_LAYOUT_JSON_CACHE: OnceLock<
+    RwLock<HashMap<PathBuf, JsonOverrideCacheEntry<BnTemplateLayout>>>,
+> = OnceLock::new();
+static SONG_TEMPLATE_LAYOUT_JSON_CACHE: OnceLock<
+    RwLock<HashMap<PathBuf, JsonOverrideCacheEntry<SongTemplateLayout>>>,
+> = OnceLock::new();
+
+fn read_json_override_cached<T>(
+    cache: &RwLock<HashMap<PathBuf, JsonOverrideCacheEntry<T>>>,
+    cfg_path: &Path,
+) -> Option<T>
+where
+    T: DeserializeOwned + Clone,
+{
+    let meta = match std::fs::metadata(cfg_path) {
+        Ok(v) => v,
+        Err(_) => {
+            let mut map = cache.write().unwrap_or_else(|e| e.into_inner());
+            map.remove(cfg_path);
+            return None;
+        }
+    };
+
+    let len = meta.len();
+    let mtime = meta.modified().ok();
+
+    {
+        let map = cache.read().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = map.get(cfg_path)
+            && entry.len == len
+            && entry.mtime == mtime
+        {
+            match entry.status {
+                JsonOverrideStatus::Ok => return entry.value.clone(),
+                JsonOverrideStatus::ParseError => return None,
+                JsonOverrideStatus::ReadError => { /* fallthrough: retry */ }
+            }
+        }
+    }
+
+    let s = match std::fs::read_to_string(cfg_path) {
+        Ok(v) => v,
+        Err(_) => {
+            let mut map = cache.write().unwrap_or_else(|e| e.into_inner());
+            map.insert(
+                cfg_path.to_path_buf(),
+                JsonOverrideCacheEntry {
+                    mtime,
+                    len,
+                    status: JsonOverrideStatus::ReadError,
+                    value: None,
+                },
+            );
+            return None;
+        }
+    };
+
+    let parsed = serde_json::from_str::<T>(&s).ok();
+    let status = if parsed.is_some() {
+        JsonOverrideStatus::Ok
+    } else {
+        JsonOverrideStatus::ParseError
+    };
+
+    let mut map = cache.write().unwrap_or_else(|e| e.into_inner());
+    map.insert(
+        cfg_path.to_path_buf(),
+        JsonOverrideCacheEntry {
+            mtime,
+            len,
+            status,
+            value: parsed.clone(),
+        },
+    );
+    parsed
+}
+
+fn read_bn_template_layout_override(cfg_path: &Path) -> Option<BnTemplateLayout> {
+    let cache = BN_TEMPLATE_LAYOUT_JSON_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    read_json_override_cached(cache, cfg_path)
+}
+
+fn read_song_template_layout_override(cfg_path: &Path) -> Option<SongTemplateLayout> {
+    let cache = SONG_TEMPLATE_LAYOUT_JSON_CACHE.get_or_init(|| RwLock::new(HashMap::new()));
+    read_json_override_cached(cache, cfg_path)
+}
+
 pub(super) fn generate_bn_svg_with_template(
     scores: &[RenderRecord],
     stats: &PlayerStats,
@@ -579,10 +683,7 @@ pub(super) fn generate_bn_svg_with_template(
     let cfg_path = template_base_dir()
         .join("bn")
         .join(format!("{template_id}.json"));
-    if cfg_path.exists()
-        && let Ok(s) = std::fs::read_to_string(&cfg_path)
-        && let Ok(v) = serde_json::from_str::<BnTemplateLayout>(&s)
-    {
+    if let Some(v) = read_bn_template_layout_override(&cfg_path) {
         layout = v;
     }
 
@@ -916,10 +1017,7 @@ pub(super) fn generate_song_svg_with_template(
     let cfg_path = template_base_dir()
         .join("song")
         .join(format!("{template_id}.json"));
-    if cfg_path.exists()
-        && let Ok(s) = std::fs::read_to_string(&cfg_path)
-        && let Ok(v) = serde_json::from_str::<SongTemplateLayout>(&s)
-    {
+    if let Some(v) = read_song_template_layout_override(&cfg_path) {
         layout = v;
     }
 
@@ -1125,4 +1223,101 @@ pub(super) fn generate_song_svg_with_template(
     };
 
     render_template(&template_name, &ctx)
+}
+
+#[cfg(test)]
+mod json_override_cache_tests {
+    use super::*;
+
+    fn clear_layout_override_caches() {
+        if let Some(lock) = BN_TEMPLATE_LAYOUT_JSON_CACHE.get() {
+            let mut map = lock.write().unwrap_or_else(|e| e.into_inner());
+            map.clear();
+        }
+        if let Some(lock) = SONG_TEMPLATE_LAYOUT_JSON_CACHE.get() {
+            let mut map = lock.write().unwrap_or_else(|e| e.into_inner());
+            map.clear();
+        }
+    }
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("phi-backend-{prefix}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    #[test]
+    fn bn_layout_override_updates_on_file_change_and_clears_on_delete() {
+        clear_layout_override_caches();
+
+        let dir = temp_dir("layout-cache-bn");
+        let cfg = dir.join("bn.json");
+
+        std::fs::write(&cfg, r#"{"width":1001,"columns":2}"#).expect("write v1");
+        let v1 = read_bn_template_layout_override(&cfg).expect("read v1");
+        assert_eq!(v1.width, 1001);
+        assert_eq!(v1.columns, 2);
+        // 缺省字段仍保持默认值
+        assert_eq!(v1.card_gap, BnTemplateLayout::default().card_gap);
+
+        // 通过 len 变化确保触发失效（避免依赖 mtime 精度）
+        std::fs::write(
+            &cfg,
+            r#"{"width":1002,"columns":4,"song_name_max_width":30}"#,
+        )
+        .expect("write v2");
+        let v2 = read_bn_template_layout_override(&cfg).expect("read v2");
+        assert_eq!(v2.width, 1002);
+        assert_eq!(v2.columns, 4);
+        assert_eq!(v2.song_name_max_width, 30);
+
+        std::fs::remove_file(&cfg).expect("remove cfg");
+        assert!(read_bn_template_layout_override(&cfg).is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn bn_layout_override_recovers_after_parse_error_on_change() {
+        clear_layout_override_caches();
+
+        let dir = temp_dir("layout-cache-bn-invalid");
+        let cfg = dir.join("bn.json");
+
+        std::fs::write(&cfg, "{not-json").expect("write invalid");
+        assert!(read_bn_template_layout_override(&cfg).is_none());
+
+        std::fs::write(&cfg, r#"{"width":1234,"columns":3}"#).expect("write fixed");
+        let v = read_bn_template_layout_override(&cfg).expect("read fixed");
+        assert_eq!(v.width, 1234);
+        assert_eq!(v.columns, 3);
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn song_layout_override_updates_on_file_change_and_clears_on_delete() {
+        clear_layout_override_caches();
+
+        let dir = temp_dir("layout-cache-song");
+        let cfg = dir.join("song.json");
+
+        std::fs::write(&cfg, r#"{"width":701,"height":401}"#).expect("write v1");
+        let v1 = read_song_template_layout_override(&cfg).expect("read v1");
+        assert_eq!(v1.width, 701);
+        assert_eq!(v1.height, 401);
+        assert_eq!(v1.padding, SongTemplateLayout::default().padding);
+
+        std::fs::write(&cfg, r#"{"width":702,"height":402,"padding":12.0}"#).expect("write v2");
+        let v2 = read_song_template_layout_override(&cfg).expect("read v2");
+        assert_eq!(v2.width, 702);
+        assert_eq!(v2.height, 402);
+        assert_eq!(v2.padding, 12.0);
+
+        std::fs::remove_file(&cfg).expect("remove cfg");
+        assert!(read_song_template_layout_override(&cfg).is_none());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
 }
