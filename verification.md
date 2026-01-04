@@ -378,8 +378,59 @@ OpenAPI 一致性二次修复：
 - `dump_openapi`：成功写入 `sdk/openapi.json`
 - `sdk/ts`：generate/build 成功
 
+---
+
+# 验证记录：2026-01-04（扩大 /leaderboard/rks/top 每页数量），Codex
+## 任务
+
+在尽量不影响性能的情况下，使 `GET /leaderboard/rks/top` 支持更多的每页数量。
+
+## 变更点
+
+- 普通模式：`limit` 仍最大 200（避免放大 BestTop3/APTop3 查询与 JSON 反序列化成本）。
+- `lite=true`：`limit` 最大提升到 1000（仅返回轻量字段）。
+
+## 执行命令
+
+- `cargo test -q 2>&1 | Tee-Object -FilePath .\\.codex\\logs\\cargo-test-2026-01-04-leaderboard-limit.log`
+- `cargo run --example dump_openapi -q`
+- `cd sdk/ts && pnpm run generate && pnpm run build`
+
+## 结果摘要
+
+- `cargo test`：通过（完整输出见 `.codex/logs/cargo-test-2026-01-04-leaderboard-limit.log`）
+- `dump_openapi`：成功写入 `sdk/openapi.json`
+- `sdk/ts`：generate/build 成功
+
 ## 使用示例
 
 ```bash
 curl \"http://localhost:3939/api/v2/stats/latency?start=2025-12-24&end=2026-01-05&timezone=Asia/Shanghai&bucket=week\"
 ```
+
+---
+
+# 验证记录：2026-01-04，Codex
+## 任务
+
+修复排行榜接口：
+1) `/leaderboard/rks/top` 的 `nextAfterUser` 不应暴露原始用户标识；
+2) `/leaderboard/rks/top`（以及同类型列表）提供轻量模式，不返回每个用户的 BestTop3/APTop3。
+
+## 变更点
+
+- `GET /leaderboard/rks/top`：`nextAfterUser` 与 `items[].user` 一致脱敏；新增 `lite=true` 时不返回 `bestTop3/apTop3`。
+- `GET /leaderboard/rks/by-rank`：同样支持 `lite`，并对 `nextAfterUser` 做一致脱敏。
+- TS SDK：重新生成后 `LeaderboardService.getTop()` 与 `LeaderboardService.getByRank()` 支持 `lite` 参数。
+
+## 执行命令
+
+- `cargo test -q 2>&1 | Tee-Object -FilePath .\\.codex\\logs\\cargo-test-2026-01-04.log`
+- `cargo run --example dump_openapi -q`
+- `cd sdk/ts && pnpm run generate && pnpm run build`
+
+## 结果摘要
+
+- `cargo test`：通过（完整输出见 `.codex/logs/cargo-test-2026-01-04.log`）
+- `dump_openapi`：成功写入 `sdk/openapi.json`
+- `sdk/ts`：generate/build 成功

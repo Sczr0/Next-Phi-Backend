@@ -77,7 +77,7 @@ pub struct LeaderboardTopItem {
   "total": 12345,
   "nextAfterScore": 14.73,
   "nextAfterUpdated": "2025-09-20T04:10:44Z",
-  "nextAfterUser": "abcd1234"
+  "nextAfterUser": "abcd****"
 }))]
 pub struct LeaderboardTopResponse {
     pub items: Vec<LeaderboardTopItem>,
@@ -86,6 +86,7 @@ pub struct LeaderboardTopResponse {
     pub next_after_score: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_after_updated: Option<String>,
+    /// 下一页游标：去敏化用户标识（与 `items[].user` 同规则）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_after_user: Option<String>,
 }

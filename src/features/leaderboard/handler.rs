@@ -23,10 +23,14 @@ pub struct TopQuery {
     pub after_score: Option<f64>,
     pub after_updated: Option<String>,
     pub after_user: Option<String>,
+    /// 精简模式：不返回 BestTop3/APTop3（默认 false）
+    pub lite: Option<bool>,
 }
 
 #[derive(Deserialize)]
 pub struct RankQuery {
+    /// 精简模式：不返回 BestTop3/APTop3（默认 false）
+    pub lite: Option<bool>,
     /// 单个排名（1-based）。与 start/end/count 互斥
     pub rank: Option<i64>,
     /// 起始排名（1-based）
@@ -114,7 +118,11 @@ fn is_cjk_char(c: char) -> bool {
     path = "/leaderboard/rks/top",
     summary = "排行榜TOP（按RKS）",
     description = "返回公开玩家的RKS排行榜。若玩家开启展示，将在条目中附带BestTop3/APTop3文字数据。",
-    params(("limit" = Option<i64>, Query, description = "每页数量，默认50，最大200"),("offset" = Option<i64>, Query, description = "偏移量")),
+    params(
+        ("limit" = Option<i64>, Query, description = "每页数量，默认50；普通模式最大200，lite=true时最大1000"),
+        ("offset" = Option<i64>, Query, description = "偏移量"),
+        ("lite" = Option<bool>, Query, description = "精简模式：不返回 bestTop3/apTop3（默认 false）")
+    ),
     responses(
         (status = 200, description = "排行榜 TOP", body = LeaderboardTopResponse),
         (
@@ -134,7 +142,9 @@ pub async fn get_top(
         .stats_storage
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
-    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let lite = q.lite.unwrap_or(false);
+    let max_limit = if lite { 1000 } else { 200 };
+    let limit = q.limit.unwrap_or(50).clamp(1, max_limit);
     let offset = q.offset.unwrap_or(0).max(0);
 
     let total_row = sqlx::query("SELECT COUNT(1) AS c FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0")
@@ -195,17 +205,21 @@ pub async fn get_top(
         last_user_hash = r.try_get::<String, _>("user_hash").ok();
     }
 
-    let mut detail_users: Vec<String> = Vec::new();
-    for r in rows.iter() {
-        let sbt: i64 = r.try_get("sbt").unwrap_or(0);
-        let sat: i64 = r.try_get("sat").unwrap_or(0);
-        if (sbt != 0 || sat != 0)
-            && let Ok(uh) = r.try_get::<String, _>("user_hash")
-        {
-            detail_users.push(uh);
+    let details_map = if !lite {
+        let mut detail_users: Vec<String> = Vec::new();
+        for r in rows.iter() {
+            let sbt: i64 = r.try_get("sbt").unwrap_or(0);
+            let sat: i64 = r.try_get("sat").unwrap_or(0);
+            if (sbt != 0 || sat != 0)
+                && let Ok(uh) = r.try_get::<String, _>("user_hash")
+            {
+                detail_users.push(uh);
+            }
         }
-    }
-    let details_map = fetch_top3_details_map(&storage.pool, &detail_users).await;
+        fetch_top3_details_map(&storage.pool, &detail_users).await
+    } else {
+        HashMap::new()
+    };
 
     for (idx, r) in rows.into_iter().enumerate() {
         let user_hash: String = r.try_get("user_hash").unwrap_or_default();
@@ -217,7 +231,8 @@ pub async fn get_top(
 
         let mut best_top3: Option<Vec<ChartTextItem>> = None;
         let mut ap_top3: Option<Vec<ChartTextItem>> = None;
-        if (sbt != 0 || sat != 0)
+        if !lite
+            && (sbt != 0 || sat != 0)
             && let Some((best_json, ap_json)) = details_map.get(&user_hash)
         {
             if sbt != 0
@@ -248,7 +263,11 @@ pub async fn get_top(
         total,
         next_after_score: if has_more { last_score } else { None },
         next_after_updated: if has_more { last_updated } else { None },
-        next_after_user: if has_more { last_user_hash } else { None },
+        next_after_user: if has_more {
+            last_user_hash.as_deref().map(mask_user_prefix)
+        } else {
+            None
+        },
     }))
 }
 
@@ -261,7 +280,8 @@ pub async fn get_top(
         ("rank" = Option<i64>, Query, description = "单个排名（1-based）"),
         ("start" = Option<i64>, Query, description = "起始排名（1-based）"),
         ("end" = Option<i64>, Query, description = "结束排名（包含）"),
-        ("count" = Option<i64>, Query, description = "返回数量（与 start 组合使用）")
+        ("count" = Option<i64>, Query, description = "返回数量（与 start 组合使用）"),
+        ("lite" = Option<bool>, Query, description = "精简模式：不返回 bestTop3/apTop3（默认 false）")
     ),
     responses(
         (status = 200, description = "区间结果", body = LeaderboardTopResponse),
@@ -308,6 +328,7 @@ pub async fn get_by_rank(
 
     let offset = start_rank - 1;
     let limit = count;
+    let lite = q.lite.unwrap_or(false);
 
     let total_row = sqlx::query("SELECT COUNT(1) AS c FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0")
         .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("count rank: {e}")))?;
@@ -336,17 +357,21 @@ pub async fn get_by_rank(
         last_user_hash = r.try_get::<String, _>("user_hash").ok();
     }
 
-    let mut detail_users: Vec<String> = Vec::new();
-    for r in rows.iter() {
-        let sbt: i64 = r.try_get("sbt").unwrap_or(0);
-        let sat: i64 = r.try_get("sat").unwrap_or(0);
-        if (sbt != 0 || sat != 0)
-            && let Ok(uh) = r.try_get::<String, _>("user_hash")
-        {
-            detail_users.push(uh);
+    let details_map = if !lite {
+        let mut detail_users: Vec<String> = Vec::new();
+        for r in rows.iter() {
+            let sbt: i64 = r.try_get("sbt").unwrap_or(0);
+            let sat: i64 = r.try_get("sat").unwrap_or(0);
+            if (sbt != 0 || sat != 0)
+                && let Ok(uh) = r.try_get::<String, _>("user_hash")
+            {
+                detail_users.push(uh);
+            }
         }
-    }
-    let details_map = fetch_top3_details_map(&storage.pool, &detail_users).await;
+        fetch_top3_details_map(&storage.pool, &detail_users).await
+    } else {
+        HashMap::new()
+    };
 
     for (i, r) in rows.into_iter().enumerate() {
         let user_hash: String = r.try_get("user_hash").unwrap_or_default();
@@ -358,7 +383,8 @@ pub async fn get_by_rank(
 
         let mut best_top3: Option<Vec<ChartTextItem>> = None;
         let mut ap_top3: Option<Vec<ChartTextItem>> = None;
-        if (sbt != 0 || sat != 0)
+        if !lite
+            && (sbt != 0 || sat != 0)
             && let Some((best_json, ap_json)) = details_map.get(&user_hash)
         {
             if sbt != 0
@@ -389,7 +415,11 @@ pub async fn get_by_rank(
         total,
         next_after_score: if has_more { last_score } else { None },
         next_after_updated: if has_more { last_updated } else { None },
-        next_after_user: if has_more { last_user_hash } else { None },
+        next_after_user: if has_more {
+            last_user_hash.as_deref().map(mask_user_prefix)
+        } else {
+            None
+        },
     }))
 }
 

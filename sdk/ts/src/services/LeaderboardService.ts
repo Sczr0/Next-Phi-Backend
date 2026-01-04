@@ -173,6 +173,7 @@ export class LeaderboardService {
         start,
         end,
         count,
+        lite,
     }: {
         /**
          * 单个排名（1-based）
@@ -190,6 +191,10 @@ export class LeaderboardService {
          * 返回数量（与 start 组合使用）
          */
         count?: number,
+        /**
+         * 精简模式：不返回 bestTop3/apTop3（默认 false）
+         */
+        lite?: boolean,
     }): CancelablePromise<LeaderboardTopResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -199,6 +204,7 @@ export class LeaderboardService {
                 'start': start,
                 'end': end,
                 'count': count,
+                'lite': lite,
             },
             errors: {
                 422: `参数校验失败（缺少 rank/start 等）`,
@@ -236,15 +242,20 @@ export class LeaderboardService {
     public static getTop({
         limit,
         offset,
+        lite,
     }: {
         /**
-         * 每页数量，默认50，最大200
+         * 每页数量，默认50；普通模式最大200，lite=true时最大1000
          */
         limit?: number,
         /**
          * 偏移量
          */
         offset?: number,
+        /**
+         * 精简模式：不返回 bestTop3/apTop3（默认 false）
+         */
+        lite?: boolean,
     }): CancelablePromise<LeaderboardTopResponse> {
         return __request(OpenAPI, {
             method: 'GET',
@@ -252,6 +263,7 @@ export class LeaderboardService {
             query: {
                 'limit': limit,
                 'offset': offset,
+                'lite': lite,
             },
             errors: {
                 500: `统计存储未初始化/查询失败`,
