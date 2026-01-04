@@ -126,13 +126,16 @@ pub struct DifficultyRecord {
     pub chart_constant: Option<f32>,
 }
 
-// 仅用于 OpenAPI 文档展示的响应模型（包含 updatedAt 字段）
+// 仅用于 OpenAPI 文档展示的响应模型（字段命名以实际返回为准）
 #[derive(Debug, Serialize, utoipa::ToSchema)]
-#[serde(rename_all = "camelCase")]
 pub struct ParsedSaveDoc {
+    /// 与实际返回保持一致：字段名为 updatedAt
+    #[serde(rename = "updatedAt", skip_serializing_if = "Option::is_none")]
     #[schema(example = "2025-09-20T04:10:44.188Z")]
     pub updated_at: Option<String>,
     /// 解析自 summary 的关键摘要（如段位、RKS 等）
+    /// 与实际返回保持一致：字段名为 summaryParsed
+    #[serde(rename = "summaryParsed", skip_serializing_if = "Option::is_none")]
     pub summary_parsed: Option<serde_json::Value>,
     /// 结构化成绩（歌曲ID -> [四难度成绩]）
     pub game_record: serde_json::Value,

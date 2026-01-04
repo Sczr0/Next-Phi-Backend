@@ -434,3 +434,36 @@ curl \"http://localhost:3939/api/v2/stats/latency?start=2025-12-24&end=2026-01-0
 - `cargo test`：通过（完整输出见 `.codex/logs/cargo-test-2026-01-04.log`）
 - `dump_openapi`：成功写入 `sdk/openapi.json`
 - `sdk/ts`：generate/build 成功
+
+---
+
+# 验证记录：2026-01-04（OpenAPI /save 字段命名一致性），Codex
+## 任务
+
+检查 OpenAPI 与实现的一致性：发现 `/save` 响应的 `ParsedSaveDoc` 在 OpenAPI 中按 camelCase（gameRecord 等）描述，但实际返回体来自 `ParsedSave` 的序列化（game_record 等 snake_case，updatedAt/summaryParsed 为显式 rename）。按“以实现为准”的原则，修正 OpenAPI 表述并重新导出。
+
+## 变更点
+
+- `src/features/save/models.rs`：调整 OpenAPI 专用 `ParsedSaveDoc` 字段命名以匹配实际返回：
+  - 保持 `game_record/game_progress/game_key/...` 为 snake_case；
+  - `updated_at` 与 `summary_parsed` 显式 `serde(rename)` 为 `updatedAt` / `summaryParsed`（与实际返回一致）。
+- OpenAPI：重新导出 `sdk/openapi.json`。
+- TS SDK：重新生成/构建，确保模型字段与 OpenAPI 一致（`sdk/ts/src/models/ParsedSaveDoc.ts`）。
+
+## 执行命令
+
+- `cargo run --example dump_openapi -q`
+- `cd sdk/ts; pnpm run generate`
+- `cd sdk/ts; pnpm run build`
+- `cargo test -q 2>&1 | Tee-Object -FilePath .codex/logs/cargo-test-2026-01-04-openapi-save-schema.log`
+- `python -c "import json; spec=json.load(open('sdk/openapi.json','r',encoding='utf-8')); print(sorted(spec['components']['schemas']['ParsedSaveDoc']['properties'].keys())); print('required=', spec['components']['schemas']['ParsedSaveDoc'].get('required'))"`
+
+## 结果摘要
+
+- `cargo test -q`：通过（完整输出见 `.codex/logs/cargo-test-2026-01-04-openapi-save-schema.log`）
+- OpenAPI schema 校验：
+
+```text
+['game_key', 'game_progress', 'game_record', 'settings', 'summaryParsed', 'updatedAt', 'user']
+required= ['game_record', 'game_progress', 'user', 'settings', 'game_key']
+```
