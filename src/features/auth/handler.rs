@@ -155,13 +155,15 @@ fn normalize_taptap_version(v: Option<&str>) -> Result<Option<&'static str>, App
     if v.is_empty() {
         return Ok(None);
     }
-    match v.to_ascii_lowercase().as_str() {
-        "cn" => Ok(Some("cn")),
-        "global" => Ok(Some("global")),
-        _ => Err(AppError::Validation(
-            "taptapVersion 必须为 cn 或 global".to_string(),
-        )),
+    if v.eq_ignore_ascii_case("cn") {
+        return Ok(Some("cn"));
     }
+    if v.eq_ignore_ascii_case("global") {
+        return Ok(Some("global"));
+    }
+    Err(AppError::Validation(
+        "taptapVersion 必须为 cn 或 global".to_string(),
+    ))
 }
 
 fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {

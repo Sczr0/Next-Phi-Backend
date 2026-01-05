@@ -55,11 +55,11 @@ pub async fn stats_middleware(
         duration_ms: Some(dur.as_millis() as i64),
         user_hash: None,
         client_ip_hash,
-        instance: Some(crate::features::stats::hostname()),
+        instance: Some(crate::features::stats::hostname().into()),
         extra_json: None,
     };
     // 异步上报（不阻塞）
-    state.stats.track(evt).await;
+    state.stats.track(evt);
 
     res
 }

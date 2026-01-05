@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +14,7 @@ pub struct EventInsert {
     pub duration_ms: Option<i64>,
     pub user_hash: Option<String>,
     pub client_ip_hash: Option<String>,
-    pub instance: Option<String>,
+    pub instance: Option<Cow<'static, str>>,
     pub extra_json: Option<serde_json::Value>,
 }
 

@@ -182,10 +182,12 @@ pub async fn archive_one_day(
             .map_err(|e| AppError::Internal(format!("create parquet: {e}")))?;
 
         // 压缩设置
-        let compression = match compress.to_ascii_lowercase().as_str() {
-            "snappy" => Compression::SNAPPY,
-            "zstd" => Compression::ZSTD(ZstdLevel::default()),
-            _ => Compression::UNCOMPRESSED,
+        let compression = if compress.eq_ignore_ascii_case("snappy") {
+            Compression::SNAPPY
+        } else if compress.eq_ignore_ascii_case("zstd") {
+            Compression::ZSTD(ZstdLevel::default())
+        } else {
+            Compression::UNCOMPRESSED
         };
         let props = WriterProperties::builder()
             .set_compression(compression)

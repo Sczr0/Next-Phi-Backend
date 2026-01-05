@@ -168,7 +168,7 @@ impl StatsStorage {
                     .push_bind(e.duration_ms)
                     .push_bind(&e.user_hash)
                     .push_bind(&e.client_ip_hash)
-                    .push_bind(&e.instance)
+                    .push_bind(e.instance.as_deref())
                     .push_bind(extra);
             });
             qb.build()

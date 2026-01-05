@@ -368,7 +368,7 @@ pub async fn render_bn(
                         "webp_lossless": webp_lossless_code
                     })),
                 };
-                h.track(evt).await;
+                h.track(evt);
                 // 日志：BestN 缓存命中耗时
                 debug!(
                     target: "phi_backend::image::bn",
@@ -405,7 +405,7 @@ pub async fn render_bn(
                     serde_json::json!({ "cached": false, "user_kind": user_kind_for_cache, "tpl": tpl_code }),
                 ),
             };
-            h.track(evt).await;
+            h.track(evt);
         }
     }
 
@@ -746,9 +746,7 @@ pub async fn render_bn(
         let (user_hash, user_kind) =
             crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         let extra = serde_json::json!({ "bestn_song_ids": bestn_song_ids, "user_kind": user_kind });
-        stats
-            .track_feature("bestn", "generate_image", user_hash, Some(extra))
-            .await;
+        stats.track_feature("bestn", "generate_image", user_hash, Some(extra));
     }
 
     let mut headers = axum::http::HeaderMap::new();
@@ -829,7 +827,7 @@ pub async fn render_bn(
                 "width": q.width,
             })),
         };
-        h.track(evt).await;
+        h.track(evt);
         // 日志：BestN 渲染全过程耗时
         debug!(
             target: "phi_backend::image::bn",
@@ -1000,7 +998,7 @@ pub async fn render_song(
                         serde_json::json!({"cached": true, "user_kind": user_kind_for_cache, "song_id": song.id, "tpl": tpl_code}),
                     ),
                 };
-                h.track(evt).await;
+                h.track(evt);
             }
             let mut headers = axum::http::HeaderMap::new();
             let content_type = content_type_from_fmt_code(fmt_code);
@@ -1022,7 +1020,7 @@ pub async fn render_song(
                     serde_json::json!({"cached": false, "user_kind": user_kind_for_cache, "song_id": song.id, "tpl": tpl_code}),
                 ),
             };
-            h.track(evt).await;
+            h.track(evt);
         }
     }
 
@@ -1222,9 +1220,7 @@ pub async fn render_song(
         let (user_hash, user_kind) =
             crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
         let extra = serde_json::json!({ "song_id": song.id, "user_kind": user_kind });
-        stats
-            .track_feature("single_query", "generate_image", user_hash, Some(extra))
-            .await;
+        stats.track_feature("single_query", "generate_image", user_hash, Some(extra));
     }
     let mut headers = axum::http::HeaderMap::new();
     headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
@@ -1284,7 +1280,7 @@ pub async fn render_song(
                 serde_json::json!({"permits_avail": permits_avail2, "wait_ms": wait_ms2, "render_ms": render_ms2, "bytes": bytes.len(), "fmt": fmt_str, "width": q.width, "song_id": song.id}),
             ),
         };
-        h.track(evt).await;
+        h.track(evt);
     }
     Ok((StatusCode::OK, headers, bytes))
 }
@@ -1627,9 +1623,7 @@ pub async fn render_bn_user(
             "scores_len": records_len,
             "unlocked": unlocked
         });
-        stats_handle
-            .track_feature("bestn_user", "generate_image", None, Some(extra))
-            .await;
+        stats_handle.track_feature("bestn_user", "generate_image", None, Some(extra));
     }
 
     let mut headers = axum::http::HeaderMap::new();

@@ -43,14 +43,10 @@ qrcode = "0.14"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 gethostname = "0.4"
 
-# 指标与监控
-metrics = "0.22"
-metrics-exporter-prometheus = "0.15"
-
-# SQLite 持久化（升级以修复 RUSTSEC-2024-0363）
+# SQLite 持久化
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "chrono", "json"] }
 
-# Parquet 导出（通过 Arrow）
+# Parquet 导出
 parquet = { version = "53", features = ["arrow"] }
 arrow-array = "53"
 arrow-schema = "53"

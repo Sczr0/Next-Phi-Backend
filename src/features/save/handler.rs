@@ -116,9 +116,7 @@ pub async fn get_save_data(
     // 业务打点：成功获取存档
     if let Some(stats) = state.stats.as_ref() {
         let extra = serde_json::json!({ "user_kind": user_kind });
-        stats
-            .track_feature("save", "get_save", user_hash.clone(), Some(extra))
-            .await;
+        stats.track_feature("save", "get_save", user_hash.clone(), Some(extra));
     }
 
     // 计算 RKS / 文本详情属于 CPU 密集任务：移出 Tokio worker，避免影响吞吐与尾延迟。

@@ -57,8 +57,16 @@ pub struct OkAliasResponse {
 }
 
 fn mask_user_prefix(hash: &str) -> String {
-    let p = hash.chars().take(4).collect::<String>();
-    format!("{p}****")
+    let prefix_end = hash
+        .char_indices()
+        .nth(4)
+        .map(|(i, _)| i)
+        .unwrap_or(hash.len());
+
+    let mut out = String::with_capacity(prefix_end + 4);
+    out.push_str(&hash[..prefix_end]);
+    out.push_str("****");
+    out
 }
 
 /// 批量查询 BestTop3/APTop3 文本详情，避免 N+1 往返。

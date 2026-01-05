@@ -24,7 +24,7 @@ pub struct StatsHandle {
 }
 
 impl StatsHandle {
-    pub async fn track(&self, evt: EventInsert) {
+    pub fn track(&self, evt: EventInsert) {
         // 若队列已满则丢弃，不阻塞主流程
         let _ = self.tx.try_send(evt);
     }
@@ -70,7 +70,7 @@ impl StatsHandle {
     }
 
     /// 业务级打点：功能/动作
-    pub async fn track_feature(
+    pub fn track_feature(
         &self,
         feature: &str,
         action: &str,
@@ -88,19 +88,19 @@ impl StatsHandle {
             duration_ms: None,
             user_hash,
             client_ip_hash: None,
-            instance: Some(hostname()),
+            instance: Some(hostname().into()),
             extra_json,
         };
         let _ = self.tx.try_send(evt);
     }
 }
 
-fn hostname() -> String {
+fn hostname() -> &'static str {
     // hostname 在进程生命周期内稳定，缓存以减少重复系统调用与分配。
     static HOSTNAME: OnceCell<String> = OnceCell::new();
     HOSTNAME
         .get_or_init(|| gethostname::gethostname().to_string_lossy().to_string())
-        .clone()
+        .as_str()
 }
 
 /// 初始化统计���务：创建 SQLite、spawn 批量写入与每日归档任务

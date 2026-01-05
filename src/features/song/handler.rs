@@ -57,7 +57,10 @@ pub struct SongSearchQuery {
 }
 
 fn parse_bool(s: &str) -> bool {
-    matches!(s.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    s == "1"
+        || s.eq_ignore_ascii_case("true")
+        || s.eq_ignore_ascii_case("yes")
+        || s.eq_ignore_ascii_case("on")
 }
 
 #[utoipa::path(
@@ -110,7 +113,7 @@ pub async fn search_songs(
     State(state): State<AppState>,
     Query(params): Query<SongSearchQuery>,
 ) -> Result<axum::response::Response, AppError> {
-    let q = params.q.trim().to_string();
+    let q = params.q.trim();
     if q.is_empty() {
         return Err(AppError::Json("缺少查询参数 q".into()));
     }
@@ -138,16 +141,14 @@ pub async fn search_songs(
             "limit": limit,
             "offset": offset
         });
-        stats_handle
-            .track_feature("song_search", "search", None, Some(extra))
-            .await;
+        stats_handle.track_feature("song_search", "search", None, Some(extra));
     }
 
     if unique {
-        let item = state.song_catalog.search_unique(&q)?;
+        let item = state.song_catalog.search_unique(q)?;
         Ok(Json::<SongInfo>(item.as_ref().clone()).into_response())
     } else {
-        let items = state.song_catalog.search(&q);
+        let items = state.song_catalog.search(q);
         let total = items.len();
         let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
 
