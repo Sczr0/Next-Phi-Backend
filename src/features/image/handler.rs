@@ -1422,117 +1422,157 @@ pub async fn render_bn_user(
         ));
     }
 
-    // 解析成绩并计算 RKS
-    let mut records: Vec<RenderRecord> = Vec::with_capacity(req.scores.len());
-    for (idx, item) in req.scores.iter().enumerate() {
-        // 找歌
-        let info = state
-            .song_catalog
-            .search_unique(&item.song)
-            .map_err(AppError::Search)?;
-        // 定数
-        let dv_opt = match item.difficulty.as_str() {
-            "EZ" | "ez" => info.chart_constants.ez,
-            "HD" | "hd" => info.chart_constants.hd,
-            "IN" | "in" => info.chart_constants.in_level,
-            "AT" | "at" => info.chart_constants.at,
-            _ => None,
-        };
-        let Some(dv) = dv_opt.map(|v| v as f64) else {
-            return Err(AppError::ImageRendererError(format!(
-                "第{}条成绩难度无效或无定数: {} {}",
-                idx + 1,
-                info.name,
-                item.difficulty
-            )));
-        };
-        // ACC 统一百分比
-        let acc = item.acc;
-        // RKS
-        let rks = crate::features::rks::engine::calculate_chart_rks(acc, dv);
-        records.push(RenderRecord {
-            song_id: info.id.clone(),
-            song_name: info.name.clone(),
-            difficulty: item.difficulty.to_uppercase(),
-            score: item.score.map(|v| v as f64),
-            acc,
-            rks,
-            difficulty_value: dv,
-            is_fc: (item.score.unwrap_or_default() == 1_000_000) || (acc >= 100.0),
-        });
-    }
+    let RenderUserBnRequest {
+        theme,
+        nickname,
+        unlock_password,
+        scores,
+    } = req;
 
-    // 排序、截取 N（按传入成绩数量）
-    records.sort_by(|a, b| {
-        b.rks
-            .partial_cmp(&a.rks)
-            .unwrap_or(core::cmp::Ordering::Equal)
-    });
-    let records_len = records.len();
+    let records_len = scores.len();
     let n = records_len.max(1);
 
-    // 推分 ACC
-    let mut push_acc_map: HashMap<String, f64> = HashMap::new();
-    let engine_all: Vec<crate::features::rks::engine::RksRecord> = records
-        .iter()
-        .filter_map(|r| {
-            let diff = match r.difficulty.as_str() {
-                "EZ" => Difficulty::EZ,
-                "HD" => Difficulty::HD,
-                "IN" => Difficulty::IN,
-                "AT" => Difficulty::AT,
-                _ => return None,
-            };
-            Some(crate::features::rks::engine::RksRecord {
-                song_id: r.song_id.clone(),
-                difficulty: diff,
-                score: r.score.unwrap_or(0.0) as u32,
-                acc: r.acc,
-                rks: r.rks,
-                chart_constant: r.difficulty_value,
-            })
-        })
-        .collect();
-    for r in records
-        .iter()
-        .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
-    {
-        let key = format!("{}-{}", r.song_id, r.difficulty);
-        if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(
-            &key,
-            r.difficulty_value,
-            &engine_all,
-        ) {
-            push_acc_map.insert(key, v);
-        }
-    }
+    // 解析成绩、排序、推分与统计属于 CPU 密集任务：移出 Tokio worker，避免影响吞吐与尾延迟。
+    let (records, push_acc_map, exact_rks, ap_top_3_avg, best_27_avg, ap_top_3_scores) = {
+        let state = state.clone();
+        let join = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+            // 解析成绩并计算 RKS
+            let mut records: Vec<RenderRecord> = Vec::with_capacity(scores.len());
+            for (idx, item) in scores.iter().enumerate() {
+                // 找歌
+                let info = state
+                    .song_catalog
+                    .search_unique(&item.song)
+                    .map_err(AppError::Search)?;
+                // 定数
+                let dv_opt = match item.difficulty.as_str() {
+                    "EZ" | "ez" => info.chart_constants.ez,
+                    "HD" | "hd" => info.chart_constants.hd,
+                    "IN" | "in" => info.chart_constants.in_level,
+                    "AT" | "at" => info.chart_constants.at,
+                    _ => None,
+                };
+                let Some(dv) = dv_opt.map(|v| v as f64) else {
+                    return Err(AppError::ImageRendererError(format!(
+                        "第{}条成绩难度无效或无定数: {} {}",
+                        idx + 1,
+                        info.name,
+                        item.difficulty
+                    )));
+                };
+                // ACC 统一百分比
+                let acc = item.acc;
+                // RKS
+                let rks = crate::features::rks::engine::calculate_chart_rks(acc, dv);
+                records.push(RenderRecord {
+                    song_id: info.id.clone(),
+                    song_name: info.name.clone(),
+                    difficulty: item.difficulty.to_uppercase(),
+                    score: item.score.map(|v| v as f64),
+                    acc,
+                    rks,
+                    difficulty_value: dv,
+                    is_fc: (item.score.unwrap_or_default() == 1_000_000) || (acc >= 100.0),
+                });
+            }
 
-    // 统计项
-    let (exact_rks, _rounded) =
-        crate::features::rks::engine::calculate_player_rks_details(&engine_all);
-    let ap_scores: Vec<_> = records.iter().filter(|r| r.acc >= 100.0).take(3).collect();
-    let ap_top_3_avg = if ap_scores.len() == 3 {
-        Some(ap_scores.iter().map(|r| r.rks).sum::<f64>() / 3.0)
-    } else {
-        None
-    };
-    let best_27_avg = if records.is_empty() {
-        None
-    } else {
-        Some(records.iter().take(27).map(|r| r.rks).sum::<f64>() / (records.len().min(27) as f64))
+            // 排序、截取 N（按传入成绩数量）
+            records.sort_by(|a, b| {
+                b.rks
+                    .partial_cmp(&a.rks)
+                    .unwrap_or(core::cmp::Ordering::Equal)
+            });
+
+            // 推分 ACC
+            let mut push_acc_map: HashMap<String, f64> = HashMap::new();
+            let engine_all: Vec<crate::features::rks::engine::RksRecord> = records
+                .iter()
+                .filter_map(|r| {
+                    let diff = match r.difficulty.as_str() {
+                        "EZ" => Difficulty::EZ,
+                        "HD" => Difficulty::HD,
+                        "IN" => Difficulty::IN,
+                        "AT" => Difficulty::AT,
+                        _ => return None,
+                    };
+                    Some(crate::features::rks::engine::RksRecord {
+                        song_id: r.song_id.clone(),
+                        difficulty: diff,
+                        score: r.score.unwrap_or(0.0) as u32,
+                        acc: r.acc,
+                        rks: r.rks,
+                        chart_constant: r.difficulty_value,
+                    })
+                })
+                .collect();
+            for r in records
+                .iter()
+                .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
+            {
+                let key = format!("{}-{}", r.song_id, r.difficulty);
+                if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(
+                    &key,
+                    r.difficulty_value,
+                    &engine_all,
+                ) {
+                    push_acc_map.insert(key, v);
+                }
+            }
+
+            // 统计项
+            let (exact_rks, _rounded) =
+                crate::features::rks::engine::calculate_player_rks_details(&engine_all);
+            let ap_scores: Vec<_> = records.iter().filter(|r| r.acc >= 100.0).take(3).collect();
+            let ap_top_3_avg = if ap_scores.len() == 3 {
+                Some(ap_scores.iter().map(|r| r.rks).sum::<f64>() / 3.0)
+            } else {
+                None
+            };
+            let best_27_avg = if records.is_empty() {
+                None
+            } else {
+                Some(
+                    records.iter().take(27).map(|r| r.rks).sum::<f64>()
+                        / (records.len().min(27) as f64),
+                )
+            };
+            let ap_top_3_scores: Vec<RenderRecord> = records
+                .iter()
+                .filter(|r| r.acc >= 100.0)
+                .take(3)
+                .cloned()
+                .collect();
+
+            Ok((
+                records,
+                push_acc_map,
+                exact_rks,
+                ap_top_3_avg,
+                best_27_avg,
+                ap_top_3_scores,
+            ))
+        })
+        .await;
+        match join {
+            Ok(v) => v?,
+            Err(e) => {
+                let e_str = e.to_string();
+                if let Ok(panic) = e.try_into_panic() {
+                    std::panic::resume_unwind(panic);
+                }
+                return Err(AppError::Internal(format!(
+                    "spawn_blocking cancelled: {e_str}"
+                )));
+            }
+        }
     };
 
     // 昵称
-    let display_name = req
-        .nickname
-        .clone()
-        .unwrap_or_else(|| "Phigros Player".into());
+    let display_name = nickname.unwrap_or_else(|| "Phigros Player".into());
 
     // 水印控制：默认启用配置中的显式/隐式；若提供了正确的解除口令，则同时关闭二者
     let cfg = AppConfig::global();
-    let unlocked = cfg
-        .watermark
-        .is_unlock_valid(req.unlock_password.as_deref());
+    let unlocked = cfg.watermark.is_unlock_valid(unlock_password.as_deref());
     let explicit = if unlocked {
         false
     } else {
@@ -1551,12 +1591,7 @@ pub async fn render_bn_user(
         player_name: Some(display_name),
         update_time: Utc::now(),
         n: n as u32,
-        ap_top_3_scores: records
-            .iter()
-            .filter(|r| r.acc >= 100.0)
-            .take(3)
-            .cloned()
-            .collect(),
+        ap_top_3_scores,
         challenge_rank: None,
         data_string: None,
         custom_footer_text: Some(cfg.branding.footer_text.clone()),
@@ -1583,7 +1618,6 @@ pub async fn render_bn_user(
         .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
 
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
-    let theme = req.theme;
     let public_base_url = public_illustration_base_url.map(|s| s.to_string());
     let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
