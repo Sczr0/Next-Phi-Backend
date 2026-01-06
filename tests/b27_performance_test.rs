@@ -188,7 +188,8 @@ async fn test_b27_generation_with_flamegraph() {
     let phase5_start = std::time::Instant::now();
 
     // 计算推分 ACC
-    let mut push_acc_map: HashMap<String, f64> = HashMap::new();
+    let mut push_acc_map: HashMap<String, phi_backend::features::rks::engine::PushAccHint> =
+        HashMap::new();
     let engine_all: Vec<phi_backend::features::rks::engine::RksRecord> = all_records
         .iter()
         .filter_map(|r| {
@@ -210,17 +211,14 @@ async fn test_b27_generation_with_flamegraph() {
         })
         .collect();
 
-    for s in top27
-        .iter()
-        .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
-    {
+    let solver = phi_backend::features::rks::engine::PushAccBatchSolver::new(&engine_all);
+    for (idx, s) in all_records.iter().take(top27.len()).enumerate() {
+        if s.acc >= 100.0 || s.difficulty_value <= 0.0 {
+            continue;
+        }
         let key = format!("{}-{}", s.song_id, s.difficulty);
-        if let Some(v) = phi_backend::features::rks::engine::calculate_target_chart_push_acc(
-            &key,
-            s.difficulty_value,
-            &engine_all,
-        ) {
-            push_acc_map.insert(key, v);
+        if let Some(hint) = solver.solve_for_index(idx, s.difficulty_value) {
+            push_acc_map.insert(key, hint);
         }
     }
 

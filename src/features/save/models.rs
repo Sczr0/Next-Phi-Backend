@@ -64,7 +64,7 @@ pub fn save_response_example() -> serde_json::Value {
 }
 
 /// 难度枚举
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum Difficulty {
     EZ,
     HD,

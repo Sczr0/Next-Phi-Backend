@@ -242,6 +242,237 @@ pub struct RksRecord {
     pub chart_constant: f64,
 }
 
+/// 推分 ACC 计算结果（用于区分“无法推分”与“只能推到 100% 才能推分”）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PushAccHint {
+    /// 需要将该谱面 ACC 提升到指定值（百分比，保留 3 位小数）才能推分。
+    TargetAcc { acc: f64 },
+    /// 阈值可达，但只有达到 100.0%（Phi/AP）才能推分。
+    PhiOnly,
+    /// 即使达到 100.0% 也无法推分。
+    Unreachable,
+}
+
+impl PushAccHint {
+    /// 若该结果可用具体 ACC 表示，则返回目标 ACC（百分比）。
+    pub fn target_acc(&self) -> Option<f64> {
+        match self {
+            Self::TargetAcc { acc } => Some(*acc),
+            Self::PhiOnly | Self::Unreachable => None,
+        }
+    }
+
+    /// 兼容旧逻辑：无法区分时以 100.0 表示“推到顶/无法推分”。
+    pub fn as_legacy_acc(&self) -> f64 {
+        match self {
+            Self::TargetAcc { acc } => *acc,
+            Self::PhiOnly | Self::Unreachable => 100.0,
+        }
+    }
+}
+
+fn target_rks_threshold_from_exact(current_exact_rks: f64) -> f64 {
+    // 目标阈值（取决于第三位小数是否 >= 5）
+    // 约定：目标是让「四舍五入到两位的显示 RKS」提升 0.01。
+    let third_decimal_ge_5 = (current_exact_rks * 1000.0) % 10.0 >= 5.0;
+    if third_decimal_ge_5 {
+        (current_exact_rks * 100.0).floor() / 100.0 + 0.015
+    } else {
+        (current_exact_rks * 100.0).floor() / 100.0 + 0.005
+    }
+}
+
+/// 推分 ACC 批量求解器：在同一份 records 上多次计算推分时复用预计算结果。
+pub struct PushAccBatchSolver<'a> {
+    records: &'a [RksRecord],
+    target_rks_threshold: f64,
+
+    // Best27/Best28 的和（records 已按 rks 降序）。
+    total_rks_sum: f64,
+    sum_first_27: f64,
+    sum_first_28: f64,
+    rks_27th: f64,
+    rks_28th: f64,
+
+    // AP 相关（按 rks 降序与 records 保持一致）。
+    ap_rks: Box<[f64]>,
+    ap_sum_3: f64,
+    ap_sum_4: f64,
+    ap_rank_by_index: Box<[Option<usize>]>,
+}
+
+impl<'a> PushAccBatchSolver<'a> {
+    pub fn new(records: &'a [RksRecord]) -> Self {
+        let (current_exact_rks, _rounded) = calculate_player_rks_details(records);
+        let target_rks_threshold = target_rks_threshold_from_exact(current_exact_rks);
+
+        let total_rks_sum: f64 = records.iter().map(|r| r.rks).sum();
+        let sum_first_27: f64 = records.iter().take(27).map(|r| r.rks).sum();
+        let sum_first_28: f64 = records.iter().take(28).map(|r| r.rks).sum();
+        let rks_27th = records.get(26).map(|r| r.rks).unwrap_or(0.0);
+        let rks_28th = records.get(27).map(|r| r.rks).unwrap_or(0.0);
+
+        // AP 记录与 rank 映射
+        let mut ap_rks_vec = Vec::<f64>::new();
+        let mut ap_rank_by_index = vec![None; records.len()];
+        for (idx, rec) in records.iter().enumerate() {
+            if rec.acc >= 100.0 {
+                ap_rank_by_index[idx] = Some(ap_rks_vec.len());
+                ap_rks_vec.push(rec.rks);
+            }
+        }
+        let ap_sum_3: f64 = ap_rks_vec.iter().take(3).sum();
+        let ap_sum_4: f64 = ap_rks_vec.iter().take(4).sum();
+
+        Self {
+            records,
+            target_rks_threshold,
+            total_rks_sum,
+            sum_first_27,
+            sum_first_28,
+            rks_27th,
+            rks_28th,
+            ap_rks: ap_rks_vec.into_boxed_slice(),
+            ap_sum_3,
+            ap_sum_4,
+            ap_rank_by_index: ap_rank_by_index.into_boxed_slice(),
+        }
+    }
+
+    /// 计算指定谱面（records 中的索引）所需达到的推分 ACC。
+    ///
+    /// - records 必须按 rks 降序；
+    /// - 返回值区分三类：需要具体 ACC / 只能 100 / 无法推分。
+    pub fn solve_for_index(
+        &self,
+        target_index: usize,
+        target_chart_constant: f64,
+    ) -> Option<PushAccHint> {
+        let target = self.records.get(target_index)?;
+        if self.records.is_empty() {
+            return None;
+        }
+        // 定数异常或目标已满 ACC 时，推分提示没有意义（由上层决定是否展示）。
+        if target_chart_constant <= 0.0 || target.acc >= 100.0 {
+            return None;
+        }
+
+        let simulate = |test_acc: f64| -> f64 {
+            let simulated_chart_rks = calculate_chart_rks(test_acc, target_chart_constant);
+
+            // --- Best27 基底（排除目标谱面） ---
+            let n = self.records.len();
+            let target_rks = target.rks;
+            let (b27_sum_excl, b27_count_excl, b27_min_excl) = if n <= 27 {
+                // Best27 实际就是全量；排除后数量 < 27，插入时必然直接加入。
+                (self.total_rks_sum - target_rks, n.saturating_sub(1), None)
+            } else if target_index < 27 {
+                // 目标在 Top27：使用前 28 条的和减去目标，27th 变为原 28th。
+                (self.sum_first_28 - target_rks, 27, Some(self.rks_28th))
+            } else {
+                // 目标不在 Top27：Top27 不变。
+                (self.sum_first_27, 27, Some(self.rks_27th))
+            };
+
+            let b27_sum_new = if b27_count_excl < 27 {
+                b27_sum_excl + simulated_chart_rks
+            } else if let Some(min_excl) = b27_min_excl
+                && simulated_chart_rks > min_excl
+            {
+                b27_sum_excl - min_excl + simulated_chart_rks
+            } else {
+                b27_sum_excl
+            };
+
+            // --- AP Top3 基底（排除目标谱面） ---
+            let ap_count = self.ap_rks.len();
+            let target_is_ap = target.acc >= 100.0;
+
+            let (ap_sum_excl, ap_count_excl, ap_min_excl) = if ap_count == 0 {
+                (0.0, 0usize, None)
+            } else if !target_is_ap {
+                let cnt = ap_count.min(3);
+                let min_excl = if cnt == 3 { Some(self.ap_rks[2]) } else { None };
+                (self.ap_sum_3, cnt, min_excl)
+            } else {
+                // target 是 AP 成绩
+                let Some(rank) = self.ap_rank_by_index.get(target_index).copied().flatten() else {
+                    // 理论上不会发生：rank_by_index 与 ap_rks 来自同一份 records
+                    return (b27_sum_new + self.ap_sum_3) / 30.0;
+                };
+
+                if ap_count <= 3 {
+                    // AP 总数 <=3，排除后数量 <3，插入时直接加入。
+                    (self.ap_sum_3 - target_rks, ap_count.saturating_sub(1), None)
+                } else if rank < 3 {
+                    // target 在 AP Top3：用 AP 前 4 条的和减去 target，AP3 的最小值变为原第 4 名。
+                    (self.ap_sum_4 - target_rks, 3, Some(self.ap_rks[3]))
+                } else {
+                    // target 不在 AP Top3：AP3 不变。
+                    (self.ap_sum_3, 3, Some(self.ap_rks[2]))
+                }
+            };
+
+            let ap_sum_new = if test_acc >= 100.0 {
+                if ap_count_excl < 3 {
+                    ap_sum_excl + simulated_chart_rks
+                } else if let Some(min_excl) = ap_min_excl
+                    && simulated_chart_rks > min_excl
+                {
+                    ap_sum_excl - min_excl + simulated_chart_rks
+                } else {
+                    ap_sum_excl
+                }
+            } else {
+                ap_sum_excl
+            };
+
+            (b27_sum_new + ap_sum_new) / 30.0
+        };
+
+        // 100% 时是否能达到目标（用于区分 Unreachable 与 PhiOnly）
+        let rks_at_100 = simulate(100.0);
+        if rks_at_100 < self.target_rks_threshold {
+            return Some(PushAccHint::Unreachable);
+        }
+
+        // 结果最终只展示到 0.001 精度：用千分位整数二分可显著减少迭代次数。
+        let mut low_i = (target.acc * 1000.0).ceil() as i64;
+        if low_i < 0 {
+            low_i = 0;
+        }
+        let high_i: i64 = 100_000;
+        if low_i > high_i {
+            low_i = high_i;
+        }
+
+        // 若低边界本身已可达，仍按“最小千分位”返回（避免浮点二分抖动）。
+        let meets = |acc_thousand: i64| -> bool {
+            let acc = (acc_thousand as f64) / 1000.0;
+            simulate(acc) >= self.target_rks_threshold
+        };
+
+        let mut lo = low_i;
+        let mut hi = high_i;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if meets(mid) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+
+        if lo >= 100_000 {
+            Some(PushAccHint::PhiOnly)
+        } else {
+            Some(PushAccHint::TargetAcc {
+                acc: (lo as f64) / 1000.0,
+            })
+        }
+    }
+}
+
 /// 计算玩家当前精确 RKS 与四舍五入后 RKS（要求 records 已按 rks 降序）
 pub fn calculate_player_rks_details(records: &[RksRecord]) -> (f64, f64) {
     tracing::debug!("[B30 RKS] 开始计算玩家RKS详情，总成绩数: {}", records.len());
@@ -310,6 +541,7 @@ fn difficulty_key_from_str(difficulty_str: &str) -> Option<u8> {
     None
 }
 
+#[cfg(test)]
 #[derive(Clone)]
 struct TopKSum {
     k: usize,
@@ -317,6 +549,7 @@ struct TopKSum {
     sum: f64,
 }
 
+#[cfg(test)]
 impl TopKSum {
     fn new(k: usize) -> Self {
         Self {
@@ -417,142 +650,55 @@ pub fn calculate_target_chart_push_acc(
 ) -> Option<f64> {
     tracing::debug!("开始计算推分ACC: 目标谱面={}", target_chart_id_full);
 
-    // 当前精确 RKS
-    let (current_exact_rks, _current_rounded_rks) =
-        calculate_player_rks_details(all_sorted_records);
-
-    // 目标阈值（取决于第三位小数是否 >= 5）
-    let target_rks_threshold = {
-        let third_decimal_ge_5 = (current_exact_rks * 1000.0) % 10.0 >= 5.0;
-        if third_decimal_ge_5 {
-            (current_exact_rks * 100.0).floor() / 100.0 + 0.015
-        } else {
-            (current_exact_rks * 100.0).floor() / 100.0 + 0.005
-        }
-    };
-
-    if current_exact_rks >= target_rks_threshold {
-        tracing::debug!("无需推分，当前 RKS 已达标");
-        return Some(100.0);
-    }
-
     let Some((song_id, difficulty_str)) = split_chart_id_full(target_chart_id_full) else {
-        // 保持与旧实现一致：格式异常时模拟函数返回 0.0，必然无法达到阈值
-        tracing::debug!("无法推分，ACC 100% 仍无法达到目标");
+        tracing::debug!("推分ACC计算失败：目标谱面ID格式异常");
         return Some(100.0);
     };
     let difficulty_key = difficulty_key_from_str(difficulty_str);
 
-    // 性能优化：二分迭代会重复进行“模拟后 RKS”计算。
-    // 原实现每次模拟都会遍历整份 records 计算 Best27/AP3（O(N)），在最多 50 次迭代下会放大为 O(50N)。
-    // 这里先计算“排除目标谱面后的 Best27/AP3 基底”，迭代时只需 clone 小型 TopKSum 并插入模拟值（O(K)）。
-    // 该优化不改变任何计算逻辑与结果（等价变换）。
-    let mut best27_base = TopKSum::new(27);
-    let mut ap3_base = TopKSum::new(3);
-    for rec in all_sorted_records {
-        let is_target = rec.song_id == song_id
-            && difficulty_key.is_some_and(|k| key_of_difficulty(&rec.difficulty) == k);
-        if is_target {
-            continue;
-        }
-        best27_base.push(rec.rks);
-        if rec.acc >= 100.0 {
-            ap3_base.push(rec.rks);
-        }
-    }
-
-    let simulate_from_base = |test_acc: f64| -> f64 {
-        let simulated_chart_rks = calculate_chart_rks(test_acc, target_chart_constant);
-        let mut best27 = best27_base.clone();
-        best27.push(simulated_chart_rks);
-        let mut ap3 = ap3_base.clone();
-        if test_acc >= 100.0 {
-            ap3.push(simulated_chart_rks);
-        }
-        (best27.sum() + ap3.sum()) / 30.0
-    };
-
-    // 边界检查：100% 时是否能达到目标
-    let rks_at_100 = simulate_from_base(100.0);
-
-    if rks_at_100 < target_rks_threshold {
-        tracing::debug!("无法推分，ACC 100% 仍无法达到目标");
+    let Some(target_index) = all_sorted_records.iter().position(|r| {
+        r.song_id == song_id
+            && difficulty_key.is_some_and(|k| key_of_difficulty(&r.difficulty) == k)
+    }) else {
+        tracing::debug!("推分ACC计算失败：records 中未找到目标谱面");
         return Some(100.0);
-    }
-
-    let current_acc = all_sorted_records
-        .iter()
-        .find(|r| {
-            r.song_id == song_id
-                && difficulty_key.is_some_and(|k| key_of_difficulty(&r.difficulty) == k)
-        })
-        .map_or(70.0, |r| r.acc);
-
-    // 二分查找最小满足阈值的 ACC
-    let mut low = current_acc;
-    let mut high = 100.0;
-    tracing::debug!("开始二分查找推分ACC, 区间: [{:.4}, {:.4}]", low, high);
-
-    const ACC_PRECISION: f64 = 1e-7; // 精度 ~0.00001%
-    const MAX_ITERATIONS: usize = 50;
-
-    let mut iteration = 0;
-    while (high - low) > ACC_PRECISION && iteration < MAX_ITERATIONS {
-        iteration += 1;
-        let mid = low + (high - low) / 2.0;
-        let simulated_rks = simulate_from_base(mid);
-
-        if simulated_rks >= target_rks_threshold {
-            high = mid; // mid 满足条件，尝试更低的 acc
-        } else {
-            low = mid; // 需要更高的 acc
-        }
-
-        tracing::debug!(
-            "迭代 {}: 区间 [{:.8}, {:.8}], 区间长度: {:.8}",
-            iteration,
-            low,
-            high,
-            high - low
-        );
-    }
-
-    tracing::debug!(
-        "二分查找结束, 迭代次数: {}, 区间长度: {:.8}, 结果 high = {:.8}",
-        iteration,
-        high - low,
-        high
-    );
-
-    // 确保结果不小于当前 ACC，并保留到小数点后三位（向上取）
-    let result_acc = high.max(current_acc);
-    let final_acc = if result_acc <= current_acc {
-        tracing::debug!(
-            "推分ACC计算结果({:.6})不大于当前ACC({:.6})，返回 100.0",
-            result_acc,
-            current_acc
-        );
-        100.0
-    } else {
-        (result_acc * 1000.0).ceil() / 1000.0
     };
 
-    Some(final_acc.min(100.0))
+    let solver = PushAccBatchSolver::new(all_sorted_records);
+    solver
+        .solve_for_index(target_index, target_chart_constant)
+        .map(|h| h.as_legacy_acc())
 }
 
 /// 批量计算给定（已按 rks 降序）的记录列表中每条非 100% 成绩的推分 ACC
 /// 返回键为 `song_id-difficulty` 的映射（值为需要达到的 ACC 百分比）。
 pub fn calculate_all_push_accuracies(sorted_records: &[RksRecord]) -> HashMap<String, f64> {
     let mut map = HashMap::new();
-    for rec in sorted_records {
+    let solver = PushAccBatchSolver::new(sorted_records);
+    for (idx, rec) in sorted_records.iter().enumerate() {
         if rec.acc >= 100.0 {
             continue; // 已是满 ACC，无需推分
         }
         let chart_id = format!("{}-{}", rec.song_id, rec.difficulty);
-        if let Some(target_acc) =
-            calculate_target_chart_push_acc(&chart_id, rec.chart_constant, sorted_records)
-        {
-            map.insert(chart_id, target_acc);
+        let hint = solver
+            .solve_for_index(idx, rec.chart_constant)
+            .unwrap_or(PushAccHint::PhiOnly);
+        map.insert(chart_id, hint.as_legacy_acc());
+    }
+    map
+}
+
+/// 批量计算推分提示（区分 PhiOnly / Unreachable / 具体 ACC）。
+pub fn calculate_all_push_hints(sorted_records: &[RksRecord]) -> HashMap<String, PushAccHint> {
+    let mut map = HashMap::new();
+    let solver = PushAccBatchSolver::new(sorted_records);
+    for (idx, rec) in sorted_records.iter().enumerate() {
+        if rec.acc >= 100.0 {
+            continue;
+        }
+        let chart_id = format!("{}-{}", rec.song_id, rec.difficulty);
+        if let Some(hint) = solver.solve_for_index(idx, rec.chart_constant) {
+            map.insert(chart_id, hint);
         }
     }
     map
@@ -615,18 +761,7 @@ mod tests {
         let (current_exact_rks, _current_rounded_rks) =
             calculate_player_rks_details(all_sorted_records);
 
-        let target_rks_threshold = {
-            let third_decimal_ge_5 = (current_exact_rks * 1000.0) % 10.0 >= 5.0;
-            if third_decimal_ge_5 {
-                (current_exact_rks * 100.0).floor() / 100.0 + 0.015
-            } else {
-                (current_exact_rks * 100.0).floor() / 100.0 + 0.005
-            }
-        };
-
-        if current_exact_rks >= target_rks_threshold {
-            return Some(100.0);
-        }
+        let target_rks_threshold = target_rks_threshold_from_exact(current_exact_rks);
 
         let rks_at_100 = simulate_rks_increase_simplified_slow(
             target_chart_id_full,
@@ -682,6 +817,75 @@ mod tests {
         };
 
         Some(final_acc.min(100.0))
+    }
+
+    fn calculate_target_chart_push_hint_slow(
+        target_chart_id_full: &str,
+        target_chart_constant: f64,
+        all_sorted_records: &[RksRecord],
+    ) -> Option<PushAccHint> {
+        let (current_exact_rks, _current_rounded_rks) =
+            calculate_player_rks_details(all_sorted_records);
+        let target_rks_threshold = target_rks_threshold_from_exact(current_exact_rks);
+
+        // 100% 时是否能达到目标（用于区分 Unreachable 与 PhiOnly）
+        let rks_at_100 = simulate_rks_increase_simplified_slow(
+            target_chart_id_full,
+            target_chart_constant,
+            100.0,
+            all_sorted_records,
+        );
+        if rks_at_100 < target_rks_threshold {
+            return Some(PushAccHint::Unreachable);
+        }
+
+        let parts: Vec<&str> = target_chart_id_full.rsplitn(2, '-').collect();
+        if parts.len() != 2 {
+            return None;
+        }
+        let (song_id, difficulty_str) = (parts[1], parts[0]);
+        let current_acc = all_sorted_records
+            .iter()
+            .find(|r| r.song_id == song_id && r.difficulty.to_string() == difficulty_str)
+            .map_or(70.0, |r| r.acc);
+
+        let mut low_i = (current_acc * 1000.0).ceil() as i64;
+        if low_i < 0 {
+            low_i = 0;
+        }
+        let high_i: i64 = 100_000;
+        if low_i > high_i {
+            low_i = high_i;
+        }
+
+        let meets = |acc_thousand: i64| -> bool {
+            let acc = (acc_thousand as f64) / 1000.0;
+            simulate_rks_increase_simplified_slow(
+                target_chart_id_full,
+                target_chart_constant,
+                acc,
+                all_sorted_records,
+            ) >= target_rks_threshold
+        };
+
+        let mut lo = low_i;
+        let mut hi = high_i;
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2;
+            if meets(mid) {
+                hi = mid;
+            } else {
+                lo = mid + 1;
+            }
+        }
+
+        if lo >= 100_000 {
+            Some(PushAccHint::PhiOnly)
+        } else {
+            Some(PushAccHint::TargetAcc {
+                acc: (lo as f64) / 1000.0,
+            })
+        }
     }
 
     #[test]
@@ -786,5 +990,193 @@ mod tests {
                 calculate_target_chart_push_acc(&target_chart_id, t.chart_constant, &records);
             assert_eq!(slow, fast, "target={target_chart_id}");
         }
+    }
+
+    #[test]
+    fn calculate_target_chart_push_hint_matches_reference() {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(2026010601);
+        let diffs = [
+            Difficulty::EZ,
+            Difficulty::HD,
+            Difficulty::IN,
+            Difficulty::AT,
+        ];
+
+        let mut records = Vec::new();
+        for i in 0..90 {
+            let song_id = format!("song{i:03}");
+            for diff in diffs.iter().cloned() {
+                let acc = rng.gen_range(70.0..=100.0);
+                let constant = rng.gen_range(1.0..=16.0);
+                let rks = calculate_chart_rks(acc, constant);
+                records.push(RksRecord {
+                    song_id: song_id.clone(),
+                    difficulty: diff,
+                    score: rng.gen_range(0..=1_000_000),
+                    acc,
+                    rks,
+                    chart_constant: constant,
+                });
+            }
+        }
+        sort_records_desc(&mut records);
+
+        let solver = PushAccBatchSolver::new(&records);
+        let targets: Vec<_> = records
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.acc < 100.0)
+            .take(16)
+            .collect();
+        assert!(!targets.is_empty(), "需要至少一个非满ACC记录");
+
+        for (idx, t) in targets {
+            let target_chart_id = format!("{}-{}", t.song_id, t.difficulty);
+            let slow =
+                calculate_target_chart_push_hint_slow(&target_chart_id, t.chart_constant, &records);
+            let fast = solver.solve_for_index(idx, t.chart_constant);
+            assert_eq!(slow, fast, "target={target_chart_id}");
+        }
+    }
+
+    #[test]
+    fn push_acc_hint_covers_all_kinds() {
+        // 目标：用可控数据确保三类结果都能出现：
+        // - TargetAcc：提升到 <100 的具体 ACC 即可推分
+        // - PhiOnly：只有到 100.0% 才能推分
+        // - Unreachable：即使 100.0% 也无法推分
+
+        // --- 1) TargetAcc ---
+        // 27 条记录，无 AP；其中一条 ACC=70，可通过小幅提升 ACC 推分。
+        let mut records_target_acc = Vec::<RksRecord>::new();
+        for i in 0..26 {
+            let acc = 99.0;
+            let constant = 12.0;
+            records_target_acc.push(RksRecord {
+                song_id: format!("hi{i:02}"),
+                difficulty: Difficulty::IN,
+                score: 900_000,
+                acc,
+                rks: calculate_chart_rks(acc, constant),
+                chart_constant: constant,
+            });
+        }
+        {
+            let acc = 70.0;
+            let constant = 12.0;
+            records_target_acc.push(RksRecord {
+                song_id: "target-acc".into(),
+                difficulty: Difficulty::IN,
+                score: 800_000,
+                acc,
+                rks: calculate_chart_rks(acc, constant),
+                chart_constant: constant,
+            });
+        }
+        sort_records_desc(&mut records_target_acc);
+        let solver = PushAccBatchSolver::new(&records_target_acc);
+        let idx = records_target_acc
+            .iter()
+            .position(|r| r.song_id == "target-acc")
+            .expect("目标谱面应存在");
+        let hint = solver
+            .solve_for_index(idx, records_target_acc[idx].chart_constant)
+            .expect("应可计算推分提示");
+        assert!(
+            matches!(hint, PushAccHint::TargetAcc { acc } if acc < 100.0),
+            "期望 TargetAcc(<100)，实际={hint:?}"
+        );
+
+        // --- 2) PhiOnly ---
+        // 无 AP 且 target 不在 Best27：100% 时因进入 AP Top3 才能推分。
+        let mut records_phi_only = Vec::<RksRecord>::new();
+        for i in 0..29 {
+            let acc = 99.0;
+            let constant = 12.0;
+            records_phi_only.push(RksRecord {
+                song_id: format!("hi{i:02}"),
+                difficulty: Difficulty::IN,
+                score: 900_000,
+                acc,
+                rks: calculate_chart_rks(acc, constant),
+                chart_constant: constant,
+            });
+        }
+        {
+            let acc = 99.0;
+            let constant = 1.0;
+            records_phi_only.push(RksRecord {
+                song_id: "phi-only".into(),
+                difficulty: Difficulty::IN,
+                score: 700_000,
+                acc,
+                rks: calculate_chart_rks(acc, constant),
+                chart_constant: constant,
+            });
+        }
+        sort_records_desc(&mut records_phi_only);
+        let solver = PushAccBatchSolver::new(&records_phi_only);
+        let idx = records_phi_only
+            .iter()
+            .position(|r| r.song_id == "phi-only")
+            .expect("目标谱面应存在");
+        let hint = solver
+            .solve_for_index(idx, records_phi_only[idx].chart_constant)
+            .expect("应可计算推分提示");
+        assert_eq!(hint, PushAccHint::PhiOnly, "期望 PhiOnly，实际={hint:?}");
+
+        // --- 3) Unreachable ---
+        // AP Top3 已被高 rks 填满，且 target 无法进入 Best27/AP3：即使 100 也无法推分。
+        let mut records_unreachable = Vec::<RksRecord>::new();
+        for i in 0..27 {
+            let acc = 99.0;
+            let constant = 12.0;
+            records_unreachable.push(RksRecord {
+                song_id: format!("hi{i:02}"),
+                difficulty: Difficulty::IN,
+                score: 900_000,
+                acc,
+                rks: calculate_chart_rks(acc, constant),
+                chart_constant: constant,
+            });
+        }
+        for i in 0..3 {
+            let acc = 100.0;
+            let constant = 16.0;
+            records_unreachable.push(RksRecord {
+                song_id: format!("ap{i:02}"),
+                difficulty: Difficulty::IN,
+                score: 1_000_000,
+                acc,
+                rks: calculate_chart_rks(acc, constant),
+                chart_constant: constant,
+            });
+        }
+        {
+            let acc = 99.0;
+            let constant = 1.0;
+            records_unreachable.push(RksRecord {
+                song_id: "unreachable".into(),
+                difficulty: Difficulty::IN,
+                score: 700_000,
+                acc,
+                rks: calculate_chart_rks(acc, constant),
+                chart_constant: constant,
+            });
+        }
+        sort_records_desc(&mut records_unreachable);
+        let solver = PushAccBatchSolver::new(&records_unreachable);
+        let idx = records_unreachable
+            .iter()
+            .position(|r| r.song_id == "unreachable")
+            .expect("目标谱面应存在");
+        let hint = solver
+            .solve_for_index(idx, records_unreachable[idx].chart_constant)
+            .expect("应可计算推分提示");
+        assert_eq!(
+            hint,
+            PushAccHint::Unreachable,
+            "期望 Unreachable，实际={hint:?}"
+        );
     }
 }

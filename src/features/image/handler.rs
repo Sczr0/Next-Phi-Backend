@@ -489,22 +489,19 @@ pub async fn render_bn(
     tracing::info!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
 
     let t_push_start = Instant::now();
-    // 预计算推分 ACC
-    let mut push_acc_map: HashMap<String, f64> = HashMap::new();
+    // 预计算推分 ACC（批量求解：避免每谱面重复扫描全量 records）
+    let mut push_acc_map: HashMap<String, crate::features::rks::engine::PushAccHint> =
+        HashMap::new();
     let engine_all: Vec<crate::features::rks::engine::RksRecord> =
         all.iter().filter_map(to_engine_record).collect();
-    for s in all
-        .iter()
-        .take(top_len)
-        .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
-    {
+    let solver = crate::features::rks::engine::PushAccBatchSolver::new(&engine_all);
+    for (idx, s) in all.iter().take(top_len).enumerate() {
+        if s.acc >= 100.0 || s.difficulty_value <= 0.0 {
+            continue;
+        }
         let key = format!("{}-{}", s.song_id, s.difficulty);
-        if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(
-            &key,
-            s.difficulty_value,
-            &engine_all,
-        ) {
-            push_acc_map.insert(key, v);
+        if let Some(hint) = solver.solve_for_index(idx, s.difficulty_value) {
+            push_acc_map.insert(key, hint);
         }
     }
     let push_acc_duration = t_push_start.elapsed();
@@ -1059,6 +1056,7 @@ pub async fn render_song(
             .partial_cmp(&a.rks)
             .unwrap_or(core::cmp::Ordering::Equal)
     });
+    let push_solver = crate::features::rks::engine::PushAccBatchSolver::new(&engine_all);
 
     // 单曲四难度数据
     let mut difficulty_scores: HashMap<String, Option<SongDifficultyScore>> = HashMap::new();
@@ -1101,13 +1099,22 @@ pub async fn render_song(
             (None, None, None, None)
         };
 
-        // 推分 acc
+        // 推分 acc：区分“无法推分/只能推到100/需要具体ACC”
         let player_push_acc = if let (Some(dv), Some(a)) = (dv, acc) {
-            if a >= 100.0 {
-                Some(100.0)
+            if a >= 100.0 || dv <= 0.0 {
+                None
             } else {
-                let key = format!("{}-{}", song.id, diff);
-                crate::features::rks::engine::calculate_target_chart_push_acc(&key, dv, &engine_all)
+                let diff_enum = match diff {
+                    "EZ" => Difficulty::EZ,
+                    "HD" => Difficulty::HD,
+                    "IN" => Difficulty::IN,
+                    "AT" => Difficulty::AT,
+                    _ => return Err(AppError::Internal("难度枚举映射失败".into())),
+                };
+                let idx = engine_all
+                    .iter()
+                    .position(|r| r.song_id == song.id && r.difficulty == diff_enum);
+                idx.and_then(|i| push_solver.solve_for_index(i, dv))
             }
         } else {
             None
@@ -1484,7 +1491,8 @@ pub async fn render_bn_user(
             });
 
             // 推分 ACC
-            let mut push_acc_map: HashMap<String, f64> = HashMap::new();
+            let mut push_acc_map: HashMap<String, crate::features::rks::engine::PushAccHint> =
+                HashMap::new();
             let engine_all: Vec<crate::features::rks::engine::RksRecord> = records
                 .iter()
                 .filter_map(|r| {
@@ -1505,17 +1513,14 @@ pub async fn render_bn_user(
                     })
                 })
                 .collect();
-            for r in records
-                .iter()
-                .filter(|s| s.acc < 100.0 && s.difficulty_value > 0.0)
-            {
+            let solver = crate::features::rks::engine::PushAccBatchSolver::new(&engine_all);
+            for (idx, r) in records.iter().enumerate() {
+                if r.acc >= 100.0 || r.difficulty_value <= 0.0 {
+                    continue;
+                }
                 let key = format!("{}-{}", r.song_id, r.difficulty);
-                if let Some(v) = crate::features::rks::engine::calculate_target_chart_push_acc(
-                    &key,
-                    r.difficulty_value,
-                    &engine_all,
-                ) {
-                    push_acc_map.insert(key, v);
+                if let Some(hint) = solver.solve_for_index(idx, r.difficulty_value) {
+                    push_acc_map.insert(key, hint);
                 }
             }
 

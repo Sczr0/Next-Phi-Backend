@@ -60,9 +60,9 @@ pub struct SongDifficultyScore {
     pub acc: Option<f64>,
     pub rks: Option<f64>,
     pub difficulty_value: Option<f64>,
-    pub is_fc: Option<bool>,          // 可选：是否 Full Combo
-    pub is_phi: Option<bool>,         // 可选：是否 Phi (ACC 100%)
-    pub player_push_acc: Option<f64>, // 新增：玩家总RKS推分ACC
+    pub is_fc: Option<bool>,                          // 可选：是否 Full Combo
+    pub is_phi: Option<bool>,                         // 可选：是否 Phi (ACC 100%)
+    pub player_push_acc: Option<engine::PushAccHint>, // 新增：玩家总RKS推分提示
 }
 
 #[derive(Debug)]
@@ -568,11 +568,28 @@ fn calculate_push_acc(
     target_chart_id: &str,
     difficulty_value: f64,
     engine_records: &[engine::RksRecord],
-) -> Option<f64> {
+) -> Option<engine::PushAccHint> {
     if engine_records.is_empty() {
         return None;
     }
-    engine::calculate_target_chart_push_acc(target_chart_id, difficulty_value, engine_records)
+    let (song_id, diff_str) = target_chart_id.rsplit_once('-')?;
+    let diff = if diff_str.eq_ignore_ascii_case("EZ") {
+        Difficulty::EZ
+    } else if diff_str.eq_ignore_ascii_case("HD") {
+        Difficulty::HD
+    } else if diff_str.eq_ignore_ascii_case("IN") {
+        Difficulty::IN
+    } else if diff_str.eq_ignore_ascii_case("AT") {
+        Difficulty::AT
+    } else {
+        return None;
+    };
+    // 兜底路径：只在上游未预计算推分时使用，因此这里允许 O(N) 定位目标索引。
+    let target_index = engine_records
+        .iter()
+        .position(|r| r.song_id == song_id && r.difficulty == diff)?;
+    let solver = engine::PushAccBatchSolver::new(engine_records);
+    solver.solve_for_index(target_index, difficulty_value)
 }
 
 // Helper function to generate a single score card SVG group
@@ -585,7 +602,7 @@ struct CardRenderInfo<'a> {
     card_width: u32,
     is_ap_card: bool,
     is_ap_score: bool,
-    pre_calculated_push_acc: Option<f64>,
+    pre_calculated_push_acc: Option<engine::PushAccHint>,
     all_engine_records: &'a [engine::RksRecord],
     theme: &'a Theme,
     is_user_generated: bool, // 新增
@@ -782,33 +799,42 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
     let acc_text = if !is_ap_score && score.acc < 100.0 && score.difficulty_value > 0.0 {
         // 只有定数>0时才显示推分
         // 如果有预计算的推分ACC，优先使用
-        let push_acc = if let Some(pa) = pre_calculated_push_acc {
-            pa
-        } else {
-            // 否则使用新算法计算
+        let push_hint = pre_calculated_push_acc.or_else(|| {
             let target_chart_id = format!("{}-{}", score.song_id, score.difficulty);
             calculate_push_acc(&target_chart_id, score.difficulty_value, all_engine_records)
-                .unwrap_or(100.0) // 如果计算失败（比如格式错误），则默认为100
-        };
+        });
 
-        // 如果推分acc非常接近100，直接显示 -> 100.00%
-        if push_acc > 99.995 {
-            format!(
-                "Acc: {:.2}% <tspan class='push-acc'>-> 100.00%</tspan>",
+        match push_hint {
+            Some(engine::PushAccHint::TargetAcc { acc: push_acc }) => {
+                // 如果推分acc非常接近100，直接显示 -> 100.00%
+                if push_acc > 99.995 {
+                    format!(
+                        "Acc: {:.2}% <tspan class='push-acc'>-> 100.00%</tspan>",
+                        score.acc
+                    )
+                }
+                // 如果两者差值非常小(小于0.005，对应四舍五入后两位不变)，则展示三位小数
+                else if (push_acc - score.acc).abs() < 0.005 {
+                    format!(
+                        "Acc: {:.2}% <tspan class='push-acc'>-> {:.3}%</tspan>",
+                        score.acc, push_acc
+                    )
+                } else {
+                    format!(
+                        "Acc: {:.2}% <tspan class='push-acc'>-> {:.2}%</tspan>",
+                        score.acc, push_acc
+                    )
+                }
+            }
+            Some(engine::PushAccHint::PhiOnly) => format!(
+                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%(需Phi)</tspan>",
                 score.acc
-            )
-        }
-        // 如果两者差值非常小(小于0.005，对应四舍五入后两位不变)，则展示三位小数
-        else if (push_acc - score.acc).abs() < 0.005 {
-            format!(
-                "Acc: {:.2}% <tspan class='push-acc'>-> {:.3}%</tspan>",
-                score.acc, push_acc
-            )
-        } else {
-            format!(
-                "Acc: {:.2}% <tspan class='push-acc'>-> {:.2}%</tspan>",
-                score.acc, push_acc
-            )
+            ),
+            Some(engine::PushAccHint::Unreachable) => format!(
+                "Acc: {:.2}% <tspan class='push-acc push-acc-unreachable'>-> 无法推分</tspan>",
+                score.acc
+            ),
+            None => format!("Acc: {:.2}%", score.acc),
         }
     } else {
         // AP或者已满分或者定数为0，只显示当前acc
@@ -907,8 +933,8 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
 pub fn generate_svg_string(
     scores: &[RenderRecord],
     stats: &PlayerStats,
-    push_acc_map: Option<&HashMap<String, f64>>, // 新增：预先计算的推分ACC映射，键为"曲目ID-难度"
-    theme: &Theme,                               // 新增：主题参数
+    push_acc_map: Option<&HashMap<String, engine::PushAccHint>>, // 新增：预先计算的推分提示映射，键为"曲目ID-难度"
+    theme: &Theme,                                               // 新增：主题参数
     embed_images: bool,
     // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
     public_illustration_base_url: Option<&str>,
@@ -1126,6 +1152,8 @@ pub fn generate_svg_string(
         .text-difficulty-badge {{ font-size: 12px; font-weight: 700; }} /* 难度标签文本样式 */
         .text-fc-ap-badge {{ font-size: 11px; font-weight: 700; }} /* FC/AP标签文本样式 */
         .push-acc {{ fill: #4CAF50; font-weight: 600; }}
+        .push-acc-phi-only {{ fill: #FFC107; }}
+        .push-acc-unreachable {{ fill: #9E9E9E; }}
         .text-rank-tag {{ font-size: 13px; fill: {text_secondary_color}; text-anchor: end; font-weight: 700; }}
         .text-section-title {{ font-size: 21px; fill: {text_color}; /* font-weight: bold; */ }}
         * {{ font-family: "{MAIN_FONT_NAME}", "Microsoft YaHei", "SimHei", "DengXian", Arial, sans-serif; }}
@@ -2271,20 +2299,23 @@ pub fn generate_song_svg_string(
 
                 // ACC -> 推分
                 let mut acc_text = format!("Acc: {acc_value:.2}%");
-                if let Some(push_acc) = score_data.player_push_acc {
-                    let push_acc_display = if push_acc >= 100.0 {
-                        if score_data.is_phi == Some(true) {
-                            "<tspan class='text-push-acc' fill='gold'> (已 Phi)</tspan>".to_string()
-                        } else {
-                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%</tspan>"
+                if score_data.is_phi == Some(true) {
+                    acc_text.push_str("<tspan class='text-push-acc' fill='gold'> (已 Phi)</tspan>");
+                } else if let Some(hint) = score_data.player_push_acc {
+                    let push_text = match hint {
+                        engine::PushAccHint::TargetAcc { acc } => format!(
+                            r#"<tspan class='text-push-acc' fill='url(#rks-gradient-push)'> -> {acc:.2}%</tspan>"#
+                        ),
+                        engine::PushAccHint::PhiOnly => {
+                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%(需Phi)</tspan>"
                                 .to_string()
                         }
-                    } else {
-                        format!(
-                            r#"<tspan class='text-push-acc' fill='url(#rks-gradient-push)'> -> {push_acc:.2}%</tspan>"#
-                        )
+                        engine::PushAccHint::Unreachable => {
+                            "<tspan class='text-push-acc' fill='#9E9E9E'> -> 无法推分</tspan>"
+                                .to_string()
+                        }
                     };
-                    acc_text.push_str(&push_acc_display);
+                    acc_text.push_str(&push_text);
                 }
                 writeln!(svg, r#"<text x="{text_x}" y="{acc_y}" class="text text-acc" text-anchor="start">{acc_text}</text>"#).map_err(fmt_err)?;
 

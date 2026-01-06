@@ -344,7 +344,7 @@ struct BnCardBuildCtx<'a> {
     embed_images: bool,
     public_illustration_base_url: Option<&'a str>,
     engine_records: &'a [engine::RksRecord],
-    push_acc_map: Option<&'a HashMap<String, f64>>,
+    push_acc_map: Option<&'a HashMap<String, engine::PushAccHint>>,
     layout: &'a BnTemplateLayout,
 }
 
@@ -459,7 +459,7 @@ fn build_bn_card(
     };
 
     // 推分 ACC（优先使用上游预计算，否则按 engine 计算）
-    let push_acc = ctx
+    let push_hint = ctx
         .push_acc_map
         .and_then(|map| {
             let key = format!("{}-{}", score.song_id, score.difficulty);
@@ -476,8 +476,13 @@ fn build_bn_card(
         .unwrap_or_else(|| "N/A".to_string());
 
     let mut acc_text = format!("Acc: {:.2}%", score.acc);
-    if let Some(p) = push_acc {
-        acc_text.push_str(&format!(" -> {p:.2}%"));
+    if let Some(hint) = push_hint {
+        let suffix = match hint {
+            engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
+            engine::PushAccHint::PhiOnly => " -> 100.00%(需Phi)".to_string(),
+            engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
+        };
+        acc_text.push_str(&suffix);
     }
     let level_text = format!("Lv.{:.1} -> {:.2}", score.difficulty_value, score.rks);
 
@@ -669,7 +674,7 @@ fn read_song_template_layout_override(cfg_path: &Path) -> Option<SongTemplateLay
 pub(super) fn generate_bn_svg_with_template(
     scores: &[RenderRecord],
     stats: &PlayerStats,
-    push_acc_map: Option<&HashMap<String, f64>>,
+    push_acc_map: Option<&HashMap<String, engine::PushAccHint>>,
     theme: &Theme,
     embed_images: bool,
     public_illustration_base_url: Option<&str>,
@@ -1108,8 +1113,15 @@ pub(super) fn generate_song_svg_with_template(
                     let dv_value = score_data.difficulty_value.unwrap_or(0.0);
 
                     let mut acc_text = format!("Acc: {acc_value:.2}%");
-                    if let Some(push_acc) = score_data.player_push_acc {
-                        acc_text.push_str(&format!(" -> {push_acc:.2}%"));
+                    if score_data.is_phi == Some(true) {
+                        acc_text.push_str(" (已 Phi)");
+                    } else if let Some(hint) = score_data.player_push_acc {
+                        let suffix = match hint {
+                            engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
+                            engine::PushAccHint::PhiOnly => " -> 100.00%(需Phi)".to_string(),
+                            engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
+                        };
+                        acc_text.push_str(&suffix);
                     }
                     let rks_text = format!("Lv.{dv_value:.1} -> {rks_value:.2}");
 
