@@ -10,8 +10,8 @@ import { request as __request } from '../core/request';
 export class SaveService {
     /**
      * 获取并解析玩家存档
-     * 支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 `calculate_rks=true` 时同时返回玩家 RKS 概览。
-     * @returns SaveApiResponse 成功解析存档；当 calculate_rks=true 时同时包含 rks 字段
+     * 支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 `calculate_rks=true` 时同时返回玩家 RKS 概览，并为每个谱面回填推分信息（push_acc + push_acc_hint，用于区分“不可推分/需Phi/已满ACC”等）。
+     * @returns SaveApiResponse 成功解析存档；当 calculate_rks=true 时同时包含 rks 字段，并为每个谱面回填 push_acc 与 push_acc_hint（推分提示）
      * @throws ApiError
      */
     public static getSaveData({

@@ -19,6 +19,21 @@ mod float_serialize {
             None => serializer.serialize_none(),
         }
     }
+
+    pub fn serialize_f64_option_3<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match value {
+            Some(v) => {
+                // 格式化为3位小数的字符串，然后解析回f64，避免 JSON 输出出现浮点脏小数。
+                let formatted = format!("{v:.3}");
+                let clean: f64 = formatted.parse().unwrap_or(0.0);
+                serializer.serialize_some(&clean)
+            }
+            None => serializer.serialize_none(),
+        }
+    }
 }
 
 /// 统一的存档请求结构
@@ -124,6 +139,21 @@ pub struct DifficultyRecord {
         serialize_with = "float_serialize::serialize_f32_option"
     )]
     pub chart_constant: Option<f32>,
+    /// 推分ACC（百分比）：用于让玩家显示RKS提升0.01 的目标ACC（千分位精度）。
+    /// 仅在 /save?calculate_rks=true 时由服务端回填；默认不计算不返回。
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "float_serialize::serialize_f64_option_3"
+    )]
+    pub push_acc: Option<f64>,
+    /// 推分提示：用于明确区分“不可推分/需Phi/已满ACC”等情况。
+    ///
+    /// - TargetAcc：需要提升到指定 ACC 才能推分
+    /// - PhiOnly：只能推到 100%（Phi）才能推分
+    /// - Unreachable：即使 100% 也无法推分
+    /// - AlreadyPhi：已满 ACC，无需推分
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub push_acc_hint: Option<crate::features::rks::engine::PushAccHint>,
 }
 
 // 仅用于 OpenAPI 文档展示的响应模型（字段命名以实际返回为准）

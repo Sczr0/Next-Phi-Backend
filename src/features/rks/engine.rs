@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::features::save::models::{Difficulty, DifficultyRecord};
 use crate::startup::chart_loader::{ChartConstants, ChartConstantsMap};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 单张谱面的 RKS 结果
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]
@@ -243,7 +243,8 @@ pub struct RksRecord {
 }
 
 /// 推分 ACC 计算结果（用于区分“无法推分”与“只能推到 100% 才能推分”）。
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum PushAccHint {
     /// 需要将该谱面 ACC 提升到指定值（百分比，保留 3 位小数）才能推分。
     TargetAcc { acc: f64 },
@@ -251,6 +252,8 @@ pub enum PushAccHint {
     PhiOnly,
     /// 即使达到 100.0% 也无法推分。
     Unreachable,
+    /// 已满 ACC（>= 100.0%），无需推分。
+    AlreadyPhi,
 }
 
 impl PushAccHint {
@@ -258,7 +261,7 @@ impl PushAccHint {
     pub fn target_acc(&self) -> Option<f64> {
         match self {
             Self::TargetAcc { acc } => Some(*acc),
-            Self::PhiOnly | Self::Unreachable => None,
+            Self::PhiOnly | Self::Unreachable | Self::AlreadyPhi => None,
         }
     }
 
@@ -266,7 +269,7 @@ impl PushAccHint {
     pub fn as_legacy_acc(&self) -> f64 {
         match self {
             Self::TargetAcc { acc } => *acc,
-            Self::PhiOnly | Self::Unreachable => 100.0,
+            Self::PhiOnly | Self::Unreachable | Self::AlreadyPhi => 100.0,
         }
     }
 }
@@ -469,6 +472,87 @@ impl<'a> PushAccBatchSolver<'a> {
             Some(PushAccHint::TargetAcc {
                 acc: (lo as f64) / 1000.0,
             })
+        }
+    }
+}
+
+/// 为存档结构化成绩回填推分ACC（百分比）。
+///
+/// - 仅建议在需要返回/展示推分信息的场景调用（例如 /save?calculate_rks=true）。
+/// - 结果使用 legacy 语义：无法推分/只能推到 100% 推分/已满 ACC 等场景统一回填 100.0。
+pub fn fill_push_acc_for_game_record(game_record: &mut HashMap<String, Vec<DifficultyRecord>>) {
+    // 1) 扁平化为引擎记录并按 rks 降序排序（PushAccBatchSolver 依赖排序）。
+    let mut all: Vec<RksRecord> = Vec::new();
+    for (song_id, diffs) in game_record.iter() {
+        for rec in diffs.iter() {
+            let Some(cc) = rec.chart_constant else {
+                continue;
+            };
+            let mut acc_percent = rec.accuracy as f64;
+            if acc_percent <= 1.5 {
+                acc_percent *= 100.0;
+            }
+            let chart_constant = cc as f64;
+            all.push(RksRecord {
+                song_id: song_id.clone(),
+                difficulty: rec.difficulty.clone(),
+                score: rec.score,
+                acc: acc_percent,
+                rks: calculate_chart_rks(acc_percent, chart_constant),
+                chart_constant,
+            });
+        }
+    }
+    all.sort_by(|a, b| {
+        b.rks
+            .partial_cmp(&a.rks)
+            .unwrap_or(core::cmp::Ordering::Equal)
+    });
+
+    // 2) 预计算 solver，并对每个谱面求解推分提示（只对 acc<100 且定数有效者求解）。
+    let solver = PushAccBatchSolver::new(&all);
+    let mut hint_by_key: HashMap<String, PushAccHint> = HashMap::new();
+    for (idx, rec) in all.iter().enumerate() {
+        if rec.acc >= 100.0 || rec.chart_constant <= 0.0 {
+            continue;
+        }
+        let key = format!("{}-{}", rec.song_id, rec.difficulty);
+        if let Some(hint) = solver.solve_for_index(idx, rec.chart_constant) {
+            hint_by_key.insert(key, hint);
+        }
+    }
+
+    // 3) 回写到存档结构：为每条 DifficultyRecord 回填 push_acc + push_acc_hint（确保“每谱面都有值”）。
+    for (song_id, diffs) in game_record.iter_mut() {
+        for rec in diffs.iter_mut() {
+            let key = format!("{}-{}", song_id, rec.difficulty);
+            let mut acc_percent = rec.accuracy as f64;
+            if acc_percent <= 1.5 {
+                acc_percent *= 100.0;
+            }
+            if acc_percent >= 100.0 {
+                rec.push_acc = Some(100.0);
+                rec.push_acc_hint = Some(PushAccHint::AlreadyPhi);
+                continue;
+            }
+
+            let Some(cc) = rec.chart_constant else {
+                rec.push_acc = Some(100.0);
+                rec.push_acc_hint = Some(PushAccHint::Unreachable);
+                continue;
+            };
+            if (cc as f64) <= 0.0 {
+                rec.push_acc = Some(100.0);
+                rec.push_acc_hint = Some(PushAccHint::Unreachable);
+                continue;
+            }
+
+            let hint = hint_by_key
+                .get(&key)
+                .copied()
+                .unwrap_or(PushAccHint::Unreachable);
+            rec.push_acc = Some(hint.as_legacy_acc());
+            rec.push_acc_hint = Some(hint);
         }
     }
 }
@@ -1178,5 +1262,152 @@ mod tests {
             PushAccHint::Unreachable,
             "期望 Unreachable，实际={hint:?}"
         );
+    }
+
+    #[test]
+    fn fill_push_acc_for_game_record_fills_values() {
+        let mut game_record: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+        game_record.insert(
+            "song_a".to_string(),
+            vec![
+                DifficultyRecord {
+                    difficulty: Difficulty::IN,
+                    score: 900_000,
+                    accuracy: 95.0,
+                    is_full_combo: false,
+                    chart_constant: Some(12.0),
+                    push_acc: None,
+                    push_acc_hint: None,
+                },
+                // 小数语义：0.985 => 98.5%
+                DifficultyRecord {
+                    difficulty: Difficulty::EZ,
+                    score: 800_000,
+                    accuracy: 0.985,
+                    is_full_combo: false,
+                    chart_constant: Some(3.0),
+                    push_acc: None,
+                    push_acc_hint: None,
+                },
+            ],
+        );
+        game_record.insert(
+            "song_b".to_string(),
+            vec![
+                // 已满ACC：按 legacy 语义回填 100.0
+                DifficultyRecord {
+                    difficulty: Difficulty::AT,
+                    score: 1_000_000,
+                    accuracy: 100.0,
+                    is_full_combo: true,
+                    chart_constant: Some(15.0),
+                    push_acc: None,
+                    push_acc_hint: None,
+                },
+                // 缺定数：按 legacy 语义回填 100.0
+                DifficultyRecord {
+                    difficulty: Difficulty::HD,
+                    score: 700_000,
+                    accuracy: 90.0,
+                    is_full_combo: false,
+                    chart_constant: None,
+                    push_acc: None,
+                    push_acc_hint: None,
+                },
+            ],
+        );
+
+        fill_push_acc_for_game_record(&mut game_record);
+
+        for (song_id, diffs) in game_record.iter() {
+            for rec in diffs {
+                let Some(push) = rec.push_acc else {
+                    panic!(
+                        "push_acc 未回填: song_id={song_id}, diff={}",
+                        rec.difficulty
+                    );
+                };
+                let Some(hint) = rec.push_acc_hint else {
+                    panic!(
+                        "push_acc_hint 未回填: song_id={song_id}, diff={}",
+                        rec.difficulty
+                    );
+                };
+                assert!(push <= 100.0, "push_acc 应 <=100: {push}");
+                let mut current = rec.accuracy as f64;
+                if current <= 1.5 {
+                    current *= 100.0;
+                }
+                assert!(
+                    push >= current,
+                    "push_acc 应 >= 当前ACC: push={push}, current={current}, song_id={song_id}, diff={}",
+                    rec.difficulty
+                );
+
+                match hint {
+                    PushAccHint::TargetAcc { acc } => {
+                        assert_eq!(push, acc, "TargetAcc 时 push_acc 应等于目标ACC");
+                    }
+                    PushAccHint::PhiOnly | PushAccHint::Unreachable | PushAccHint::AlreadyPhi => {
+                        assert_eq!(push, 100.0, "非 TargetAcc 时 push_acc 应为 100.0");
+                    }
+                }
+            }
+        }
+
+        let song_b = game_record.get("song_b").expect("song_b 应存在");
+        let at = song_b
+            .iter()
+            .find(|r| r.difficulty == Difficulty::AT)
+            .expect("song_b AT 应存在");
+        assert_eq!(at.push_acc, Some(100.0));
+        assert_eq!(at.push_acc_hint, Some(PushAccHint::AlreadyPhi));
+
+        let hd = song_b
+            .iter()
+            .find(|r| r.difficulty == Difficulty::HD)
+            .expect("song_b HD 应存在");
+        assert_eq!(hd.push_acc, Some(100.0));
+        assert_eq!(hd.push_acc_hint, Some(PushAccHint::Unreachable));
+    }
+
+    #[test]
+    fn push_acc_hint_serializes_tagged_enum() {
+        use serde_json::json;
+
+        assert_eq!(
+            serde_json::to_value(PushAccHint::Unreachable).expect("serialize"),
+            json!({"type": "unreachable"})
+        );
+        assert_eq!(
+            serde_json::to_value(PushAccHint::PhiOnly).expect("serialize"),
+            json!({"type": "phi_only"})
+        );
+        assert_eq!(
+            serde_json::to_value(PushAccHint::AlreadyPhi).expect("serialize"),
+            json!({"type": "already_phi"})
+        );
+        assert_eq!(
+            serde_json::to_value(PushAccHint::TargetAcc { acc: 98.123 }).expect("serialize"),
+            json!({"type": "target_acc", "acc": 98.123})
+        );
+    }
+
+    #[test]
+    fn difficulty_record_serializes_push_acc_hint_field() {
+        use serde_json::json;
+
+        let rec = DifficultyRecord {
+            difficulty: Difficulty::IN,
+            score: 900_000,
+            accuracy: 95.0,
+            is_full_combo: false,
+            chart_constant: Some(12.0),
+            push_acc: Some(100.0),
+            push_acc_hint: Some(PushAccHint::PhiOnly),
+        };
+
+        let v = serde_json::to_value(&rec).expect("serialize");
+        assert_eq!(v.get("push_acc_hint"), Some(&json!({"type": "phi_only"})));
     }
 }

@@ -77,6 +77,8 @@ pub fn parse_game_record(
                 accuracy: accuracy_f32,
                 is_full_combo,
                 chart_constant,
+                push_acc: None,
+                push_acc_hint: None,
             });
         }
 

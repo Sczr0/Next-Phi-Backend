@@ -834,6 +834,10 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
                 "Acc: {:.2}% <tspan class='push-acc push-acc-unreachable'>-> 无法推分</tspan>",
                 score.acc
             ),
+            Some(engine::PushAccHint::AlreadyPhi) => format!(
+                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%(已满ACC)</tspan>",
+                score.acc
+            ),
             None => format!("Acc: {:.2}%", score.acc),
         }
     } else {
@@ -2312,6 +2316,10 @@ pub fn generate_song_svg_string(
                         }
                         engine::PushAccHint::Unreachable => {
                             "<tspan class='text-push-acc' fill='#9E9E9E'> -> 无法推分</tspan>"
+                                .to_string()
+                        }
+                        engine::PushAccHint::AlreadyPhi => {
+                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%(已满ACC)</tspan>"
                                 .to_string()
                         }
                     };

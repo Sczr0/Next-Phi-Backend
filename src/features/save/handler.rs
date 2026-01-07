@@ -33,7 +33,7 @@ pub enum SaveApiResponse {
     post,
     path = "/save",
     summary = "获取并解析玩家存档",
-    description = "支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 `calculate_rks=true` 时同时返回玩家 RKS 概览。",
+    description = "支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 `calculate_rks=true` 时同时返回玩家 RKS 概览，并为每个谱面回填推分信息（push_acc + push_acc_hint，用于区分“不可推分/需Phi/已满ACC”等）。",
     request_body = UnifiedSaveRequest,
     params(
         ("calculate_rks" = Option<bool>, Query, description = "是否计算玩家RKS（true=计算，默认不计算）"),
@@ -41,7 +41,7 @@ pub enum SaveApiResponse {
     responses(
         (
             status = 200,
-            description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段",
+            description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段，并为每个谱面回填 push_acc 与 push_acc_hint（推分提示）",
             body = SaveApiResponse
         ),
         (
@@ -124,6 +124,12 @@ pub async fn get_save_data(
     let (parsed, rks_res, best_top3_json, ap_top3_json, rks_comp_json) = if need_calc {
         let state = state.clone();
         let join = tokio::task::spawn_blocking(move || {
+            let mut parsed = parsed;
+            if calc_rks {
+                crate::features::rks::engine::fill_push_acc_for_game_record(
+                    &mut parsed.game_record,
+                );
+            }
             let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
             let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
                 let (best_top3, ap_top3, rks_comp) =

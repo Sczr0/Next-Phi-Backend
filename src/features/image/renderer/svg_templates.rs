@@ -481,6 +481,7 @@ fn build_bn_card(
             engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
             engine::PushAccHint::PhiOnly => " -> 100.00%(需Phi)".to_string(),
             engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
+            engine::PushAccHint::AlreadyPhi => " -> 100.00%(已满ACC)".to_string(),
         };
         acc_text.push_str(&suffix);
     }
@@ -1120,6 +1121,7 @@ pub(super) fn generate_song_svg_with_template(
                             engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
                             engine::PushAccHint::PhiOnly => " -> 100.00%(需Phi)".to_string(),
                             engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
+                            engine::PushAccHint::AlreadyPhi => " -> 100.00%(已满ACC)".to_string(),
                         };
                         acc_text.push_str(&suffix);
                     }
