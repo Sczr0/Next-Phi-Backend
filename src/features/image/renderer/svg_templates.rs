@@ -479,9 +479,9 @@ fn build_bn_card(
     if let Some(hint) = push_hint {
         let suffix = match hint {
             engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
-            engine::PushAccHint::PhiOnly => " -> 100.00%(需Phi)".to_string(),
+            engine::PushAccHint::PhiOnly => " -> 100.00%".to_string(),
             engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
-            engine::PushAccHint::AlreadyPhi => " -> 100.00%(已满ACC)".to_string(),
+            engine::PushAccHint::AlreadyPhi => " -> 100.00%".to_string(),
         };
         acc_text.push_str(&suffix);
     }
@@ -1119,9 +1119,9 @@ pub(super) fn generate_song_svg_with_template(
                     } else if let Some(hint) = score_data.player_push_acc {
                         let suffix = match hint {
                             engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
-                            engine::PushAccHint::PhiOnly => " -> 100.00%(需Phi)".to_string(),
+                            engine::PushAccHint::PhiOnly => " -> 100.00%".to_string(),
                             engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
-                            engine::PushAccHint::AlreadyPhi => " -> 100.00%(已满ACC)".to_string(),
+                            engine::PushAccHint::AlreadyPhi => " -> 100.00%".to_string(),
                         };
                         acc_text.push_str(&suffix);
                     }

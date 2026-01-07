@@ -827,7 +827,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
                 }
             }
             Some(engine::PushAccHint::PhiOnly) => format!(
-                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%(需Phi)</tspan>",
+                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%</tspan>",
                 score.acc
             ),
             Some(engine::PushAccHint::Unreachable) => format!(
@@ -835,7 +835,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
                 score.acc
             ),
             Some(engine::PushAccHint::AlreadyPhi) => format!(
-                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%(已满ACC)</tspan>",
+                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%</tspan>",
                 score.acc
             ),
             None => format!("Acc: {:.2}%", score.acc),
@@ -2311,7 +2311,7 @@ pub fn generate_song_svg_string(
                             r#"<tspan class='text-push-acc' fill='url(#rks-gradient-push)'> -> {acc:.2}%</tspan>"#
                         ),
                         engine::PushAccHint::PhiOnly => {
-                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%(需Phi)</tspan>"
+                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%</tspan>"
                                 .to_string()
                         }
                         engine::PushAccHint::Unreachable => {
@@ -2319,7 +2319,7 @@ pub fn generate_song_svg_string(
                                 .to_string()
                         }
                         engine::PushAccHint::AlreadyPhi => {
-                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%(已满ACC)</tspan>"
+                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%</tspan>"
                                 .to_string()
                         }
                     };
