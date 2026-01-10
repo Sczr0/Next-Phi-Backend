@@ -6,7 +6,7 @@ use axum::{
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::features::song::models::SongInfo;
+use crate::features::song::models::SongCandidatePreview;
 
 /// 应用统一错误类型
 #[derive(Error, Debug, utoipa::ToSchema)]
@@ -17,6 +17,9 @@ pub enum AppError {
     /// 网络请求错误
     #[error("网络错误: {0}")]
     Network(String),
+    /// 上游请求超时（包含 connect/read 等阶段）
+    #[error("请求超时: {0}")]
+    Timeout(String),
 
     /// JSON 解析错误
     #[error("JSON 解析错误: {0}")]
@@ -128,9 +131,14 @@ pub enum SearchError {
     /// 未找到匹配项
     #[error("未找到匹配项")]
     NotFound,
-    /// 结果不唯一（返回所有候选项，以便提示歧义）
+    /// 结果不唯一（返回候选预览，以便提示歧义）
     #[error("查询到多个候选项（需要更精确的关键词）")]
-    NotUnique { candidates: Vec<SongInfo> },
+    NotUnique {
+        /// 总命中数（用于提示调用方候选已截断）
+        total: u32,
+        /// 候选预览（受控数量，避免返回过大 payload）
+        candidates: Vec<SongCandidatePreview>,
+    },
 }
 
 /// RFC7807 风格的错误响应（Problem Details）。
@@ -170,6 +178,14 @@ pub struct ProblemDetails {
     /// 可选：字段级校验错误（如表单/参数校验）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub errors: Option<Vec<ProblemFieldError>>,
+
+    /// 可选：搜索候选预览（通常用于 SEARCH_NOT_UNIQUE）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidates: Option<Vec<SongCandidatePreview>>,
+
+    /// 可选：候选总数（用于提示 candidates 已截断）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub candidates_total: Option<u32>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -186,6 +202,7 @@ impl AppError {
         match self {
             AppError::AuthPending(_) => StatusCode::ACCEPTED,
             AppError::Network(_) => StatusCode::BAD_GATEWAY,
+            AppError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
             AppError::Json(_) => StatusCode::BAD_REQUEST,
             AppError::Auth(_) => StatusCode::UNAUTHORIZED,
             AppError::SaveHandlerError(_) => StatusCode::BAD_REQUEST,
@@ -211,6 +228,7 @@ impl AppError {
         match self {
             AppError::AuthPending(_) => "AUTH_PENDING",
             AppError::Network(_) => "UPSTREAM_ERROR",
+            AppError::Timeout(_) => "UPSTREAM_TIMEOUT",
             AppError::Json(_) => "BAD_REQUEST",
             AppError::Auth(_) => "UNAUTHORIZED",
             AppError::SaveHandlerError(_) => "SAVE_BAD_REQUEST",
@@ -262,14 +280,28 @@ impl AppError {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = self.status_code();
+        let title = self.title().to_string();
+        let code = self.stable_code().to_string();
+        let detail = Some(self.to_string());
+
+        // 默认不返回候选；仅在“搜索结果不唯一”时附带受控数量的预览，提升 UX 且避免无收益开销。
+        let (candidates, candidates_total) = match self {
+            AppError::Search(SearchError::NotUnique { total, candidates }) => {
+                (Some(candidates), Some(total))
+            }
+            _ => (None, None),
+        };
+
         let problem = ProblemDetails {
             type_url: "about:blank".to_string(),
-            title: self.title().to_string(),
+            title,
             status: status.as_u16(),
-            detail: Some(self.to_string()),
-            code: self.stable_code().to_string(),
+            detail,
+            code,
             request_id: None,
             errors: None,
+            candidates,
+            candidates_total,
         };
 
         let mut res = Json(problem).into_response();
@@ -286,7 +318,11 @@ impl IntoResponse for AppError {
 
 impl From<reqwest::Error> for SaveProviderError {
     fn from(err: reqwest::Error) -> Self {
-        SaveProviderError::Network(err.to_string())
+        if err.is_timeout() {
+            SaveProviderError::Timeout
+        } else {
+            SaveProviderError::Network(err.to_string())
+        }
     }
 }
 
@@ -305,5 +341,58 @@ impl From<std::io::Error> for SaveProviderError {
 impl From<serde_json::Error> for SaveProviderError {
     fn from(err: serde_json::Error) -> Self {
         SaveProviderError::Json(err.to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SaveProviderError;
+    use std::time::Duration;
+
+    async fn start_hanging_http_server() -> std::net::SocketAddr {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind tcp listener");
+        let addr = listener.local_addr().expect("local addr");
+
+        tokio::spawn(async move {
+            loop {
+                let (socket, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    // 不返回任何 HTTP 响应，触发客户端 read timeout。
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    drop(socket);
+                });
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn save_provider_error_from_reqwest_timeout_is_timeout() {
+        let addr = start_hanging_http_server().await;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .expect("build reqwest client");
+
+        let err = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect_err("expected timeout");
+        assert!(err.is_timeout(), "expected reqwest timeout, got: {err}");
+
+        let sp: SaveProviderError = err.into();
+        assert!(
+            matches!(sp, SaveProviderError::Timeout),
+            "expected SaveProviderError::Timeout, got: {sp:?}"
+        );
     }
 }

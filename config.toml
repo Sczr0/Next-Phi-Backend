@@ -101,6 +101,8 @@ cache_ttl_secs = 60
 cache_tti_secs = 30
 # 并发渲染许可数（0 = 自动 = CPU 核心数）
 max_parallel = 0
+# 用户自报成绩 BN：scores 条数硬上限（0=不限制，不建议）
+max_user_scores = 500
 
 # TapTap API 配置
 [taptap.cn]

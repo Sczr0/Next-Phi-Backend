@@ -422,6 +422,7 @@ pub async fn get_qrcode_status(
                     let (error_code, message) = match &e {
                         AppError::Auth(_) => ("UNAUTHORIZED", "认证失败"),
                         AppError::Network(_) => ("UPSTREAM_ERROR", "上游网络错误"),
+                        AppError::Timeout(_) => ("UPSTREAM_TIMEOUT", "上游超时"),
                         AppError::Json(_) => ("UPSTREAM_ERROR", "上游响应解析失败"),
                         AppError::Validation(_) => ("VALIDATION_FAILED", "请求参数错误"),
                         AppError::Conflict(_) => ("CONFLICT", "资源冲突"),

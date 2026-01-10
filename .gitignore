@@ -72,3 +72,5 @@ cargo_cache/
 
 # 锁文件（如需固定工作区可保留，此处忽略以减少噪音）
 # /sdk/ts/pnpm-lock.yaml
+
+/docs/

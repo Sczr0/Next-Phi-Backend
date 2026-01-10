@@ -330,3 +330,97 @@ async fn songs_search_query_too_long_is_validation_error() {
 
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
 }
+
+#[tokio::test]
+async fn songs_search_unique_not_unique_returns_candidates_preview() {
+    let mut catalog = SongCatalog::default();
+
+    let a = Arc::new(SongInfo {
+        id: "a".to_string(),
+        name: "Alpha".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let b = Arc::new(SongInfo {
+        id: "b".to_string(),
+        name: "Alpha".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog.by_id.insert(a.id.clone(), Arc::clone(&a));
+    catalog.by_id.insert(b.id.clone(), Arc::clone(&b));
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=Alpha&unique=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    assert_eq!(v["code"].as_str().expect("code"), "SEARCH_NOT_UNIQUE");
+    assert_eq!(v["candidatesTotal"].as_u64().expect("candidatesTotal"), 2);
+
+    let candidates = v["candidates"].as_array().expect("candidates array");
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0]["id"].as_str().expect("id"), "a");
+    assert_eq!(candidates[0]["name"].as_str().expect("name"), "Alpha");
+    assert_eq!(candidates[1]["id"].as_str().expect("id"), "b");
+    assert_eq!(candidates[1]["name"].as_str().expect("name"), "Alpha");
+}
+
+#[tokio::test]
+async fn songs_search_unique_candidates_are_limited_but_total_is_reported() {
+    let mut catalog = SongCatalog::default();
+
+    for i in 0..30 {
+        let id = format!("id-{i:03}");
+        let info = Arc::new(SongInfo {
+            id: id.clone(),
+            name: "Alpha".to_string(),
+            composer: "c".to_string(),
+            illustrator: "i".to_string(),
+            chart_constants: chart_constants_none(),
+        });
+        catalog.by_id.insert(id, Arc::clone(&info));
+    }
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=Alpha&unique=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    assert_eq!(v["code"].as_str().expect("code"), "SEARCH_NOT_UNIQUE");
+    assert_eq!(v["candidatesTotal"].as_u64().expect("candidatesTotal"), 30);
+
+    let candidates = v["candidates"].as_array().expect("candidates array");
+    assert_eq!(candidates.len(), 10);
+    assert_eq!(candidates[0]["id"].as_str().expect("id"), "id-000");
+    assert_eq!(candidates[9]["id"].as_str().expect("id"), "id-009");
+}

@@ -148,20 +148,12 @@ pub async fn search_songs(
         let item = state.song_catalog.search_unique(q)?;
         Ok(Json::<SongInfo>(item.as_ref().clone()).into_response())
     } else {
-        let items = state.song_catalog.search(q);
-        let total = items.len();
+        let (items, total) = state.song_catalog.search_page(q, offset, limit);
         let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
 
-        let start = offset as usize;
-        let end = start.saturating_add(limit as usize).min(total);
-        let slice = if start >= total {
-            &[]
-        } else {
-            &items[start..end]
-        };
+        let page_items: Vec<SongInfo> = items.iter().map(|a| a.as_ref().clone()).collect();
 
-        let page_items: Vec<SongInfo> = slice.iter().map(|a| a.as_ref().clone()).collect();
-
+        let end = (offset as usize).saturating_add(page_items.len());
         let has_more = end < total;
         let next_offset = if has_more {
             u32::try_from(end).ok()

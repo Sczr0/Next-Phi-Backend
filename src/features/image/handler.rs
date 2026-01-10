@@ -120,6 +120,10 @@ fn normalized_template_cache_code(q: &ImageQueryOpts) -> String {
 #[cfg(test)]
 mod tests {
     use super::{ImageQueryOpts, content_type_from_fmt_code, format_code};
+    use axum::Json;
+    use axum::extract::{Query, State};
+    use std::sync::Arc;
+    use tokio::sync::Semaphore;
 
     #[test]
     fn supports_svg_format_code_and_content_type() {
@@ -208,6 +212,73 @@ mod tests {
             assert_eq!(a.difficulty, b.difficulty);
             assert_eq!(a.rks, b.rks);
             assert_eq!(a.acc, b.acc);
+        }
+    }
+
+    fn dummy_state() -> crate::state::AppState {
+        use axum::body::Bytes;
+        use moka::future::Cache;
+
+        let chart_constants = Arc::new(crate::startup::chart_loader::ChartConstantsMap::new());
+        let song_catalog = Arc::new(crate::features::song::models::SongCatalog::default());
+
+        let taptap_client = Arc::new(
+            crate::features::auth::client::TapTapClient::new(
+                &crate::config::TapTapMultiConfig::default(),
+            )
+            .expect("init TapTapClient"),
+        );
+        let qrcode_service = Arc::new(crate::features::auth::qrcode_service::QrCodeService::new());
+
+        crate::state::AppState {
+            chart_constants,
+            song_catalog,
+            taptap_client,
+            qrcode_service,
+            stats: None,
+            stats_storage: None,
+            render_semaphore: Arc::new(Semaphore::new(1)),
+            bn_image_cache: Cache::<String, Bytes>::builder().max_capacity(1).build(),
+            song_image_cache: Cache::<String, Bytes>::builder().max_capacity(1).build(),
+        }
+    }
+
+    #[tokio::test]
+    async fn user_bn_rejects_scores_over_limit() {
+        // 避免测试并发初始化冲突：已初始化则忽略错误。
+        let _ = crate::config::AppConfig::init_global();
+
+        let cfg = crate::config::AppConfig::global();
+        let max_scores = cfg.image.max_user_scores as usize;
+        assert!(max_scores > 0, "测试需要 max_user_scores > 0");
+
+        let over = max_scores + 1;
+        let mut scores = Vec::with_capacity(over);
+        for _ in 0..over {
+            scores.push(crate::features::image::types::UserScoreItem {
+                song: "dummy".into(),
+                difficulty: "IN".into(),
+                acc: 99.0,
+                score: None,
+            });
+        }
+
+        let state = dummy_state();
+        let q = ImageQueryOpts::default();
+        let req = crate::features::image::types::RenderUserBnRequest {
+            theme: crate::features::image::Theme::default(),
+            nickname: None,
+            unlock_password: None,
+            scores,
+        };
+
+        let res = super::render_bn_user(State(state), Query(q), Json(req)).await;
+        match res {
+            Err(crate::error::AppError::Validation(msg)) => {
+                assert!(msg.contains("scores 条数超过上限"), "msg={msg}");
+            }
+            Err(e) => panic!("expected Validation error, got Err: {e}"),
+            Ok(_) => panic!("expected Validation error, got Ok"),
         }
     }
 }
@@ -1436,6 +1507,17 @@ pub async fn render_bn_user(
         scores,
     } = req;
 
+    // 限制 user 自报成绩条数，避免大输入放大 CPU/内存（排序/推分求解均会随条数线性/超线性增长）。
+    let cfg = AppConfig::global();
+    let max_scores = cfg.image.max_user_scores as usize;
+    if max_scores > 0 && scores.len() > max_scores {
+        return Err(AppError::Validation(format!(
+            "scores 条数超过上限: {} > {}",
+            scores.len(),
+            max_scores
+        )));
+    }
+
     let records_len = scores.len();
     let n = records_len.max(1);
 
@@ -1576,7 +1658,6 @@ pub async fn render_bn_user(
     let display_name = nickname.unwrap_or_else(|| "Phigros Player".into());
 
     // 水印控制：默认启用配置中的显式/隐式；若提供了正确的解除口令，则同时关闭二者
-    let cfg = AppConfig::global();
     let unlocked = cfg.watermark.is_unlock_valid(unlock_password.as_deref());
     let explicit = if unlocked {
         false
@@ -1606,8 +1687,7 @@ pub async fn render_bn_user(
     let fmt_code = format_code(&q);
     let public_illustration_base_url = if fmt_code == "svg" {
         Some(
-            AppConfig::global()
-                .resources
+            cfg.resources
                 .illustration_external_base_url
                 .as_deref()
                 .unwrap_or(ILLUSTRATION_PUBLIC_BASE_URL),

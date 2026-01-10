@@ -1,4 +1,4 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use hmac::Mac;
@@ -20,9 +20,19 @@ pub struct TapTapClient {
     config: TapTapMultiConfig,
 }
 
+fn map_reqwest_error(context: &'static str, err: reqwest::Error) -> AppError {
+    if err.is_timeout() {
+        AppError::Timeout(format!("{context}: {err}"))
+    } else {
+        AppError::Network(format!("{context}: {err}"))
+    }
+}
+
 impl TapTapClient {
     pub fn new(config: &TapTapMultiConfig) -> Result<Self, AppError> {
         let client = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(30))
             .http1_title_case_headers()
             .user_agent("TapTapUnitySDK/1.0 UnityPlayer/2021.3.40f1c1")
             .build()
@@ -105,13 +115,13 @@ impl TapTapClient {
             .form(&form)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("设备码请求失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("设备码请求失败", e))?;
 
         let status = resp.status();
         let body_text = resp
             .text()
             .await
-            .map_err(|e| AppError::Network(format!("读取设备码响应体失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("读取设备码响应体失败", e))?;
 
         if !status.is_success() {
             tracing::warn!("TapTap 设备码请求失败：HTTP {status}");
@@ -191,13 +201,13 @@ impl TapTapClient {
             .form(&form)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("获取 Token 失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("获取 Token 失败", e))?;
 
         let status = resp.status();
         let body_text = resp
             .text()
             .await
-            .map_err(|e| AppError::Network(format!("读取 Token 响应体失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("读取 Token 响应体失败", e))?;
         if !status.is_success() {
             tracing::warn!("TapTap token 请求失败：HTTP {status}");
             return Err(AppError::Network(format!(
@@ -265,13 +275,13 @@ impl TapTapClient {
             .header("Authorization", auth_header)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("获取账号信息失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("获取账号信息失败", e))?;
 
         let status = account_resp.status();
         let body_text = account_resp
             .text()
             .await
-            .map_err(|e| AppError::Network(format!("读取账号信息响应体失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("读取账号信息响应体失败", e))?;
         if !status.is_success() {
             tracing::warn!("TapTap 账号信息请求失败：HTTP {status}");
             return Err(AppError::Network(format!(
@@ -320,7 +330,7 @@ impl TapTapClient {
             .json(&auth_data)
             .send()
             .await
-            .map_err(|e| AppError::Network(format!("请求 LeanCloud 失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("请求 LeanCloud 失败", e))?;
 
         let status = lc_resp.status();
         if !status.is_success() {
@@ -337,7 +347,7 @@ impl TapTapClient {
         let user: LcUserResp = lc_resp
             .json()
             .await
-            .map_err(|e| AppError::Network(format!("解析 LeanCloud 响应失败: {e}")))?;
+            .map_err(|e| map_reqwest_error("解析 LeanCloud 响应失败", e))?;
 
         Ok(SessionData {
             session_token: user.session_token,
@@ -377,6 +387,8 @@ impl TapTapClient {
 mod tests {
     use super::TapTapClient;
     use crate::config::{TapTapConfig, TapTapMultiConfig, TapTapVersion};
+    use crate::error::AppError;
+    use std::time::Duration;
 
     fn dummy_cfg(default_version: TapTapVersion) -> TapTapMultiConfig {
         TapTapMultiConfig {
@@ -414,5 +426,77 @@ mod tests {
         let client = TapTapClient::new(&cfg).expect("TapTapClient::new");
         let picked = client.get_config(Some("cn"));
         assert_eq!(picked.leancloud_app_id, "cn-app-id");
+    }
+
+    async fn start_hanging_http_server() -> std::net::SocketAddr {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind tcp listener");
+        let addr = listener.local_addr().expect("local addr");
+
+        tokio::spawn(async move {
+            loop {
+                let (socket, _) = match listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => break,
+                };
+                tokio::spawn(async move {
+                    // 不返回任何 HTTP 响应，触发客户端 read timeout。
+                    tokio::time::sleep(Duration::from_secs(3)).await;
+                    drop(socket);
+                });
+            }
+        });
+
+        addr
+    }
+
+    #[tokio::test]
+    async fn map_reqwest_error_timeout_becomes_app_timeout() {
+        let addr = start_hanging_http_server().await;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(100))
+            .build()
+            .expect("build reqwest client");
+
+        let err = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect_err("expected timeout");
+        assert!(err.is_timeout(), "expected reqwest timeout, got: {err}");
+
+        let app_err = super::map_reqwest_error("test", err);
+        assert!(
+            matches!(app_err, AppError::Timeout(_)),
+            "expected AppError::Timeout, got: {app_err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn map_reqwest_error_non_timeout_becomes_app_network() {
+        use tokio::net::TcpListener;
+
+        // 绑定后立刻 drop，确保后续连接为 “connection refused” 而非 timeout。
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind tcp listener");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+
+        let err = reqwest::Client::new()
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect_err("expected connect error");
+        assert!(!err.is_timeout(), "unexpected timeout: {err}");
+
+        let app_err = super::map_reqwest_error("test", err);
+        assert!(
+            matches!(app_err, AppError::Network(_)),
+            "expected AppError::Network, got: {app_err:?}"
+        );
     }
 }

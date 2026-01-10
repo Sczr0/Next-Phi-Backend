@@ -25,6 +25,14 @@ pub struct SongInfo {
     pub chart_constants: ChartConstants,
 }
 
+/// 搜索候选预览（用于歧义查询时的提示）。
+#[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SongCandidatePreview {
+    pub id: String,
+    pub name: String,
+}
+
 /// 歌曲目录内存索引
 #[derive(Debug, Default)]
 pub struct SongCatalog {
@@ -38,7 +46,191 @@ pub struct SongCatalog {
     search_cache_nick_lower: Vec<(String, String, Vec<Arc<SongInfo>>)>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum SearchMatchKind {
+    NameEquals,
+    NamePrefix,
+    NameContains,
+    NickEquals,
+    NickPrefix,
+    NickContains,
+}
+
 impl SongCatalog {
+    fn score_match(
+        kind: SearchMatchKind,
+        q_lower: &str,
+        hay_lower: &str,
+        pos: Option<usize>,
+    ) -> i32 {
+        // 说明：
+        // - 这是“用于排序/挑选候选预览”的粗略匹配值（越大越相关）。
+        // - 基础分严格遵循 search() 的合并顺序：官方名 > 别名；等于 > 前缀 > 子串。
+        // - 额外分用于在同一匹配类型内做更友好的排序（更短、更靠前的命中更优）。
+
+        let q_len = q_lower.len() as i32;
+        let hay_len = hay_lower.len() as i32;
+        let extra_len_penalty = (hay_len - q_len).clamp(0, 200); // 越长越不相关（上限避免过度影响）
+        let pos_bonus = pos
+            .map(|p| (200_i32 - (p as i32).min(200)).max(0))
+            .unwrap_or(0); // 命中越靠前越优
+
+        match kind {
+            SearchMatchKind::NameEquals => 6000,
+            SearchMatchKind::NamePrefix => 5000 + q_len * 5 - extra_len_penalty,
+            SearchMatchKind::NameContains => 4000 + pos_bonus - extra_len_penalty,
+            SearchMatchKind::NickEquals => 3000,
+            SearchMatchKind::NickPrefix => 2000 + q_len * 5 - extra_len_penalty,
+            SearchMatchKind::NickContains => 1000 + pos_bonus - extra_len_penalty,
+        }
+    }
+
+    fn visit_search_matches<F>(&self, query: &str, mut on_match: F)
+    where
+        F: FnMut(&Arc<SongInfo>, SearchMatchKind, i32),
+    {
+        let q = query.trim();
+        if q.is_empty() {
+            return;
+        }
+
+        let q_lower = q.to_lowercase();
+        let mut seen: HashSet<&str> = HashSet::new(); // 基于 id 去重
+
+        // 官方名：等于（忽略大小写）
+        for (item, name_lower) in self.search_cache_name_lower.iter() {
+            if item.name.eq_ignore_ascii_case(q) && seen.insert(item.id.as_str()) {
+                on_match(
+                    item,
+                    SearchMatchKind::NameEquals,
+                    Self::score_match(SearchMatchKind::NameEquals, &q_lower, name_lower, Some(0)),
+                );
+            }
+        }
+        // 官方名：前缀包含（忽略大小写）
+        for (item, name_lower) in self.search_cache_name_lower.iter() {
+            if name_lower.starts_with(q_lower.as_str()) && seen.insert(item.id.as_str()) {
+                on_match(
+                    item,
+                    SearchMatchKind::NamePrefix,
+                    Self::score_match(SearchMatchKind::NamePrefix, &q_lower, name_lower, Some(0)),
+                );
+            }
+        }
+        // 官方名：子串包含（忽略大小写）
+        for (item, name_lower) in self.search_cache_name_lower.iter() {
+            if let Some(pos) = name_lower.find(q_lower.as_str()) {
+                if seen.insert(item.id.as_str()) {
+                    on_match(
+                        item,
+                        SearchMatchKind::NameContains,
+                        Self::score_match(
+                            SearchMatchKind::NameContains,
+                            &q_lower,
+                            name_lower,
+                            Some(pos),
+                        ),
+                    );
+                }
+            }
+        }
+
+        // 别名：等于（忽略大小写）
+        for (nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
+            if nick.eq_ignore_ascii_case(q) {
+                let score =
+                    Self::score_match(SearchMatchKind::NickEquals, &q_lower, nick_lower, Some(0));
+                for item in list.iter() {
+                    if seen.insert(item.id.as_str()) {
+                        on_match(item, SearchMatchKind::NickEquals, score);
+                    }
+                }
+            }
+        }
+        // 别名：前缀包含（忽略大小写）
+        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
+            if nick_lower.starts_with(q_lower.as_str()) {
+                let score =
+                    Self::score_match(SearchMatchKind::NickPrefix, &q_lower, nick_lower, Some(0));
+                for item in list.iter() {
+                    if seen.insert(item.id.as_str()) {
+                        on_match(item, SearchMatchKind::NickPrefix, score);
+                    }
+                }
+            }
+        }
+        // 别名：子串包含（忽略大小写）
+        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
+            if let Some(pos) = nick_lower.find(q_lower.as_str()) {
+                let score = Self::score_match(
+                    SearchMatchKind::NickContains,
+                    &q_lower,
+                    nick_lower,
+                    Some(pos),
+                );
+                for item in list.iter() {
+                    if seen.insert(item.id.as_str()) {
+                        on_match(item, SearchMatchKind::NickContains, score);
+                    }
+                }
+            }
+        }
+    }
+
+    /// 分页查询：返回当前页 items 与 total（总命中数）。
+    ///
+    /// 设计目标：避免 HTTP 层“先全量构建 Vec 再切片”的不必要分配；同时保持与 `search()` 一致的排序语义。
+    pub fn search_page(&self, query: &str, offset: u32, limit: u32) -> (Vec<Arc<SongInfo>>, usize) {
+        let q = query.trim();
+        if q.is_empty() {
+            return (Vec::new(), 0);
+        }
+
+        // 1) 先按 ID 精确命中（区分大小写）
+        if let Some(info) = self.by_id.get(q) {
+            let items = if offset == 0 && limit > 0 {
+                vec![Arc::clone(info)]
+            } else {
+                Vec::new()
+            };
+            return (items, 1);
+        }
+
+        // 1.1) 再尝试按 ID 不区分大小写精确命中
+        if let Some((_id, info)) = self.by_id.iter().find(|(id, _)| id.eq_ignore_ascii_case(q)) {
+            let items = if offset == 0 && limit > 0 {
+                vec![Arc::clone(info)]
+            } else {
+                Vec::new()
+            };
+            return (items, 1);
+        }
+
+        let start = offset as usize;
+        let max_take = limit as usize;
+        let end = start.saturating_add(max_take);
+
+        let mut items: Vec<Arc<SongInfo>> = Vec::new();
+        let mut total: usize = 0;
+
+        if max_take == 0 {
+            // 语义保持：limit=0 视为不返回 items，但 total 仍应正确（调用方通常已校验 limit>=1）。
+            self.visit_search_matches(q, |_item, _kind, _score| {
+                total = total.saturating_add(1);
+            });
+            return (items, total);
+        }
+
+        self.visit_search_matches(q, |item, _kind, _score| {
+            if total >= start && total < end {
+                items.push(Arc::clone(item));
+            }
+            total = total.saturating_add(1);
+        });
+
+        (items, total)
+    }
+
     /// 重建搜索缓存（在加载/更新索引后调用）。
     pub fn rebuild_search_cache(&mut self) {
         // 注意：HashMap 迭代顺序不稳定。这里将缓存构建为“稳定排序”的 Vec，确保搜索结果顺序跨进程一致。
@@ -81,99 +273,115 @@ impl SongCatalog {
     /// 1) 官方名：等于(忽略大小写) -> 前缀包含 -> 子串包含
     /// 2) 别名：等于(忽略大小写) -> 前缀包含 -> 子串包含
     pub fn search(&self, query: &str) -> Vec<Arc<SongInfo>> {
-        let q = query.trim();
-        if q.is_empty() {
-            return Vec::new();
-        }
-
-        // 1) 先按 ID 精确命中（区分大小写）
-        if let Some(info) = self.by_id.get(q) {
-            return vec![Arc::clone(info)];
-        }
-
-        // 1.1) 再尝试按 ID 不区分大小写精确命中
-        let q_lower = q.to_lowercase();
-        if let Some((_id, info)) = self.by_id.iter().find(|(id, _)| id.eq_ignore_ascii_case(q)) {
-            return vec![Arc::clone(info)];
-        }
-
-        // 2) 按官方名
-        let mut result: Vec<Arc<SongInfo>> = Vec::new();
-        let mut seen: HashSet<&str> = HashSet::new(); // 基于 id 去重
-
-        // 预计算每首歌的 name_lower，避免在多轮遍历中反复 `to_lowercase()` 分配。
-        // 使用预计算缓存，避免每次搜索都重复分配 `to_lowercase()`。
-
-        // 官方名：等于（忽略大小写）
-        for (item, _name_lower) in self.search_cache_name_lower.iter() {
-            if item.name.eq_ignore_ascii_case(q) && seen.insert(item.id.as_str()) {
-                result.push(Arc::clone(item));
-            }
-        }
-        // 官方名：前缀包含（忽略大小写）
-        for (item, name_lower) in self.search_cache_name_lower.iter() {
-            if name_lower.starts_with(q_lower.as_str()) && seen.insert(item.id.as_str()) {
-                result.push(Arc::clone(item));
-            }
-        }
-        // 官方名：子串包含（忽略大小写）
-        for (item, name_lower) in self.search_cache_name_lower.iter() {
-            if name_lower.contains(q_lower.as_str()) && seen.insert(item.id.as_str()) {
-                result.push(Arc::clone(item));
-            }
-        }
-
-        // 3) 按别名索引：预计算 nick_lower，避免反复分配。
-        // 别名使用预计算缓存，避免每次搜索都重复分配 `to_lowercase()`。
-
-        // 按别名索引：等于（忽略大小写）
-        for (nick, _nick_lower, list) in self.search_cache_nick_lower.iter() {
-            if nick.eq_ignore_ascii_case(q) {
-                for item in list.iter() {
-                    if seen.insert(item.id.as_str()) {
-                        result.push(Arc::clone(item));
-                    }
-                }
-            }
-        }
-        // 别名：前缀包含（忽略大小写）
-        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
-            if nick_lower.starts_with(q_lower.as_str()) {
-                for item in list.iter() {
-                    if seen.insert(item.id.as_str()) {
-                        result.push(Arc::clone(item));
-                    }
-                }
-            }
-        }
-        // 别名：子串包含（忽略大小写）
-        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
-            if nick_lower.contains(q_lower.as_str()) {
-                for item in list.iter() {
-                    if seen.insert(item.id.as_str()) {
-                        result.push(Arc::clone(item));
-                    }
-                }
-            }
-        }
-
-        result
+        let (items, _total) = self.search_page(query, 0, u32::MAX);
+        items
     }
 
     /// 强制唯一查询：当结果为 0/多于 1 时返回错误。
     pub fn search_unique(&self, query: &str) -> Result<Arc<SongInfo>, crate::error::SearchError> {
+        use std::cmp::Ordering;
+
         use crate::error::SearchError;
-        let results = self.search(query);
-        match results.len() {
+
+        const CANDIDATE_PREVIEW_LIMIT: usize = 10;
+
+        let q = query.trim();
+        if q.is_empty() {
+            return Err(SearchError::NotFound);
+        }
+
+        // 1) 先按 ID 精确命中（区分大小写）
+        if let Some(info) = self.by_id.get(q) {
+            return Ok(Arc::clone(info));
+        }
+
+        // 1.1) 再尝试按 ID 不区分大小写精确命中
+        if let Some((_id, info)) = self.by_id.iter().find(|(id, _)| id.eq_ignore_ascii_case(q)) {
+            return Ok(Arc::clone(info));
+        }
+
+        #[derive(Clone)]
+        struct CandidateScored {
+            score: i32,
+            name_lower: String,
+            song: Arc<SongInfo>,
+        }
+
+        impl CandidateScored {
+            /// 比较“哪个更好”：分数更高更好；同分时 name_lower 更小更好；再同分时 id 更小更好。
+            fn cmp_better(&self, other: &Self) -> Ordering {
+                self.score
+                    .cmp(&other.score)
+                    .then_with(|| other.name_lower.cmp(&self.name_lower))
+                    .then_with(|| other.song.id.cmp(&self.song.id))
+            }
+        }
+
+        fn worst_index(items: &[CandidateScored]) -> usize {
+            let mut worst = 0_usize;
+            for (i, c) in items.iter().enumerate().skip(1) {
+                if c.cmp_better(&items[worst]) == Ordering::Less {
+                    worst = i;
+                }
+            }
+            worst
+        }
+
+        let mut total: usize = 0;
+        let mut only: Option<Arc<SongInfo>> = None;
+        let mut top: Vec<CandidateScored> = Vec::new();
+
+        // 说明：此处会遍历所有可能结果以计算匹配值与 total，但只保留受控数量的候选预览，避免“无收益克隆”。
+        self.visit_search_matches(q, |item, _kind, score| {
+            total = total.saturating_add(1);
+            if total == 1 {
+                only = Some(Arc::clone(item));
+            }
+
+            if top.len() < CANDIDATE_PREVIEW_LIMIT {
+                top.push(CandidateScored {
+                    score,
+                    name_lower: item.name.to_lowercase(),
+                    song: Arc::clone(item),
+                });
+                return;
+            }
+
+            let worst = worst_index(&top);
+            let worst_score = top[worst].score;
+            if score < worst_score {
+                return;
+            }
+
+            // 只有可能入榜时才做额外分配（name_lower 与 Arc clone）。
+            let cand = CandidateScored {
+                score,
+                name_lower: item.name.to_lowercase(),
+                song: Arc::clone(item),
+            };
+            if cand.cmp_better(&top[worst]) == Ordering::Greater {
+                top[worst] = cand;
+            }
+        });
+
+        match total {
             0 => Err(SearchError::NotFound),
-            1 => Ok(results.into_iter().next().unwrap()),
+            1 => Ok(only.expect("total==1 implies only exists")),
             _ => {
-                // 将候选项转为拥有所有权的结构体副本，便于在错误中返回
-                let candidates: Vec<SongInfo> = results
+                top.sort_by(|a, b| a.cmp_better(b).reverse());
+                let candidates: Vec<SongCandidatePreview> = top
                     .into_iter()
-                    .map(|arc| arc.as_ref().clone())
+                    .map(|c| SongCandidatePreview {
+                        id: c.song.id.clone(),
+                        name: c.song.name.clone(),
+                    })
                     .collect();
-                Err(SearchError::NotUnique { candidates })
+
+                let total_u32 = u32::try_from(total).unwrap_or(u32::MAX);
+                Err(SearchError::NotUnique {
+                    total: total_u32,
+                    candidates,
+                })
             }
         }
     }

@@ -498,3 +498,130 @@ required= ['game_record', 'game_progress', 'user', 'settings', 'game_key']
 ## 未执行项与风险
 
 - 未执行 `tests/b27_performance_test.rs`（需要 `PHI_SESSION_TOKEN` + 网络，且属于性能基准/火焰图而非功能回归）。风险：无法在本机无 token 环境量化“模板模式读盘减少/TopN clone 去除”的实际收益，但功能等价性已由单元测试与全量回归覆盖。
+
+---
+
+# 验证记录：2026-01-10（Song Search：分页下推 + unique 候选预览），Codex
+
+## 任务
+
+修复 `docs/performance/song-search.md` 中列出的两项 P1：
+- `GET /songs/search`：分页下推到 `SongCatalog`，避免“全量构建结果再切片”
+- `unique=true`：歧义查询返回受控数量的候选 `{id,name}` 预览，并提供 `candidatesTotal`，避免无收益 clone
+
+## 执行命令
+
+- `cargo fmt 2>&1 | Tee-Object -FilePath .codex/logs/cargo-fmt-20260110-song-search-improvements.log`
+- `cargo test -q 2>&1 | Tee-Object -FilePath .codex/logs/cargo-test-20260110-song-search-improvements.log`
+
+## 结果摘要
+
+- `cargo fmt`：通过
+- `cargo test -q`：全量通过
+- 合约验证：`tests/song_search_controls.rs` 新增用例覆盖 `unique=true` 多命中时 409 响应体包含 `candidates/candidatesTotal` 且候选数量受控
+
+## 原始输出（完整）
+
+见 `.codex/logs/cargo-fmt-20260110-song-search-improvements.log`、`.codex/logs/cargo-test-20260110-song-search-improvements.log`。
+
+---
+
+# 验证记录（2026-01-10，Codex）
+
+## 任务
+
+- RKS：仅保留简化口径（Best27 + APTop3 允许重叠）并将计算改为 TopK 流式选择/惰性构造
+- Image：为 `/image/bn/user` 增加 scores 条数硬上限（`image.max_user_scores`）
+
+## 环境
+
+- OS：Windows（PowerShell 5.1）
+- Rust：以 `cargo` 实际执行结果为准
+
+## 执行命令
+
+- `cargo test -q`
+
+## 结果摘要
+
+- `cargo test -q`：通过（全量测试通过；性能用例 `tests/b27_performance_test.rs` 仍为 ignored）
+
+## 原始输出（完整）
+
+```text
+running 66 tests
+..................................................................
+test result: ok. 66 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.01s
+
+
+running 3 tests
+...
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+..
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 2 tests
+..
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+i
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 1 test
+.
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.94s
+
+
+running 3 tests
+...
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.10s
+
+
+running 9 tests
+.........
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+（同内容已写入：`.codex/cargo-test-2026-01-10-rks-topk.log`）
+
+---
+
+# 验证记录（2026-01-10，Codex）
+
+## 任务
+
+- Auth：修复 `docs/performance/auth.md` 的 P0（TapTapClient 缺少 timeout/connect_timeout；并补齐 504 超时语义）
+
+## 环境
+
+- OS：Windows（PowerShell）
+- 仓库：`D:\\git\\2 - Phi-Backend\\phi-backend`
+
+## 执行命令
+
+- `cargo test -q 2>&1 | Tee-Object -FilePath .codex/logs/cargo-test-20260110-auth-p0-timeout.log`
+
+## 结果摘要
+
+- `cargo test -q`：通过（全量测试通过；性能用例 `tests/b27_performance_test.rs` 仍为 ignored）
+
+## 原始输出（完整）
+
+- 见 `.codex/logs/cargo-test-20260110-auth-p0-timeout.log`

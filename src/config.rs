@@ -262,7 +262,7 @@ impl Default for AppConfig {
 }
 
 /// 图片渲染配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRenderConfig {
     /// 是否优先速度渲染（OptimizeSpeed），提升栅格化性能，可能略降画质
     #[serde(default)]
@@ -282,6 +282,9 @@ pub struct ImageRenderConfig {
     /// 并发渲染许可数（0=自动，取 CPU 核心数）
     #[serde(default)]
     pub max_parallel: u32,
+    /// 用户自报成绩 BN：scores 条数硬上限（0=不限制，不建议）
+    #[serde(default = "ImageRenderConfig::default_max_user_scores")]
+    pub max_user_scores: u32,
 }
 
 impl ImageRenderConfig {
@@ -296,6 +299,23 @@ impl ImageRenderConfig {
     }
     fn default_cache_tti() -> u64 {
         30
+    }
+    fn default_max_user_scores() -> u32 {
+        500
+    }
+}
+
+impl Default for ImageRenderConfig {
+    fn default() -> Self {
+        Self {
+            optimize_speed: false,
+            cache_enabled: Self::default_cache_enabled(),
+            cache_max_bytes: Self::default_cache_max_bytes(),
+            cache_ttl_secs: Self::default_cache_ttl(),
+            cache_tti_secs: Self::default_cache_tti(),
+            max_parallel: 0,
+            max_user_scores: Self::default_max_user_scores(),
+        }
     }
 }
 

@@ -10,8 +10,7 @@ use std::collections::HashMap;
 
 use crate::error::AppError;
 use crate::features::rks::engine::{
-    PlayerRksResult, calculate_player_rks_simplified as calculate_player_rks,
-    calculate_single_chart_rks,
+    PlayerRksResult, calculate_player_rks, calculate_single_chart_rks,
 };
 use crate::features::stats::storage::SubmissionRecord;
 use crate::state::AppState;

@@ -46,19 +46,23 @@ pub struct PlayerRksResult {
     pub b30_charts: Vec<ChartRankingScore>,
 }
 
-/// 根据玩家成绩与定数表计算 B30 与总 RKS
-#[deprecated(note = "Use calculate_player_rks_simplified (简化法)")]
+/// 根据玩家成绩与定数表计算 B30 与总 RKS（简化口径：Best27 + AP3，允许重叠）
 pub fn calculate_player_rks(
     records: &HashMap<String, Vec<DifficultyRecord>>,
     chart_constants: &ChartConstantsMap,
 ) -> PlayerRksResult {
-    // 收集所有有效的谱面 RKS
-    let mut all_scores: Vec<ChartRankingScore> = Vec::new();
-    let mut phi_scores: Vec<ChartRankingScore> = Vec::new();
+    const TOP_GENERAL: usize = 27;
+    const TOP_PHI: usize = 3;
+    let mut best27 = TopKChartScores::new(TOP_GENERAL);
+    let mut ap3 = TopKChartScores::new(TOP_PHI);
+
+    // 用于在 rks 相等时模拟稳定排序：先遍历到的优先。
+    let mut scan_index: u64 = 0;
 
     for (song_id, diffs) in records.iter() {
         for rec in diffs {
-            // 定数查找
+            scan_index = scan_index.saturating_add(1);
+
             let Some(consts) = chart_constants.get(song_id) else {
                 continue;
             };
@@ -66,133 +70,28 @@ pub fn calculate_player_rks(
                 continue;
             };
 
-            // 统一单位：记录里常见为百分比（如 98.5），公式需要小数
-            let acc_percent = rec.accuracy as f64;
-            let acc_decimal = if acc_percent > 1.5 {
-                acc_percent / 100.0
-            } else {
-                acc_percent
-            } as f32;
-
+            let (acc_percent, acc_decimal) = normalize_accuracy(rec.accuracy);
             let rks_value = calculate_single_chart_rks(acc_decimal, level);
-            let entry = ChartRankingScore {
+
+            best27.consider(rks_value, scan_index, || ChartRankingScore {
                 song_id: song_id.clone(),
                 difficulty: rec.difficulty.clone(),
                 rks: rks_value,
-            };
-
-            all_scores.push(entry.clone());
-            // φ 评级：accuracy >= 100.0（百分比语义）
+            });
             if acc_percent >= 100.0 {
-                phi_scores.push(entry);
+                ap3.consider(rks_value, scan_index, || ChartRankingScore {
+                    song_id: song_id.clone(),
+                    difficulty: rec.difficulty.clone(),
+                    rks: rks_value,
+                });
             }
         }
     }
 
-    // 按 rks 值降序排序
-    all_scores.sort_by(|a, b| {
-        b.rks
-            .partial_cmp(&a.rks)
-            .unwrap_or(core::cmp::Ordering::Equal)
-    });
-    phi_scores.sort_by(|a, b| {
-        b.rks
-            .partial_cmp(&a.rks)
-            .unwrap_or(core::cmp::Ordering::Equal)
-    });
-
-    const TOP_GENERAL: usize = 27;
-    const TOP_PHI: usize = 3;
-
-    // 取前 27 个总体成绩
-    let mut picked: Vec<ChartRankingScore> = all_scores.iter().take(TOP_GENERAL).cloned().collect();
-
-    // 从 φ 列表取前 3 个，避免与已选重复
-    let mut picked_keys = picked
-        .iter()
-        .map(|c| (c.song_id.clone(), key_of_difficulty(&c.difficulty)))
-        .collect::<std::collections::HashSet<_>>();
-
-    for cs in phi_scores.iter() {
-        if picked.len() >= TOP_GENERAL + TOP_PHI {
-            break;
-        }
-        let key = (cs.song_id.clone(), key_of_difficulty(&cs.difficulty));
-        if !picked_keys.contains(&key) {
-            picked.push(cs.clone());
-            picked_keys.insert(key);
-        }
-    }
-
-    // 计算总 RKS：不足 30 个按 30 作为分母（缺口视为 0）
-    let sum: f64 = picked.iter().map(|c| c.rks).sum();
-    let total_rks = sum / 30.0;
-
-    PlayerRksResult {
-        total_rks,
-        b30_charts: picked,
-    }
-}
-
-/// 根据玩家成绩与定数表计算 B30 与总 RKS（简化法：Best27 + AP3，允许重叠）
-pub fn calculate_player_rks_simplified(
-    records: &HashMap<String, Vec<DifficultyRecord>>,
-    chart_constants: &ChartConstantsMap,
-) -> PlayerRksResult {
-    // 收集所有有效谱面 RKS 与 AP 列表
-    let mut all_scores: Vec<ChartRankingScore> = Vec::new();
-    let mut phi_scores: Vec<ChartRankingScore> = Vec::new();
-
-    for (song_id, diffs) in records.iter() {
-        for rec in diffs {
-            let Some(consts) = chart_constants.get(song_id) else {
-                continue;
-            };
-            let Some(level) = level_for_difficulty(consts, &rec.difficulty) else {
-                continue;
-            };
-
-            let acc_percent = rec.accuracy as f64;
-            let acc_decimal = if acc_percent > 1.5 {
-                acc_percent / 100.0
-            } else {
-                acc_percent
-            } as f32;
-            let rks_value = calculate_single_chart_rks(acc_decimal, level);
-            let entry = ChartRankingScore {
-                song_id: song_id.clone(),
-                difficulty: rec.difficulty.clone(),
-                rks: rks_value,
-            };
-            all_scores.push(entry.clone());
-            if acc_percent >= 100.0 {
-                phi_scores.push(entry);
-            }
-        }
-    }
-
-    all_scores.sort_by(|a, b| {
-        b.rks
-            .partial_cmp(&a.rks)
-            .unwrap_or(core::cmp::Ordering::Equal)
-    });
-    phi_scores.sort_by(|a, b| {
-        b.rks
-            .partial_cmp(&a.rks)
-            .unwrap_or(core::cmp::Ordering::Equal)
-    });
-
-    const TOP_GENERAL: usize = 27;
-    const TOP_PHI: usize = 3;
-
-    // 简化法组成：Top27 + AP Top3（允许重叠）
-    let mut picked: Vec<ChartRankingScore> = all_scores.iter().take(TOP_GENERAL).cloned().collect();
-    let ap_top3: Vec<ChartRankingScore> = phi_scores.iter().take(TOP_PHI).cloned().collect();
-    picked.extend(ap_top3.iter().cloned());
-
-    let sum_best27: f64 = all_scores.iter().take(TOP_GENERAL).map(|c| c.rks).sum();
-    let sum_ap3: f64 = phi_scores.iter().take(TOP_PHI).map(|c| c.rks).sum();
-    let total_rks = (sum_best27 + sum_ap3) / 30.0;
+    // 简化口径：Best27 + AP Top3（允许重叠），不足 30 仍以 30 为分母（缺口视为 0）。
+    let total_rks = (best27.sum() + ap3.sum()) / 30.0;
+    let mut picked: Vec<ChartRankingScore> = best27.into_sorted_scores();
+    picked.extend(ap3.into_sorted_scores());
 
     PlayerRksResult {
         total_rks,
@@ -216,6 +115,114 @@ fn key_of_difficulty(diff: &Difficulty) -> u8 {
         Difficulty::IN => 2,
         Difficulty::AT => 3,
     }
+}
+
+/// 统一 ACC 单位：
+/// - 存档中常见为百分比语义（98.5 表示 98.5%）
+/// - 也可能出现小数语义（0.985 表示 98.5%）
+///
+/// 返回：
+/// - acc_percent：百分比（0-100+），用于 AP 判定等
+/// - acc_decimal：小数（0-1+），用于公式计算
+fn normalize_accuracy(acc: f32) -> (f64, f32) {
+    let raw = acc as f64;
+    if raw <= 1.5 {
+        (raw * 100.0, acc)
+    } else {
+        (raw, (raw / 100.0) as f32)
+    }
+}
+
+#[derive(Clone)]
+struct RankedChartScore {
+    score: ChartRankingScore,
+    scan_index: u64,
+}
+
+/// 固定容量的 TopK 容器（用于替代“全量收集 + 全量排序”）。
+///
+/// 排序规则与原先 `sort_by` + `take(k)` 的直觉一致：
+/// - rks 值越大越靠前
+/// - rks 相等时，先遍历到的记录优先（scan_index 越小越靠前）
+struct TopKChartScores {
+    k: usize,
+    items: Vec<RankedChartScore>,
+    sum: f64,
+}
+
+impl TopKChartScores {
+    fn new(k: usize) -> Self {
+        Self {
+            k,
+            items: Vec::with_capacity(k),
+            sum: 0.0,
+        }
+    }
+
+    fn sum(&self) -> f64 {
+        self.sum
+    }
+
+    fn consider<F>(&mut self, rks: f64, scan_index: u64, build: F)
+    where
+        F: FnOnce() -> ChartRankingScore,
+    {
+        if self.k == 0 {
+            return;
+        }
+        if self.items.len() < self.k {
+            self.sum += rks;
+            self.items.push(RankedChartScore {
+                score: build(),
+                scan_index,
+            });
+            return;
+        }
+
+        let worst_index = self.worst_index();
+        if better_than(rks, scan_index, &self.items[worst_index]) {
+            let removed_rks = self.items[worst_index].score.rks;
+            self.sum += rks - removed_rks;
+            self.items[worst_index] = RankedChartScore {
+                score: build(),
+                scan_index,
+            };
+        }
+    }
+
+    fn worst_index(&self) -> usize {
+        debug_assert!(self.items.len() <= self.k);
+        debug_assert!(!self.items.is_empty());
+
+        let mut worst = 0usize;
+        for i in 1..self.items.len() {
+            if cmp_ranked(&self.items[worst], &self.items[i]) == core::cmp::Ordering::Less {
+                // worst 排在 i 之前 => i 更差
+                worst = i;
+            }
+        }
+        worst
+    }
+
+    fn into_sorted_scores(mut self) -> Vec<ChartRankingScore> {
+        self.items.sort_by(cmp_ranked);
+        self.items.into_iter().map(|r| r.score).collect()
+    }
+}
+
+fn cmp_ranked(a: &RankedChartScore, b: &RankedChartScore) -> core::cmp::Ordering {
+    // rks 降序 + scan_index 升序（模拟稳定排序）
+    b.score
+        .rks
+        .total_cmp(&a.score.rks)
+        .then_with(|| a.scan_index.cmp(&b.scan_index))
+}
+
+fn better_than(rks: f64, scan_index: u64, other: &RankedChartScore) -> bool {
+    // candidate 是否“更靠前”
+    rks.total_cmp(&other.score.rks) == core::cmp::Ordering::Greater
+        || (rks.total_cmp(&other.score.rks) == core::cmp::Ordering::Equal
+            && scan_index < other.scan_index)
 }
 
 // --- 兼容旧实现的 RKS 详情与推分算法 ---
@@ -799,6 +806,211 @@ mod tests {
                 .partial_cmp(&a.rks)
                 .unwrap_or(core::cmp::Ordering::Equal)
         });
+    }
+
+    #[test]
+    fn calculate_player_rks_normalizes_decimal_accuracy_for_ap_judgement() {
+        let mut chart_constants = ChartConstantsMap::new();
+        chart_constants.insert(
+            "s1".to_string(),
+            ChartConstants {
+                ez: None,
+                hd: None,
+                in_level: Some(10.0),
+                at: None,
+            },
+        );
+        chart_constants.insert(
+            "s2".to_string(),
+            ChartConstants {
+                ez: None,
+                hd: None,
+                in_level: Some(9.0),
+                at: None,
+            },
+        );
+        chart_constants.insert(
+            "s3".to_string(),
+            ChartConstants {
+                ez: None,
+                hd: None,
+                in_level: Some(8.0),
+                at: None,
+            },
+        );
+
+        let mut records: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+        records.insert(
+            "s1".to_string(),
+            vec![DifficultyRecord {
+                difficulty: Difficulty::IN,
+                score: 1_000_000,
+                // 小数语义：1.0 => 100%
+                accuracy: 1.0,
+                is_full_combo: true,
+                chart_constant: None,
+                push_acc: None,
+                push_acc_hint: None,
+            }],
+        );
+        records.insert(
+            "s2".to_string(),
+            vec![DifficultyRecord {
+                difficulty: Difficulty::IN,
+                score: 1_000_000,
+                accuracy: 100.0,
+                is_full_combo: true,
+                chart_constant: None,
+                push_acc: None,
+                push_acc_hint: None,
+            }],
+        );
+        records.insert(
+            "s3".to_string(),
+            vec![DifficultyRecord {
+                difficulty: Difficulty::IN,
+                score: 900_000,
+                // 小数语义：0.99 => 99%，不应计入 AP
+                accuracy: 0.99,
+                is_full_combo: false,
+                chart_constant: None,
+                push_acc: None,
+                push_acc_hint: None,
+            }],
+        );
+
+        let rks1 = calculate_single_chart_rks(1.0, 10.0);
+        let rks2 = calculate_single_chart_rks(1.0, 9.0);
+        let rks3 = calculate_single_chart_rks(0.99, 8.0);
+
+        let res = calculate_player_rks(&records, &chart_constants);
+
+        // Best27（3条） + AP（2条：s1/s2）
+        let expected_total = (rks1 + rks2 + rks3 + rks1 + rks2) / 30.0;
+        assert!(
+            (res.total_rks - expected_total).abs() < 1e-12,
+            "total_rks mismatch: got={}, expected={}",
+            res.total_rks,
+            expected_total
+        );
+
+        assert_eq!(res.b30_charts.len(), 5);
+        assert_eq!(res.b30_charts[0].song_id, "s1");
+        assert_eq!(res.b30_charts[1].song_id, "s2");
+        assert_eq!(res.b30_charts[2].song_id, "s3");
+        // AP Top3（此处仅2条）：顺序应为 s1(10) -> s2(9)
+        assert_eq!(res.b30_charts[3].song_id, "s1");
+        assert_eq!(res.b30_charts[4].song_id, "s2");
+    }
+
+    #[test]
+    fn calculate_player_rks_topk_matches_reference_for_unique_rks() {
+        let mut chart_constants = ChartConstantsMap::new();
+        let mut records: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+
+        #[derive(Clone)]
+        struct Ref {
+            song_id: String,
+            difficulty: Difficulty,
+            rks: f64,
+            is_ap: bool,
+        }
+
+        let mut all = Vec::<Ref>::new();
+
+        // 构造 40 条互不相等的 rks（通过不同定数实现），确保排序与 TopK 选择在任何遍历顺序下都可确定。
+        for i in 1..=40u32 {
+            let song_id = format!("song_{i:02}");
+            chart_constants.insert(
+                song_id.clone(),
+                ChartConstants {
+                    ez: None,
+                    hd: None,
+                    in_level: Some(i as f32),
+                    at: None,
+                },
+            );
+
+            // 仅让最高的 5 条为 AP，其中一条使用小数语义 1.0（100%）。
+            let accuracy: f32 = if i >= 36 {
+                if i == 38 { 1.0 } else { 100.0 }
+            } else {
+                99.0
+            };
+
+            records.insert(
+                song_id.clone(),
+                vec![DifficultyRecord {
+                    difficulty: Difficulty::IN,
+                    score: 900_000,
+                    accuracy,
+                    is_full_combo: false,
+                    chart_constant: None,
+                    push_acc: None,
+                    push_acc_hint: None,
+                }],
+            );
+
+            let (acc_percent, acc_decimal) = normalize_accuracy(accuracy);
+            let rks = calculate_single_chart_rks(acc_decimal, i as f32);
+            let is_ap = acc_percent >= 100.0;
+            all.push(Ref {
+                song_id,
+                difficulty: Difficulty::IN,
+                rks,
+                is_ap,
+            });
+        }
+
+        let mut best_sorted = all.clone();
+        best_sorted.sort_by(|a, b| b.rks.total_cmp(&a.rks));
+        let best27 = best_sorted
+            .iter()
+            .take(27)
+            .map(|r| ChartRankingScore {
+                song_id: r.song_id.clone(),
+                difficulty: r.difficulty.clone(),
+                rks: r.rks,
+            })
+            .collect::<Vec<_>>();
+
+        let mut ap_sorted = all.iter().filter(|r| r.is_ap).cloned().collect::<Vec<_>>();
+        ap_sorted.sort_by(|a, b| b.rks.total_cmp(&a.rks));
+        let ap3 = ap_sorted
+            .iter()
+            .take(3)
+            .map(|r| ChartRankingScore {
+                song_id: r.song_id.clone(),
+                difficulty: r.difficulty.clone(),
+                rks: r.rks,
+            })
+            .collect::<Vec<_>>();
+
+        let expected_total = (best27.iter().map(|c| c.rks).sum::<f64>()
+            + ap3.iter().map(|c| c.rks).sum::<f64>())
+            / 30.0;
+
+        let mut expected_b30 = best27.clone();
+        expected_b30.extend(ap3.clone());
+
+        let res = calculate_player_rks(&records, &chart_constants);
+        assert!(
+            (res.total_rks - expected_total).abs() < 1e-12,
+            "total_rks mismatch: got={}, expected={}",
+            res.total_rks,
+            expected_total
+        );
+        assert_eq!(res.b30_charts.len(), expected_b30.len());
+        for (got, expected) in res.b30_charts.iter().zip(expected_b30.iter()) {
+            assert_eq!(got.song_id, expected.song_id);
+            assert_eq!(got.difficulty, expected.difficulty);
+            assert!(
+                (got.rks - expected.rks).abs() < 1e-12,
+                "rks mismatch: got={}, expected={}",
+                got.rks,
+                expected.rks
+            );
+        }
     }
 
     fn simulate_rks_increase_simplified_slow(

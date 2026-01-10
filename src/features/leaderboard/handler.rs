@@ -812,7 +812,10 @@ pub async fn get_public_profile(
 
 // ============ Admin endpoints (X-Admin-Token) ============
 
-pub(crate) fn require_admin(headers: &HeaderMap) -> Result<String, AppError> {
+pub(crate) fn require_admin_with_cfg(
+    cfg: &crate::config::AppConfig,
+    headers: &HeaderMap,
+) -> Result<String, AppError> {
     let provided = headers
         .get("x-admin-token")
         .and_then(|v| v.to_str().ok())
@@ -821,7 +824,6 @@ pub(crate) fn require_admin(headers: &HeaderMap) -> Result<String, AppError> {
     if provided.is_empty() {
         return Err(AppError::Auth("缺少管理员令牌".into()));
     }
-    let cfg = crate::config::AppConfig::global();
     let ok = cfg
         .leaderboard
         .admin_tokens
@@ -831,6 +833,10 @@ pub(crate) fn require_admin(headers: &HeaderMap) -> Result<String, AppError> {
         return Err(AppError::Auth("管理员令牌无效".into()));
     }
     Ok(provided.to_string())
+}
+
+pub(crate) fn require_admin(headers: &HeaderMap) -> Result<String, AppError> {
+    require_admin_with_cfg(crate::config::AppConfig::global(), headers)
 }
 
 #[derive(serde::Serialize, utoipa::ToSchema)]
@@ -1188,16 +1194,14 @@ mod tests {
 
     #[test]
     fn test_require_admin_env() {
-        // 使用环境变量配置管理员令牌，并初始化全局配置，避免未初始化导致的 panic
-        unsafe {
-            std::env::set_var("APP_LEADERBOARD_ADMIN_TOKENS", "t1,t2");
-        }
-        let _ = crate::config::AppConfig::init_global();
+        // 避免测试间共享全局配置导致的竞态：直接构造 cfg 注入。
+        let mut cfg = crate::config::AppConfig::default();
+        cfg.leaderboard.admin_tokens = vec!["t1".into(), "t2".into()];
 
         let mut headers = HeaderMap::new();
         headers.insert("x-admin-token", axum::http::HeaderValue::from_static("t2"));
-        assert!(require_admin(&headers).is_ok());
+        assert!(require_admin_with_cfg(&cfg, &headers).is_ok());
         headers.insert("x-admin-token", axum::http::HeaderValue::from_static("bad"));
-        assert!(require_admin(&headers).is_err());
+        assert!(require_admin_with_cfg(&cfg, &headers).is_err());
     }
 }
