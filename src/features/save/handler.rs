@@ -191,10 +191,18 @@ pub async fn get_save_data(
                 }
             };
             let prev_rks = prev.as_ref().map(|v| v.0).unwrap_or(0.0);
+            // rksJump 用于“相对前值的变化量/异常跳变”判断：去除 f64 计算与存储带来的极小噪声。
+            // 说明：1e-9 远小于 UI 常见展示精度（0.01），但足以覆盖 1e-15 量级抖动。
+            const RKS_JUMP_EPS: f64 = 1e-9;
             let rks_jump = if prev_rks > 0.0 {
                 total_rks - prev_rks
             } else {
                 0.0
+            };
+            let rks_jump = if rks_jump.abs() < RKS_JUMP_EPS {
+                0.0
+            } else {
+                rks_jump
             };
 
             let mut suspicion = 0.0_f64;

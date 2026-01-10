@@ -59,7 +59,15 @@ pub fn calculate_player_rks(
     // 用于在 rks 相等时模拟稳定排序：先遍历到的优先。
     let mut scan_index: u64 = 0;
 
-    for (song_id, diffs) in records.iter() {
+    // records 使用 HashMap：遍历顺序不稳定，可能导致 tie-break 与浮点求和出现极小抖动。
+    // 这里按 song_id 排序遍历，保证同一份存档重复计算结果稳定可复现。
+    let mut song_ids: Vec<&String> = records.keys().collect();
+    song_ids.sort();
+
+    for song_id in song_ids {
+        let Some(diffs) = records.get(song_id) else {
+            continue;
+        };
         for rec in diffs {
             scan_index = scan_index.saturating_add(1);
 
@@ -901,6 +909,55 @@ mod tests {
         // AP Top3（此处仅2条）：顺序应为 s1(10) -> s2(9)
         assert_eq!(res.b30_charts[3].song_id, "s1");
         assert_eq!(res.b30_charts[4].song_id, "s2");
+    }
+
+    #[test]
+    fn calculate_player_rks_is_deterministic_for_hashmap_iteration_order() {
+        let mut chart_constants = ChartConstantsMap::new();
+        for i in 0..40 {
+            chart_constants.insert(
+                format!("s{i:02}"),
+                ChartConstants {
+                    ez: None,
+                    hd: None,
+                    in_level: Some(10.0),
+                    at: None,
+                },
+            );
+        }
+
+        fn make_record() -> DifficultyRecord {
+            DifficultyRecord {
+                difficulty: Difficulty::IN,
+                score: 1_000_000,
+                accuracy: 1.0,
+                is_full_combo: true,
+                chart_constant: None,
+                push_acc: None,
+                push_acc_hint: None,
+            }
+        }
+
+        // 两份内容完全相同、插入顺序不同的 HashMap。
+        // 目标：calculate_player_rks 的输出不应依赖 HashMap 的内部遍历顺序。
+        let mut records_a: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+        let mut records_b: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+        for i in 0..40 {
+            records_a.insert(format!("s{i:02}"), vec![make_record()]);
+        }
+        for i in (0..40).rev() {
+            records_b.insert(format!("s{i:02}"), vec![make_record()]);
+        }
+
+        let res_a = calculate_player_rks(&records_a, &chart_constants);
+        let res_b = calculate_player_rks(&records_b, &chart_constants);
+
+        assert_eq!(res_a.total_rks, res_b.total_rks);
+        assert_eq!(res_a.b30_charts.len(), res_b.b30_charts.len());
+
+        let ids_a: Vec<&str> = res_a.b30_charts.iter().map(|c| c.song_id.as_str()).collect();
+        let ids_b: Vec<&str> = res_b.b30_charts.iter().map(|c| c.song_id.as_str()).collect();
+        assert_eq!(ids_a, ids_b);
     }
 
     #[test]

@@ -140,6 +140,30 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 
 ---
 
+# 验证记录（2026-01-10，Codex）
+
+## 任务
+
+解释并修复 `/rks/history` 在“未游玩”情况下出现的 1e-15 量级极小跳变：
+
+- RKS 计算对 HashMap 遍历顺序不敏感（确定性）
+- rksJump 对浮点噪声归零（写入与查询侧）
+
+## 环境
+
+- OS：Windows（PowerShell）
+- 仓库：`D:\git\2 - Phi-Backend\phi-backend`
+
+## 执行命令
+
+- `cargo test -q`
+
+## 结果摘要
+
+- `cargo test -q`：通过。
+- 证据日志：`.codex/logs/cargo-test-2026-01-10-rks-history-tiny-jump.log`。
+
+
 # 验证记录（2025-12-28，Codex）
 
 ## 任务

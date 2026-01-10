@@ -351,6 +351,9 @@ impl StatsStorage {
         limit: i64,
         offset: i64,
     ) -> Result<(Vec<crate::features::rks::handler::RksHistoryItem>, i64), AppError> {
+        // 归一化浮点噪声：避免把 1e-15 量级差值当成“RKS 变化”暴露给客户端。
+        const RKS_JUMP_EPS: f64 = 1e-9;
+
         // 查询总数
         let count_row =
             sqlx::query("SELECT COUNT(1) as c FROM save_submissions WHERE user_hash = ?")
@@ -373,10 +376,19 @@ impl StatsStorage {
 
         let items: Vec<crate::features::rks::handler::RksHistoryItem> = rows
             .into_iter()
-            .map(|r| crate::features::rks::handler::RksHistoryItem {
-                rks: r.try_get::<f64, _>("total_rks").unwrap_or(0.0),
-                rks_jump: r.try_get::<f64, _>("rks_jump").unwrap_or(0.0),
-                created_at: r.try_get::<String, _>("created_at").unwrap_or_default(),
+            .map(|r| {
+                let rks = r.try_get::<f64, _>("total_rks").unwrap_or(0.0);
+                let rks_jump = r.try_get::<f64, _>("rks_jump").unwrap_or(0.0);
+                let rks_jump = if rks_jump.abs() < RKS_JUMP_EPS {
+                    0.0
+                } else {
+                    rks_jump
+                };
+                crate::features::rks::handler::RksHistoryItem {
+                    rks,
+                    rks_jump,
+                    created_at: r.try_get::<String, _>("created_at").unwrap_or_default(),
+                }
             })
             .collect();
 
