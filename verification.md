@@ -649,3 +649,28 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ## 原始输出（完整）
 
 - 见 `.codex/logs/cargo-test-20260110-auth-p0-timeout.log`
+
+---
+
+# 验证记录：2026-01-12（文档：存档链路说明），Codex
+
+## 任务
+
+- 新增 `docs/save/*`：用“胎教式”说明本项目内 Phigros 存档获取/解密/解析与保留/舍弃规则
+
+## 环境
+
+- OS：Windows（PowerShell）
+- 仓库：`D:\\git\\2 - Phi-Backend\\phi-backend`
+
+## 执行命令
+
+- `cargo test -q --lib 2>&1 | Tee-Object -FilePath .codex/logs/cargo-test-20260112-save-docs-lib.log`
+
+## 结果摘要
+
+- `cargo test -q --lib`：通过（70 passed）
+
+## 原始输出（完整）
+
+- 见 `.codex/logs/cargo-test-20260112-save-docs-lib.log`
