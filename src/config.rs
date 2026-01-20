@@ -48,6 +48,56 @@ pub struct ApiConfig {
     pub prefix: String,
 }
 
+/// CORS 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CorsConfig {
+    /// 是否启用 CORS
+    #[serde(default = "CorsConfig::default_enabled")]
+    pub enabled: bool,
+    /// 允许的 Origin 列表（支持 "*" 表示任意）
+    #[serde(default)]
+    pub allowed_origins: Vec<String>,
+    /// 允许的方法列表（支持 "*" 表示任意）
+    #[serde(default)]
+    pub allowed_methods: Vec<String>,
+    /// 允许的请求头列表（支持 "*" 表示任意）
+    #[serde(default)]
+    pub allowed_headers: Vec<String>,
+    /// 暴露的响应头列表（支持 "*" 表示任意）
+    #[serde(default)]
+    pub expose_headers: Vec<String>,
+    /// 是否允许携带凭证（Cookie/Authorization）
+    #[serde(default = "CorsConfig::default_allow_credentials")]
+    pub allow_credentials: bool,
+    /// 预检缓存时间（秒）
+    #[serde(default)]
+    pub max_age_secs: Option<u64>,
+}
+
+impl CorsConfig {
+    fn default_enabled() -> bool {
+        false
+    }
+
+    fn default_allow_credentials() -> bool {
+        false
+    }
+}
+
+impl Default for CorsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            allowed_origins: Vec::new(),
+            allowed_methods: Vec::new(),
+            allowed_headers: Vec::new(),
+            expose_headers: Vec::new(),
+            allow_credentials: Self::default_allow_credentials(),
+            max_age_secs: None,
+        }
+    }
+}
+
 /// TapTap 版本枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -102,6 +152,9 @@ pub struct AppConfig {
     pub resources: ResourcesConfig,
     pub logging: LoggingConfig,
     pub api: ApiConfig,
+    /// CORS 配置
+    #[serde(default)]
+    pub cors: CorsConfig,
     /// TapTap API 配置（多版本）
     #[serde(default)]
     pub taptap: TapTapMultiConfig,
@@ -250,6 +303,7 @@ impl Default for AppConfig {
             api: ApiConfig {
                 prefix: "/api/v2".to_string(),
             },
+            cors: CorsConfig::default(),
             taptap: TapTapMultiConfig::default(),
             stats: StatsConfig::default(),
             branding: BrandingConfig::default(),

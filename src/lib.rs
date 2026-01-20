@@ -4,6 +4,9 @@ pub mod error;
 /// 配置模块
 pub mod config;
 
+/// CORS 构建工具
+pub mod cors;
+
 /// 启动检查模块
 pub mod startup;
 

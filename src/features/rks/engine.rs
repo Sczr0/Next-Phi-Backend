@@ -955,8 +955,16 @@ mod tests {
         assert_eq!(res_a.total_rks, res_b.total_rks);
         assert_eq!(res_a.b30_charts.len(), res_b.b30_charts.len());
 
-        let ids_a: Vec<&str> = res_a.b30_charts.iter().map(|c| c.song_id.as_str()).collect();
-        let ids_b: Vec<&str> = res_b.b30_charts.iter().map(|c| c.song_id.as_str()).collect();
+        let ids_a: Vec<&str> = res_a
+            .b30_charts
+            .iter()
+            .map(|c| c.song_id.as_str())
+            .collect();
+        let ids_b: Vec<&str> = res_b
+            .b30_charts
+            .iter()
+            .map(|c| c.song_id.as_str())
+            .collect();
         assert_eq!(ids_a, ids_b);
     }
 

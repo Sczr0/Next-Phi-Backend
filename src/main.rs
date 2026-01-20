@@ -5,6 +5,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum::{Router, routing::get};
 use moka::future::Cache;
+use phi_backend::cors::build_cors_layer;
 use phi_backend::features::auth::client::TapTapClient;
 use phi_backend::features::health::handler::health_check;
 use phi_backend::features::leaderboard::handler::create_leaderboard_router;
@@ -254,6 +255,11 @@ async fn main() {
     // - 图片/音视频等：本身已压缩或压缩收益极低，反而浪费 CPU
     // - application/octet-stream/zip/gzip：通常是二进制下载，压缩收益不确定且可能造成额外 CPU
     app = app.layer(CompressionLayer::new().compress_when(compression_predicate()));
+
+    if let Some(layer) = build_cors_layer(&config.cors) {
+        tracing::info!("CORS 已启用");
+        app = app.layer(layer);
+    }
 
     // 启动看门狗任务
     if let Err(e) = watchdog.start_watchdog_task().await {

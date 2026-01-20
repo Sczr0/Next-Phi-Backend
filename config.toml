@@ -10,6 +10,24 @@ port = 3939
 # API 路由前缀
 prefix = "/api/v2"
 
+[cors]
+# 是否启用 CORS（默认关闭）
+enabled = false
+# 允许的 Origin 列表，支持 "*" 表示任意
+# 注意：allow_credentials=true 时必须显式列出 Origin，不能使用 "*"
+# 启用 CORS 时请至少配置 allowed_origins
+allowed_origins = []
+# 允许的方法列表，支持 "*" 表示任意
+allowed_methods = []
+# 允许的请求头列表，支持 "*" 表示任意
+allowed_headers = []
+# 暴露的响应头列表，支持 "*" 表示任意
+expose_headers = []
+# 是否允许携带凭证（Cookie/Authorization）
+allow_credentials = false
+# 预检缓存时间（秒，可选）
+max_age_secs = 600
+
 [resources]
 # 资源文件夹路径（相对于项目根目录）
 base_path = "./resources"
