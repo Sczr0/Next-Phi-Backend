@@ -322,11 +322,13 @@ pub async fn get_save_data(
     // 计算 RKS 并返回复合响应
     let rks = rks_res
         .unwrap_or_else(|| calculate_player_rks(&parsed.game_record, &state.chart_constants));
+    let grade_counts = compute_grade_counts(&parsed.game_record);
     let save_value = serde_json::to_value(&parsed)
         .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {e}")))?;
     let resp = SaveAndRksResponse {
         save: save_value,
         rks,
+        grade_counts,
     };
     let body = serde_json::to_value(&resp)
         .map_err(|e| AppError::Internal(format!("序列化 SaveAndRksResponse 失败: {e}")))?;
@@ -372,6 +374,63 @@ pub struct SaveAndRksResponse {
     save: serde_json::Value,
     /// 计算得到的玩家 RKS 概览
     rks: PlayerRksResult,
+    /// 按难度统计的 C/FC/P 成绩数量（累计口径）
+    #[serde(rename = "gradeCounts")]
+    grade_counts: super::models::CfcPCountsByDifficulty,
+}
+
+/// 统计每个难度下的 C/FC/P 成绩数量（累计口径）。
+fn compute_grade_counts(
+    records: &std::collections::HashMap<String, Vec<super::models::DifficultyRecord>>,
+) -> super::models::CfcPCountsByDifficulty {
+    use super::models::{CfcPCounts, CfcPCountsByDifficulty, Difficulty};
+
+    #[derive(Debug, Clone, Copy)]
+    enum Tier {
+        C,
+        FC,
+        P,
+    }
+
+    let mut counts = CfcPCountsByDifficulty::default();
+
+    for (_song_id, diffs) in records.iter() {
+        for rec in diffs.iter() {
+            let tier = if rec.score == 1_000_000 {
+                Tier::P
+            } else if rec.is_full_combo {
+                Tier::FC
+            } else if rec.score > 700_000 {
+                Tier::C
+            } else {
+                continue;
+            };
+
+            let bucket: &mut CfcPCounts = match &rec.difficulty {
+                Difficulty::EZ => &mut counts.ez,
+                Difficulty::HD => &mut counts.hd,
+                Difficulty::IN => &mut counts.in_,
+                Difficulty::AT => &mut counts.at,
+            };
+
+            match tier {
+                Tier::P => {
+                    bucket.p += 1;
+                    bucket.fc += 1;
+                    bucket.c += 1;
+                }
+                Tier::FC => {
+                    bucket.fc += 1;
+                    bucket.c += 1;
+                }
+                Tier::C => {
+                    bucket.c += 1;
+                }
+            }
+        }
+    }
+
+    counts
 }
 
 /// 计算用于公开展示的文字详情（BestTop3、APTop3、RKS 构成）
@@ -451,4 +510,87 @@ fn compute_textual_details(
         ap_top3_sum: ap3_sum,
     };
     (best_top3, ap_top3, rks_comp)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::compute_grade_counts;
+    use crate::features::save::models::{Difficulty, DifficultyRecord};
+
+    fn rec(difficulty: Difficulty, score: u32, is_full_combo: bool) -> DifficultyRecord {
+        DifficultyRecord {
+            difficulty,
+            score,
+            // 本测试仅关注 score/fc 统计逻辑，accuracy 等字段填充占位值即可。
+            accuracy: 0.0,
+            is_full_combo,
+            chart_constant: None,
+            push_acc: None,
+            push_acc_hint: None,
+        }
+    }
+
+    #[test]
+    fn compute_grade_counts_counts_c_fc_p_with_cumulative_rule() {
+        let mut records: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+        records.insert(
+            "song_a".to_string(),
+            vec![
+                rec(Difficulty::EZ, 700_001, false),   // C
+                rec(Difficulty::HD, 500_000, true),    // FC（计入 C）
+                rec(Difficulty::IN, 1_000_000, false), // P（即使 fc=false，也计入 FC/C）
+                rec(Difficulty::AT, 700_000, false),   // 不计入任何等级
+            ],
+        );
+        records.insert(
+            "song_b".to_string(),
+            vec![
+                rec(Difficulty::EZ, 1_000_000, true), // P
+                rec(Difficulty::AT, 700_000, true),   // FC（边界分数也要计入 C）
+            ],
+        );
+
+        let counts = compute_grade_counts(&records);
+
+        // EZ：1 个 C + 1 个 P（P 同时计入 FC/C）
+        assert_eq!(counts.ez.c, 2);
+        assert_eq!(counts.ez.fc, 1);
+        assert_eq!(counts.ez.p, 1);
+
+        // HD：1 个 FC（同时计入 C）
+        assert_eq!(counts.hd.c, 1);
+        assert_eq!(counts.hd.fc, 1);
+        assert_eq!(counts.hd.p, 0);
+
+        // IN：1 个 P（同时计入 FC/C）
+        assert_eq!(counts.in_.c, 1);
+        assert_eq!(counts.in_.fc, 1);
+        assert_eq!(counts.in_.p, 1);
+
+        // AT：1 个 FC（score=700000，但 fc=true 仍计入 FC/C）
+        assert_eq!(counts.at.c, 1);
+        assert_eq!(counts.at.fc, 1);
+        assert_eq!(counts.at.p, 0);
+    }
+
+    #[test]
+    fn grade_counts_serializes_with_expected_keys() {
+        let records: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+        let counts = compute_grade_counts(&records);
+        let v = serde_json::to_value(counts).expect("serialize");
+
+        // 难度键名（大写）
+        assert!(v.get("EZ").is_some());
+        assert!(v.get("HD").is_some());
+        assert!(v.get("IN").is_some());
+        assert!(v.get("AT").is_some());
+
+        // 成绩键名（大写）
+        let ez = v.get("EZ").expect("EZ exists");
+        assert!(ez.get("C").is_some());
+        assert!(ez.get("FC").is_some());
+        assert!(ez.get("P").is_some());
+    }
 }

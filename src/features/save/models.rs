@@ -156,6 +156,37 @@ pub struct DifficultyRecord {
     pub push_acc_hint: Option<crate::features::rks::engine::PushAccHint>,
 }
 
+/// C/FC/P 成绩数量（累计口径）
+///
+/// 说明：按需求定义 C<FC<P，且 FC 的成绩同时计入 C，P 的成绩同时计入 FC 与 C。
+#[derive(Debug, Clone, Copy, Default, Serialize, utoipa::ToSchema)]
+pub struct CfcPCounts {
+    /// Clear 数量（包含 FC 与 P）
+    #[serde(rename = "C")]
+    pub c: u32,
+    /// Full Combo 数量（包含 P）
+    #[serde(rename = "FC")]
+    pub fc: u32,
+    /// Perfect 数量
+    #[serde(rename = "P")]
+    pub p: u32,
+}
+
+/// 按难度统计的 C/FC/P 成绩数量
+///
+/// JSON 结构使用大写键名（EZ/HD/IN/AT），保证“各个难度”恒存在（即使为 0）。
+#[derive(Debug, Clone, Copy, Default, Serialize, utoipa::ToSchema)]
+pub struct CfcPCountsByDifficulty {
+    #[serde(rename = "EZ")]
+    pub ez: CfcPCounts,
+    #[serde(rename = "HD")]
+    pub hd: CfcPCounts,
+    #[serde(rename = "IN")]
+    pub in_: CfcPCounts,
+    #[serde(rename = "AT")]
+    pub at: CfcPCounts,
+}
+
 // 仅用于 OpenAPI 文档展示的响应模型（字段命名以实际返回为准）
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct ParsedSaveDoc {
@@ -191,4 +222,7 @@ pub struct SaveAndRksResponseDoc {
     pub save: ParsedSaveDoc,
     /// 玩家 RKS 概览
     pub rks: crate::features::rks::engine::PlayerRksResult,
+    /// 按难度统计的 C/FC/P 成绩数量（仅 calculate_rks=true 时返回）
+    #[serde(rename = "gradeCounts")]
+    pub grade_counts: CfcPCountsByDifficulty,
 }
