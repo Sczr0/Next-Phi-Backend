@@ -5,8 +5,13 @@ use axum::{
     routing::{get, post},
 };
 use chrono::{Datelike, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
+use moka::future::Cache;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
+use std::{
+    sync::{Arc, OnceLock},
+    time::Duration,
+};
 
 use crate::error::AppError;
 use crate::state::AppState;
@@ -578,7 +583,7 @@ pub fn create_stats_router() -> Router<AppState> {
         .route("/stats/summary", get(get_stats_summary))
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct FeatureUsageSummary {
     /// 功能名（可能值：bestn、bestn_user、single_query、save、song_search）。
@@ -594,7 +599,7 @@ pub struct FeatureUsageSummary {
     last_at: Option<String>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UniqueUsersSummary {
     /// 去敏后唯一用户总数
@@ -613,13 +618,13 @@ pub struct StatsSummaryQuery {
     timezone: Option<String>,
     /// 可选功能名过滤（仅影响 feature/unique_users/actions 等业务维度）
     feature: Option<String>,
-    /// 可选额外维度（csv）：routes,status,methods,instances,actions,latency,unique_ips,all
+    /// 可选额外维度（csv）：routes,status,methods,instances,actions,latency,unique_ips,user_kinds,all
     include: Option<String>,
     /// TopN（默认 20，最大 200）
     top: Option<i64>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct RouteUsageSummary {
     route: String,
@@ -628,21 +633,21 @@ pub struct RouteUsageSummary {
     last_at: Option<String>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct MethodUsageSummary {
     method: String,
     count: i64,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct StatusCodeSummary {
     status: u16,
     count: i64,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceUsageSummary {
     instance: String,
@@ -650,7 +655,7 @@ pub struct InstanceUsageSummary {
     last_at: Option<String>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ActionUsageSummary {
     feature: String,
@@ -659,7 +664,7 @@ pub struct ActionUsageSummary {
     last_at: Option<String>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct LatencySummary {
     sample_count: i64,
@@ -669,7 +674,7 @@ pub struct LatencySummary {
     max_ms: Option<i64>,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Clone, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct StatsSummaryResponse {
     /// 展示使用的时区（IANA 名称）
@@ -722,7 +727,7 @@ pub struct StatsSummaryResponse {
         ("end" = Option<String>, Query, description = "可选结束日期 YYYY-MM-DD（按 timezone 解释）"),
         ("timezone" = Option<String>, Query, description = "可选时区 IANA 名称（覆盖配置）"),
         ("feature" = Option<String>, Query, description = "可选功能名过滤（仅业务维度）"),
-        ("include" = Option<String>, Query, description = "可选额外维度：routes,status,methods,instances,actions,latency,unique_ips,all"),
+        ("include" = Option<String>, Query, description = "可选额外维度：routes,status,methods,instances,actions,latency,unique_ips,user_kinds,all"),
         ("top" = Option<i64>, Query, description = "TopN（默认 20，最大 200）")
     ),
     responses(
@@ -767,6 +772,19 @@ pub async fn get_stats_summary(
     let feature_filter = q.feature.clone();
     let include = parse_include_flags(q.include.as_deref());
     let top = normalize_top(q.top)?;
+
+    let cache_key = build_stats_summary_cache_key(
+        storage,
+        tz_name.as_str(),
+        start_utc.as_deref(),
+        end_utc.as_deref(),
+        q.feature.as_deref(),
+        include,
+        top,
+    );
+    if let Some(cached) = stats_summary_cache().get(&cache_key).await {
+        return Ok(Json((*cached).clone()));
+    }
 
     // overall first/last event
     let row = sqlx::query(
@@ -829,62 +847,67 @@ pub async fn get_stats_summary(
     .map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
     let total: i64 = row.try_get("total").unwrap_or(0);
 
-    // by_kind via extra_json.user_kind（在应用端聚合，避免对 SQLite JSON1 的依赖）
-    //
-    // 性能优化：避免一次性 `fetch_all` 造成内存峰值，按 events.id 分批扫描。
-    use std::collections::{HashMap, HashSet};
-    const BATCH: i64 = 5000;
-    let mut last_id: i64 = 0;
-    let mut uniq: HashSet<(String, String)> = HashSet::new();
-    loop {
-        let rows = sqlx::query(
-            "SELECT id, user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL AND id > ? AND (? IS NULL OR ts_utc >= ?) AND (? IS NULL OR ts_utc <= ?) AND (? IS NULL OR feature = ?) ORDER BY id ASC LIMIT ?",
-        )
-        .bind(last_id)
-        .bind(start_utc.as_deref())
-        .bind(start_utc.as_deref())
-        .bind(end_utc.as_deref())
-        .bind(end_utc.as_deref())
-        .bind(q.feature.as_deref())
-        .bind(q.feature.as_deref())
-        .bind(BATCH)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?;
-        if rows.is_empty() {
-            break;
-        }
-        let row_len = rows.len() as i64;
-        for r in rows {
-            let id: i64 = match r.try_get("id") {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            last_id = id.max(last_id);
-            let uh: String = match r.try_get("user_hash") {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let ej: String = match r.try_get("extra_json") {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej)
-                && let Some(kind) = val.get("user_kind").and_then(|v| v.as_str())
-            {
-                uniq.insert((uh, kind.to_string()));
+    // by_kind 改为按需计算：仅在 include 包含 user_kinds/all 时才执行 JSON 解析
+    let by_kind = if include.user_kinds {
+        use std::collections::{HashMap, HashSet};
+
+        const BATCH: i64 = 5000;
+        let mut last_id: i64 = 0;
+        let mut uniq: HashSet<(String, String)> = HashSet::new();
+        loop {
+            let rows = sqlx::query(
+                "SELECT id, user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL AND id > ? AND (? IS NULL OR ts_utc >= ?) AND (? IS NULL OR ts_utc <= ?) AND (? IS NULL OR feature = ?) ORDER BY id ASC LIMIT ?",
+            )
+            .bind(last_id)
+            .bind(start_utc.as_deref())
+            .bind(start_utc.as_deref())
+            .bind(end_utc.as_deref())
+            .bind(end_utc.as_deref())
+            .bind(q.feature.as_deref())
+            .bind(q.feature.as_deref())
+            .bind(BATCH)
+            .fetch_all(&storage.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?;
+            if rows.is_empty() {
+                break;
+            }
+            let row_len = rows.len() as i64;
+            for r in rows {
+                let id: i64 = match r.try_get("id") {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                last_id = id.max(last_id);
+                let uh: String = match r.try_get("user_hash") {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let ej: String = match r.try_get("extra_json") {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej)
+                    && let Some(kind) = val.get("user_kind").and_then(|v| v.as_str())
+                {
+                    uniq.insert((uh, kind.to_string()));
+                }
+            }
+            if row_len < BATCH {
+                break;
             }
         }
-        if row_len < BATCH {
-            break;
+
+        let mut by_kind_map: HashMap<String, i64> = HashMap::new();
+        for (_, k) in uniq {
+            *by_kind_map.entry(k).or_insert(0) += 1;
         }
-    }
-    let mut by_kind_map: HashMap<String, i64> = HashMap::new();
-    for (_, k) in uniq.into_iter() {
-        *by_kind_map.entry(k).or_insert(0) += 1;
-    }
-    let mut by_kind: Vec<(String, i64)> = by_kind_map.into_iter().collect();
-    by_kind.sort_by(|a, b| b.1.cmp(&a.1));
+        let mut by_kind: Vec<(String, i64)> = by_kind_map.into_iter().collect();
+        by_kind.sort_by(|a, b| b.1.cmp(&a.1));
+        by_kind
+    } else {
+        Vec::new()
+    };
 
     let want_meta =
         q.start.is_some() || q.end.is_some() || q.feature.is_some() || q.include.is_some();
@@ -1167,6 +1190,9 @@ pub async fn get_stats_summary(
         latency,
         unique_ips,
     };
+    stats_summary_cache()
+        .insert(cache_key, Arc::new(resp.clone()))
+        .await;
     Ok(Json(resp))
 }
 
@@ -1174,6 +1200,49 @@ fn convert_tz(ts_rfc3339: &str, tz: chrono_tz::Tz) -> Option<String> {
     let dt = chrono::DateTime::parse_from_rfc3339(ts_rfc3339).ok()?;
     let as_utc = dt.with_timezone(&chrono::Utc);
     Some(as_utc.with_timezone(&tz).to_rfc3339())
+}
+
+const STATS_SUMMARY_CACHE_MAX_ENTRIES: u64 = 256;
+const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 15;
+const STATS_SUMMARY_CACHE_TTI_SECS: u64 = 10;
+
+fn stats_summary_cache() -> &'static Cache<String, Arc<StatsSummaryResponse>> {
+    static CACHE: OnceLock<Cache<String, Arc<StatsSummaryResponse>>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(STATS_SUMMARY_CACHE_MAX_ENTRIES)
+            .time_to_live(Duration::from_secs(STATS_SUMMARY_CACHE_TTL_SECS))
+            .time_to_idle(Duration::from_secs(STATS_SUMMARY_CACHE_TTI_SECS))
+            .build()
+    })
+}
+
+fn build_stats_summary_cache_key(
+    storage: &Arc<crate::features::stats::storage::StatsStorage>,
+    tz_name: &str,
+    start_utc: Option<&str>,
+    end_utc: Option<&str>,
+    feature: Option<&str>,
+    include: IncludeFlags,
+    top: i64,
+) -> String {
+    let storage_key = Arc::as_ptr(storage) as usize;
+    format!(
+        "{storage_key}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}|{}",
+        tz_name,
+        start_utc.unwrap_or(""),
+        end_utc.unwrap_or(""),
+        feature.unwrap_or(""),
+        top,
+        include.routes as u8,
+        include.methods as u8,
+        include.status_codes as u8,
+        include.instances as u8,
+        include.actions as u8,
+        include.latency as u8,
+        include.unique_ips as u8,
+        include.user_kinds as u8,
+    )
 }
 
 fn parse_ymd(s: &str, field: &str) -> Result<NaiveDate, AppError> {
@@ -2017,6 +2086,7 @@ struct IncludeFlags {
     actions: bool,
     latency: bool,
     unique_ips: bool,
+    user_kinds: bool,
 }
 
 impl IncludeFlags {
@@ -2028,6 +2098,7 @@ impl IncludeFlags {
             || self.actions
             || self.latency
             || self.unique_ips
+            || self.user_kinds
     }
 
     fn any_http(self) -> bool {
@@ -2055,6 +2126,7 @@ fn parse_include_flags(include: Option<&str>) -> IncludeFlags {
                 actions: true,
                 latency: true,
                 unique_ips: true,
+                user_kinds: true,
             };
         }
         match t.as_str() {
@@ -2065,6 +2137,9 @@ fn parse_include_flags(include: Option<&str>) -> IncludeFlags {
             "actions" | "action" => flags.actions = true,
             "latency" => flags.latency = true,
             "unique_ips" | "uniqueip" | "uniqueips" | "ips" => flags.unique_ips = true,
+            "user_kinds" | "userkind" | "userkinds" | "kinds" | "by_kind" => {
+                flags.user_kinds = true
+            }
             _ => {}
         }
     }
@@ -2197,13 +2272,19 @@ mod tests {
         let a = parse_include_flags(Some("all"));
         assert!(a.any());
         assert!(a.any_http());
+        assert!(a.user_kinds);
 
         let b = parse_include_flags(Some("routes, latency,unique_ips"));
         assert!(b.routes);
         assert!(b.latency);
         assert!(b.unique_ips);
+        assert!(!b.user_kinds);
         assert!(!b.actions);
         assert!(b.any_http());
+
+        let c = parse_include_flags(Some("user_kinds"));
+        assert!(c.user_kinds);
+        assert!(!c.any_http());
     }
 
     #[test]
@@ -2359,6 +2440,125 @@ mod tests {
                 .is_some_and(|v| v.iter().all(|a| a.feature == "bestn"))
         );
         assert!(resp.http_total.is_none());
+    }
+
+    #[tokio::test]
+    async fn stats_summary_skips_user_kinds_when_not_requested() {
+        let sqlite_path = tmp_sqlite_path("stats_summary_no_user_kinds");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        storage
+            .insert_events(&[
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 0, 1, 0),
+                    route: None,
+                    feature: Some("bestn".into()),
+                    action: Some("render".into()),
+                    method: None,
+                    status: None,
+                    duration_ms: None,
+                    user_hash: Some("u1".into()),
+                    client_ip_hash: None,
+                    instance: Some("inst-a".into()),
+                    extra_json: Some(serde_json::json!({"user_kind":"official"})),
+                },
+                EventInsert {
+                    ts_utc: dt_utc(2025, 12, 24, 0, 1, 1),
+                    route: None,
+                    feature: Some("save".into()),
+                    action: Some("submit".into()),
+                    method: None,
+                    status: None,
+                    duration_ms: None,
+                    user_hash: Some("u2".into()),
+                    client_ip_hash: None,
+                    instance: Some("inst-b".into()),
+                    extra_json: Some(serde_json::json!({"user_kind":"taptap"})),
+                },
+            ])
+            .await
+            .unwrap();
+
+        let query = StatsSummaryQuery {
+            start: None,
+            end: None,
+            timezone: Some("Asia/Shanghai".into()),
+            feature: None,
+            include: Some("actions".into()),
+            top: Some(10),
+        };
+        let Json(resp) = get_stats_summary(State(state), Query(query)).await.unwrap();
+        assert_eq!(resp.unique_users.total, 2);
+        assert!(resp.unique_users.by_kind.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stats_summary_cache_returns_stale_within_ttl() {
+        let sqlite_path = tmp_sqlite_path("stats_summary_cache_hit");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        storage
+            .insert_events(&[EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 1, 0),
+                route: None,
+                feature: Some("bestn".into()),
+                action: Some("render".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u1".into()),
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: Some(serde_json::json!({"user_kind":"official"})),
+            }])
+            .await
+            .unwrap();
+
+        let query = StatsSummaryQuery {
+            start: None,
+            end: None,
+            timezone: Some("Asia/Shanghai".into()),
+            feature: None,
+            include: Some("user_kinds".into()),
+            top: Some(10),
+        };
+        let Json(first) = get_stats_summary(State(state.clone()), Query(query))
+            .await
+            .unwrap();
+        assert_eq!(first.unique_users.total, 1);
+        assert_eq!(first.unique_users.by_kind.len(), 1);
+
+        storage
+            .insert_events(&[EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 2, 0),
+                route: None,
+                feature: Some("save".into()),
+                action: Some("submit".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u2".into()),
+                client_ip_hash: None,
+                instance: Some("inst-b".into()),
+                extra_json: Some(serde_json::json!({"user_kind":"taptap"})),
+            }])
+            .await
+            .unwrap();
+
+        let query = StatsSummaryQuery {
+            start: None,
+            end: None,
+            timezone: Some("Asia/Shanghai".into()),
+            feature: None,
+            include: Some("user_kinds".into()),
+            top: Some(10),
+        };
+        let Json(second) = get_stats_summary(State(state), Query(query)).await.unwrap();
+
+        assert_eq!(second.unique_users.total, 1);
+        assert_eq!(second.unique_users.by_kind.len(), 1);
     }
 
     #[tokio::test]
