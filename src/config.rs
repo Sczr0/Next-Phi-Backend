@@ -47,7 +47,65 @@ pub struct ApiConfig {
     /// API 路由前缀
     pub prefix: String,
 }
-
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfig {
+    #[serde(default = "SessionConfig::default_enabled")]
+    pub enabled: bool,
+    #[serde(default = "SessionConfig::default_jwt_issuer")]
+    pub jwt_issuer: String,
+    #[serde(default = "SessionConfig::default_jwt_audience")]
+    pub jwt_audience: String,
+    #[serde(default = "SessionConfig::default_jwt_secret")]
+    pub jwt_secret: String,
+    #[serde(default = "SessionConfig::default_access_ttl_secs")]
+    pub access_ttl_secs: u64,
+    #[serde(default = "SessionConfig::default_revoke_all_grace_secs")]
+    pub revoke_all_grace_secs: u64,
+    #[serde(default = "SessionConfig::default_revoke_ttl_secs")]
+    pub revoke_ttl_secs: u64,
+    #[serde(default = "SessionConfig::default_exchange_shared_secret")]
+    pub exchange_shared_secret: String,
+}
+impl SessionConfig {
+    fn default_enabled() -> bool {
+        true
+    }
+    fn default_jwt_issuer() -> String {
+        "phi-backend".to_string()
+    }
+    fn default_jwt_audience() -> String {
+        "phi-clients".to_string()
+    }
+    fn default_jwt_secret() -> String {
+        std::env::var("APP_SESSION_JWT_SECRET").unwrap_or_default()
+    }
+    fn default_access_ttl_secs() -> u64 {
+        900
+    }
+    fn default_revoke_all_grace_secs() -> u64 {
+        10
+    }
+    fn default_revoke_ttl_secs() -> u64 {
+        864_000
+    }
+    fn default_exchange_shared_secret() -> String {
+        std::env::var("APP_SESSION_EXCHANGE_SHARED_SECRET").unwrap_or_default()
+    }
+}
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            jwt_issuer: Self::default_jwt_issuer(),
+            jwt_audience: Self::default_jwt_audience(),
+            jwt_secret: Self::default_jwt_secret(),
+            access_ttl_secs: Self::default_access_ttl_secs(),
+            revoke_all_grace_secs: Self::default_revoke_all_grace_secs(),
+            revoke_ttl_secs: Self::default_revoke_ttl_secs(),
+            exchange_shared_secret: Self::default_exchange_shared_secret(),
+        }
+    }
+}
 /// CORS 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorsConfig {
@@ -161,6 +219,9 @@ pub struct AppConfig {
     /// 统计配置
     #[serde(default)]
     pub stats: StatsConfig,
+    /// 会话令牌配置
+    #[serde(default)]
+    pub session: SessionConfig,
     /// 品牌/展示配置
     #[serde(default)]
     pub branding: BrandingConfig,
@@ -306,6 +367,7 @@ impl Default for AppConfig {
             cors: CorsConfig::default(),
             taptap: TapTapMultiConfig::default(),
             stats: StatsConfig::default(),
+            session: SessionConfig::default(),
             branding: BrandingConfig::default(),
             watermark: WatermarkConfig::default(),
             image: ImageRenderConfig::default(),

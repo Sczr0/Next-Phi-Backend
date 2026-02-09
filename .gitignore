@@ -74,3 +74,5 @@ cargo_cache/
 # /sdk/ts/pnpm-lock.yaml
 
 /docs/
+
+phi-backend.exe

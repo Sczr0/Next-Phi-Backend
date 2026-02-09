@@ -53,6 +53,8 @@ impl Modify for ApiServers {
         crate::features::auth::handler::post_qrcode,
         crate::features::auth::handler::get_qrcode_status,
         crate::features::auth::handler::post_user_id,
+        crate::features::auth::handler::post_session_exchange,
+        crate::features::auth::handler::post_session_logout,
         crate::features::song::handler::search_songs,
         crate::features::image::handler::render_bn,
         crate::features::image::handler::render_song,

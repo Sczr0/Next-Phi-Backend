@@ -72,6 +72,24 @@ parquet = true
 dir = "./resources/stats/v1/events"
 compress = "zstd"
 
+[session]
+# 是否启用会话令牌接口
+enabled = true
+# JWT 签发方
+jwt_issuer = "phi-backend"
+# JWT 受众
+jwt_audience = "phi-clients"
+# JWT HS256 密钥（生产环境请通过 APP_SESSION_JWT_SECRET 覆盖）
+jwt_secret = ""
+# access token 有效期（秒）
+access_ttl_secs = 900
+# logout all 时间门缓冲（秒）
+revoke_all_grace_secs = 10
+# 黑名单与时间门记录保留时长（秒，默认 10 天）
+revoke_ttl_secs = 864000
+# Next.js 服务端调用 exchange 的共享密钥（建议通过 APP_SESSION_EXCHANGE_SHARED_SECRET 覆盖）
+exchange_shared_secret = ""
+
 [watermark]
 # 显式水印：在卡片上展示 U 标记
 explicit_badge = true

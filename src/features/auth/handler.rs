@@ -173,6 +173,350 @@ fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
     res
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionExchangeRequest {
+    #[serde(flatten)]
+    pub auth: crate::features::save::models::UnifiedSaveRequest,
+}
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionExchangeResponse {
+    pub access_token: String,
+    pub expires_in: u64,
+    pub token_type: &'static str,
+}
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLogoutRequest {
+    pub scope: SessionLogoutScope,
+}
+#[derive(Debug, Deserialize, Serialize, utoipa::ToSchema, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionLogoutScope {
+    Current,
+    All,
+}
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLogoutResponse {
+    pub scope: SessionLogoutScope,
+    pub revoked_jti: String,
+    pub logout_before: Option<String>,
+}
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct SessionClaims {
+    sub: String,
+    jti: String,
+    iss: String,
+    aud: String,
+    iat: i64,
+    exp: i64,
+}
+#[derive(Debug)]
+struct AuthzToken {
+    claims: SessionClaims,
+}
+fn ensure_session_config() -> Result<&'static crate::config::SessionConfig, AppError> {
+    let cfg = &crate::config::AppConfig::global().session;
+    if !cfg.enabled {
+        return Err(AppError::Auth("会话接口未启用".into()));
+    }
+    Ok(cfg)
+}
+
+fn resolve_jwt_secret(cfg: &crate::config::SessionConfig) -> Result<String, AppError> {
+    if !cfg.jwt_secret.trim().is_empty() {
+        return Ok(cfg.jwt_secret.clone());
+    }
+    let from_env = std::env::var("APP_SESSION_JWT_SECRET").unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return Ok(from_env);
+    }
+    Err(AppError::Internal(
+        "session.jwt_secret 未配置（可通过 APP_SESSION_JWT_SECRET 设置）".into(),
+    ))
+}
+
+fn resolve_expected_exchange_secret(
+    cfg: &crate::config::SessionConfig,
+) -> Result<String, AppError> {
+    if !cfg.exchange_shared_secret.trim().is_empty() {
+        return Ok(cfg.exchange_shared_secret.clone());
+    }
+    let from_env = std::env::var("APP_SESSION_EXCHANGE_SHARED_SECRET").unwrap_or_default();
+    if !from_env.trim().is_empty() {
+        return Ok(from_env);
+    }
+    Err(AppError::Internal(
+        "session.exchange_shared_secret 未配置（可通过 APP_SESSION_EXCHANGE_SHARED_SECRET 设置）"
+            .into(),
+    ))
+}
+fn resolve_exchange_secret(headers: &axum::http::HeaderMap) -> Option<String> {
+    headers
+        .get("x-exchange-secret")
+        .or_else(|| headers.get("x-session-exchange-secret"))
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.trim().to_string())
+}
+fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Result<String, AppError> {
+    let raw = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .ok_or_else(|| AppError::Auth("缺少 Authorization 头".into()))?;
+    let raw = raw.trim();
+    if !raw.starts_with("Bearer ") {
+        return Err(AppError::Auth("Authorization 必须使用 Bearer 方案".into()));
+    }
+    let token = raw.trim_start_matches("Bearer ").trim();
+    if token.is_empty() {
+        return Err(AppError::Auth("Bearer token 不能为空".into()));
+    }
+    Ok(token.to_string())
+}
+fn decode_access_token(
+    token: &str,
+    cfg: &crate::config::SessionConfig,
+) -> Result<SessionClaims, AppError> {
+    let jwt_secret = resolve_jwt_secret(cfg)?;
+    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation.validate_exp = true;
+    validation.set_issuer(&[cfg.jwt_issuer.as_str()]);
+    validation.set_audience(&[cfg.jwt_audience.as_str()]);
+    let data = jsonwebtoken::decode::<SessionClaims>(
+        token,
+        &jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes()),
+        &validation,
+    )
+    .map_err(|_| AppError::Auth("会话令牌无效或已过期".into()))?;
+    Ok(data.claims)
+}
+async fn parse_authorization_token(
+    headers: &axum::http::HeaderMap,
+    cfg: &crate::config::SessionConfig,
+) -> Result<AuthzToken, AppError> {
+    let token = extract_bearer_token(headers)?;
+    let claims = decode_access_token(&token, cfg)?;
+    Ok(AuthzToken { claims })
+}
+
+async fn try_cleanup_expired_session_records(state: &AppState) {
+    let Some(storage) = state.stats_storage.as_ref() else {
+        return;
+    };
+    if let Err(e) = storage
+        .maybe_cleanup_expired_session_records(chrono::Utc::now())
+        .await
+    {
+        tracing::warn!(err = %e, "session cleanup failed");
+    }
+}
+#[utoipa::path(
+    post,
+    path = "/auth/session/exchange",
+    summary = "签发后端会话令牌",
+    description = "Next.js 服务端调用该接口换取后端短期 access token。",
+    request_body = SessionExchangeRequest,
+    params(("X-Exchange-Secret" = String, Header, description = "Next.js 与后端共享密钥")),
+    responses(
+        (status = 200, description = "签发成功", body = SessionExchangeResponse),
+        (
+            status = 401,
+            description = "共享密钥无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "凭证无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端配置错误",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Auth"
+)]
+pub async fn post_session_exchange(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<SessionExchangeRequest>,
+) -> Result<(StatusCode, Json<SessionExchangeResponse>), AppError> {
+    try_cleanup_expired_session_records(&state).await;
+    let cfg = ensure_session_config()?;
+    let expected_exchange_secret = resolve_expected_exchange_secret(cfg)?;
+    let jwt_secret = resolve_jwt_secret(cfg)?;
+    let provided = resolve_exchange_secret(&headers).unwrap_or_default();
+    if provided.is_empty() || provided != expected_exchange_secret {
+        return Err(AppError::Auth("交换密钥无效".into()));
+    }
+    let auth = req.auth;
+    if auth.session_token.is_some() && auth.external_credentials.is_some() {
+        return Err(AppError::Validation(
+            "不能同时提供 sessionToken 和 externalCredentials，请只选择其中一种认证方式".into(),
+        ));
+    }
+    if let Some(tok) = auth.session_token.as_deref()
+        && tok.trim().is_empty()
+    {
+        return Err(AppError::Validation("sessionToken 不能为空".into()));
+    }
+    if let Some(ext) = auth.external_credentials.as_ref()
+        && !ext.is_valid()
+    {
+        return Err(AppError::Validation(
+            "外部凭证无效：必须提供以下凭证之一：platform + platformId / sessiontoken / apiUserId"
+                .into(),
+        ));
+    }
+    if auth.session_token.is_none() && auth.external_credentials.is_none() {
+        return Err(AppError::Validation(
+            "必须提供 sessionToken 或 externalCredentials 中的一项".into(),
+        ));
+    }
+    let salt_value = crate::config::AppConfig::global()
+        .stats
+        .user_hash_salt
+        .clone()
+        .or_else(|| std::env::var("APP_STATS_USER_HASH_SALT").ok())
+        .filter(|v| !v.trim().is_empty())
+        .ok_or_else(|| {
+            AppError::Internal(
+                "stats.user_hash_salt 未配置，无法签发稳定会话令牌（可通过 APP_STATS_USER_HASH_SALT 设置）"
+                    .into(),
+            )
+        })?;
+    let (user_hash_opt, _) =
+        crate::features::stats::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
+    let user_hash =
+        user_hash_opt.ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
+    let now = chrono::Utc::now();
+    let iat = now.timestamp();
+    let exp = (now + chrono::Duration::seconds(cfg.access_ttl_secs as i64)).timestamp();
+    let claims = SessionClaims {
+        sub: user_hash,
+        jti: Uuid::new_v4().to_string(),
+        iss: cfg.jwt_issuer.clone(),
+        aud: cfg.jwt_audience.clone(),
+        iat,
+        exp,
+    };
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes()),
+    )
+    .map_err(|e| AppError::Internal(format!("签发会话令牌失败: {e}")))?;
+    Ok((
+        StatusCode::OK,
+        Json(SessionExchangeResponse {
+            access_token: token,
+            expires_in: cfg.access_ttl_secs,
+            token_type: "Bearer",
+        }),
+    ))
+}
+#[utoipa::path(
+    post,
+    path = "/auth/session/logout",
+    summary = "注销会话令牌",
+    description = "scope=current 仅注销当前令牌，scope=all 注销该用户所有历史令牌。",
+    request_body = SessionLogoutRequest,
+    params(("Authorization" = String, Header, description = "Bearer access token")),
+    responses(
+        (status = 200, description = "注销成功", body = SessionLogoutResponse),
+        (
+            status = 401,
+            description = "令牌无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "存储不可用或配置错误",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Auth"
+)]
+pub async fn post_session_logout(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(req): Json<SessionLogoutRequest>,
+) -> Result<(StatusCode, Json<SessionLogoutResponse>), AppError> {
+    try_cleanup_expired_session_records(&state).await;
+    let cfg = ensure_session_config()?;
+    let jwt_secret = resolve_jwt_secret(cfg)?;
+    let authz = parse_authorization_token(&headers, cfg).await?;
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化，无法执行会话撤销".into()))?;
+    let now = chrono::Utc::now();
+    let now_rfc3339 = now.to_rfc3339();
+    if storage
+        .is_token_blacklisted(&authz.claims.jti, &now_rfc3339)
+        .await?
+    {
+        return Err(AppError::Auth("会话令牌已失效".into()));
+    }
+    if let Some(gate) = storage
+        .get_logout_gate(&authz.claims.sub, &now_rfc3339)
+        .await?
+    {
+        let gate_ts = chrono::DateTime::parse_from_rfc3339(&gate)
+            .map_err(|e| AppError::Internal(format!("解析时间门失败: {e}")))?
+            .timestamp();
+        if authz.claims.iat < gate_ts {
+            return Err(AppError::Auth("会话令牌已被用户作废".into()));
+        }
+    }
+    let mut logout_before = None;
+    if req.scope == SessionLogoutScope::All {
+        let gate = now + chrono::Duration::seconds(cfg.revoke_all_grace_secs as i64);
+        let gate_rfc3339 = gate.to_rfc3339();
+        let gate_expire =
+            (gate + chrono::Duration::seconds(cfg.revoke_ttl_secs as i64)).to_rfc3339();
+        storage
+            .upsert_logout_gate(&authz.claims.sub, &gate_rfc3339, &gate_expire, &now_rfc3339)
+            .await?;
+        logout_before = Some(gate_rfc3339);
+    }
+    let exp_ts = authz.claims.exp;
+    let expires_at = chrono::DateTime::<chrono::Utc>::from_timestamp(exp_ts, 0)
+        .unwrap_or(now + chrono::Duration::seconds(cfg.access_ttl_secs as i64))
+        .to_rfc3339();
+
+    let mut logout_validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    logout_validation.validate_exp = false;
+    logout_validation.set_issuer(&[cfg.jwt_issuer.as_str()]);
+    logout_validation.set_audience(&[cfg.jwt_audience.as_str()]);
+    let _ = jsonwebtoken::decode::<SessionClaims>(
+        &extract_bearer_token(&headers)?,
+        &jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes()),
+        &logout_validation,
+    )
+    .map_err(|_| AppError::Auth("会话令牌无效".into()))?;
+
+    storage
+        .add_token_blacklist(&authz.claims.jti, &expires_at, &now_rfc3339)
+        .await?;
+    Ok((
+        StatusCode::OK,
+        Json(SessionLogoutResponse {
+            scope: req.scope,
+            revoked_jti: authz.claims.jti,
+            logout_before,
+        }),
+    ))
+}
+
 #[utoipa::path(
     post,
     path = "/auth/qrcode",
@@ -464,4 +808,6 @@ pub fn create_auth_router() -> Router<AppState> {
         .route("/qrcode", post(post_qrcode))
         .route("/qrcode/:qr_id/status", get(get_qrcode_status))
         .route("/user-id", post(post_user_id))
+        .route("/session/exchange", post(post_session_exchange))
+        .route("/session/logout", post(post_session_logout))
 }
