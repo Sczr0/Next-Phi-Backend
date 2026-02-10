@@ -503,16 +503,40 @@ impl StatsStorage {
         Ok(row.and_then(|r| r.try_get::<String, _>("logout_before").ok()))
     }
 
+    pub async fn get_session_revoke_state(
+        &self,
+        jti: &str,
+        user_hash: &str,
+        now_rfc3339: &str,
+    ) -> Result<(bool, Option<String>), AppError> {
+        let row = sqlx::query(
+            "SELECT
+               EXISTS(SELECT 1 FROM session_token_blacklist WHERE jti = ? AND expires_at > ?) AS blacklisted,
+               (SELECT logout_before FROM session_logout_gate WHERE user_hash = ? AND expires_at > ? LIMIT 1) AS logout_before",
+        )
+        .bind(jti)
+        .bind(now_rfc3339)
+        .bind(user_hash)
+        .bind(now_rfc3339)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("query session revoke state: {e}")))?;
+        let blacklisted_num: i64 = row.try_get("blacklisted").unwrap_or(0);
+        let logout_before: Option<String> = row.try_get("logout_before").unwrap_or(None);
+        Ok((blacklisted_num != 0, logout_before))
+    }
+
     pub async fn cleanup_expired_session_records(
         &self,
         now_rfc3339: &str,
     ) -> Result<(u64, u64), AppError> {
-        let blacklist_deleted = sqlx::query("DELETE FROM session_token_blacklist WHERE expires_at <= ?")
-            .bind(now_rfc3339)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("cleanup session blacklist: {e}")))?
-            .rows_affected();
+        let blacklist_deleted =
+            sqlx::query("DELETE FROM session_token_blacklist WHERE expires_at <= ?")
+                .bind(now_rfc3339)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("cleanup session blacklist: {e}")))?
+                .rows_affected();
 
         let gate_deleted = sqlx::query("DELETE FROM session_logout_gate WHERE expires_at <= ?")
             .bind(now_rfc3339)

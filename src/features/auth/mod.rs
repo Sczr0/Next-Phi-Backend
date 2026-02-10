@@ -1,3 +1,4 @@
+pub mod bearer;
 pub mod client;
 pub mod handler;
 pub mod models;

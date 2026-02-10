@@ -1,6 +1,12 @@
 //! RKS 历史查询 API 处理模块
 
-use axum::{Router, extract::State, response::Json, routing::post};
+use axum::{
+    Router,
+    extract::rejection::JsonRejection,
+    extract::{FromRequest, State},
+    response::Json,
+    routing::post,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{error::AppError, state::AppState};
@@ -64,6 +70,10 @@ pub struct RksHistoryResponse {
     pub peak_rks: f64,
 }
 
+fn map_json_rejection(err: JsonRejection) -> AppError {
+    AppError::Validation(format!("请求体 JSON 无效: {err}"))
+}
+
 /// 查询用户 RKS 历史变化
 #[utoipa::path(
     post,
@@ -90,8 +100,30 @@ pub struct RksHistoryResponse {
 )]
 pub async fn post_rks_history(
     State(state): State<AppState>,
-    Json(req): Json<RksHistoryRequest>,
+    request: axum::extract::Request,
 ) -> Result<Json<RksHistoryResponse>, AppError> {
+    let bearer_state = request
+        .extensions()
+        .get::<crate::features::auth::bearer::BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let mut req = Json::<RksHistoryRequest>::from_request(request, &())
+        .await
+        .map_err(map_json_rejection)?
+        .0;
+    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        state.stats_storage.as_ref(),
+        &bearer_state,
+        &mut req.auth,
+    )
+    .await?;
+    tracing::debug!(
+        target: "phi_backend::rks",
+        has_session_token = req.auth.session_token.is_some(),
+        has_external_credentials = req.auth.external_credentials.is_some(),
+        "rks auth after bearer merge"
+    );
+
     let storage = state
         .stats_storage
         .as_ref()
@@ -102,8 +134,11 @@ pub async fn post_rks_history(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) =
-        crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+        salt,
+        &req.auth,
+        &bearer_state,
+    )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
 

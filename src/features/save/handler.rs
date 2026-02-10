@@ -1,7 +1,8 @@
 //! 存档 API 处理模块（features/save）
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::rejection::JsonRejection,
+    extract::{FromRequest, Query, State},
     http::StatusCode,
     response::{IntoResponse, Json},
     routing::post,
@@ -26,6 +27,10 @@ use super::{
 pub enum SaveApiResponse {
     Save(SaveResponseDoc),
     SaveAndRks(SaveAndRksResponseDoc),
+}
+
+fn map_json_rejection(err: JsonRejection) -> AppError {
+    AppError::Validation(format!("请求体 JSON 无效: {err}"))
 }
 
 #[utoipa::path(
@@ -85,15 +90,34 @@ pub enum SaveApiResponse {
 pub async fn get_save_data(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
-    Json(payload): Json<UnifiedSaveRequest>,
+    req: axum::extract::Request,
 ) -> Result<impl IntoResponse, AppError> {
+    let bearer_state = req
+        .extensions()
+        .get::<crate::features::auth::bearer::BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let mut payload = Json::<UnifiedSaveRequest>::from_request(req, &())
+        .await
+        .map_err(map_json_rejection)?
+        .0;
+    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        state.stats_storage.as_ref(),
+        &bearer_state,
+        &mut payload,
+    )
+    .await?;
+
     // 提前计算用户去敏哈希（避免 move 后不可用）
     let salt = crate::config::AppConfig::global()
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash, user_kind) =
-        crate::features::stats::derive_user_identity_from_auth(salt, &payload);
+    let (user_hash, user_kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+        salt,
+        &payload,
+        &bearer_state,
+    )?;
 
     let calc_rks = params
         .get("calculate_rks")

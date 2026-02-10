@@ -13,15 +13,19 @@ use uuid::Uuid;
 use crate::error::AppError;
 use crate::state::AppState;
 
+use super::bearer::{
+    SessionClaims, build_embedded_auth_claim, decode_access_token_allow_expired,
+    decode_embedded_auth_allow_expired, ensure_session_config, extract_bearer_token,
+    resolve_exchange_secret, resolve_expected_exchange_secret, resolve_jwt_secret,
+};
 use super::qrcode_service::QrCodeStatus;
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserIdResponse {
-    /// 去敏后的稳定用户 ID（32 位 hex，等价于 stats/leaderboard 使用的 user_hash）
-    #[schema(example = "ab12cd34ef56ab12cd34ef56ab12cd34")]
+    /// 鍘绘晱鍚庣殑绋冲畾鐢ㄦ埛 ID锛?2 浣?hex锛岀瓑浠蜂簬 stats/leaderboard 浣跨敤鐨?user_hash锛?    #[schema(example = "ab12cd34ef56ab12cd34ef56ab12cd34")]
     pub user_id: String,
-    /// 用于推导 user_id 的凭证类型（用于排查“为什么和以前不一致”）
+    /// 鐢ㄤ簬鎺ㄥ user_id 鐨勫嚟璇佺被鍨嬶紙鐢ㄤ簬鎺掓煡鈥滀负浠€涔堝拰浠ュ墠涓嶄竴鑷粹€濓級
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_kind: Option<String>,
 }
@@ -30,13 +34,13 @@ pub struct UserIdResponse {
     post,
     path = "/auth/user-id",
     summary = "根据凭证生成去敏用户ID",
-    description = "使用服务端配置的 stats.user_hash_salt 对凭证做 HMAC-SHA256 去敏（取前 16 字节，32 位 hex），用于同一用户的稳定标识。注意：salt 变更会导致 user_id 整体变化。",
+    description = "使用服务端配置的 stats.user_hash_salt 对凭证做 HMAC-SHA256 去敏，生成稳定用户标识。",
     request_body = crate::features::save::models::UnifiedSaveRequest,
     responses(
-        (status = 200, description = "生成成功", body = UserIdResponse),
+        (status = 200, description = "鐢熸垚鎴愬姛", body = UserIdResponse),
         (
             status = 422,
-            description = "凭证缺失/无效，或无法识别用户",
+            description = "凭证缺失或无效",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -52,7 +56,7 @@ pub struct UserIdResponse {
 pub async fn post_user_id(
     Json(auth): Json<crate::features::save::models::UnifiedSaveRequest>,
 ) -> Result<(StatusCode, Json<UserIdResponse>), AppError> {
-    // 与 /save 的凭证互斥语义保持一致，避免“同一个请求不同接口得到不同身份”的困惑。
+    // 与 /save 的凭证互斥规则保持一致，避免同一请求在不同接口出现身份不一致。
     if auth.session_token.is_some() && auth.external_credentials.is_some() {
         return Err(AppError::Validation(
             "不能同时提供 sessionToken 和 externalCredentials，请只选择其中一种认证方式".into(),
@@ -74,7 +78,8 @@ pub async fn post_user_id(
     };
     if !stable_ok {
         return Err(AppError::Validation(
-            "无法识别用户：请提供 sessionToken，或 externalCredentials 中的 platform+platformId / sessiontoken / apiUserId（且不能为空）".into(),
+            "无法识别用户：请提供 sessionToken，或 externalCredentials 中的 platform+platformId / sessiontoken / apiUserId（且不能为空）"
+                .into(),
         ));
     }
 
@@ -98,33 +103,31 @@ pub async fn post_user_id(
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QrCodeCreateResponse {
-    /// 二维码标识，用于轮询状态
-    #[schema(example = "8b8f2f8a-1a2b-4c3d-9e0f-112233445566")]
+    /// 浜岀淮鐮佹爣璇嗭紝鐢ㄤ簬杞鐘舵€?    #[schema(example = "8b8f2f8a-1a2b-4c3d-9e0f-112233445566")]
     pub qr_id: String,
-    /// 用户在浏览器中访问以确认授权的 URL
+    /// 鐢ㄦ埛鍦ㄦ祻瑙堝櫒涓闂互纭鎺堟潈鐨?URL
     #[schema(example = "https://www.taptap.com/account/device?code=abcd-efgh")]
     pub verification_url: String,
-    /// SVG 二维码的 data URL（base64 编码）
-    #[schema(example = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0uLi4=")]
+    /// SVG 浜岀淮鐮佺殑 data URL锛坆ase64 缂栫爜锛?    #[schema(example = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0uLi4=")]
     pub qrcode_base64: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QrCodeStatusResponse {
-    /// 当前状态：Pending/Scanned/Confirmed/Error/Expired
+    /// 褰撳墠鐘舵€侊細Pending/Scanned/Confirmed/Error/Expired
     #[schema(example = "Pending")]
     pub status: QrCodeStatusValue,
-    /// 若 Confirmed，返回 LeanCloud Session Token
+    /// 鑻?Confirmed锛岃繑鍥?LeanCloud Session Token
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_token: Option<String>,
-    /// 可选：机器可读的错误码（仅在 status=Error 时出现）
+    /// 鍙€夛細鏈哄櫒鍙鐨勯敊璇爜锛堜粎鍦?status=Error 鏃跺嚭鐜帮級
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
-    /// 可选的人类可读提示消息
+    /// 鍙€夌殑浜虹被鍙鎻愮ず娑堟伅
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// 若需延后轮询，返回建议的等待秒数
+    /// 鑻ラ渶寤跺悗杞锛岃繑鍥炲缓璁殑绛夊緟绉掓暟
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
 }
@@ -142,8 +145,7 @@ pub enum QrCodeStatusValue {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QrCodeQuery {
-    /// TapTap 版本：cn（大陆版）或 global（国际版）
-    #[serde(default)]
+    /// TapTap 鐗堟湰锛歝n锛堝ぇ闄嗙増锛夋垨 global锛堝浗闄呯増锛?    #[serde(default)]
     taptap_version: Option<String>,
 }
 
@@ -162,7 +164,7 @@ fn normalize_taptap_version(v: Option<&str>) -> Result<Option<&'static str>, App
         return Ok(Some("global"));
     }
     Err(AppError::Validation(
-        "taptapVersion 必须为 cn 或 global".to_string(),
+        "taptapVersion 蹇呴』涓?cn 鎴?global".to_string(),
     ))
 }
 
@@ -204,101 +206,95 @@ pub struct SessionLogoutResponse {
     pub revoked_jti: String,
     pub logout_before: Option<String>,
 }
-#[derive(Debug, Serialize, Deserialize, Clone)]
-struct SessionClaims {
-    sub: String,
-    jti: String,
-    iss: String,
-    aud: String,
-    iat: i64,
-    exp: i64,
-}
 #[derive(Debug)]
 struct AuthzToken {
+    token: String,
     claims: SessionClaims,
 }
-fn ensure_session_config() -> Result<&'static crate::config::SessionConfig, AppError> {
-    let cfg = &crate::config::AppConfig::global().session;
-    if !cfg.enabled {
-        return Err(AppError::Auth("会话接口未启用".into()));
-    }
-    Ok(cfg)
+
+#[derive(Debug, Serialize)]
+struct SessionTokenClaims<'a> {
+    sub: &'a str,
+    jti: &'a str,
+    iss: &'a str,
+    aud: &'a str,
+    iat: i64,
+    exp: i64,
+    sae: String,
 }
 
-fn resolve_jwt_secret(cfg: &crate::config::SessionConfig) -> Result<String, AppError> {
-    if !cfg.jwt_secret.trim().is_empty() {
-        return Ok(cfg.jwt_secret.clone());
-    }
-    let from_env = std::env::var("APP_SESSION_JWT_SECRET").unwrap_or_default();
-    if !from_env.trim().is_empty() {
-        return Ok(from_env);
-    }
-    Err(AppError::Internal(
-        "session.jwt_secret 未配置（可通过 APP_SESSION_JWT_SECRET 设置）".into(),
-    ))
-}
-
-fn resolve_expected_exchange_secret(
-    cfg: &crate::config::SessionConfig,
-) -> Result<String, AppError> {
-    if !cfg.exchange_shared_secret.trim().is_empty() {
-        return Ok(cfg.exchange_shared_secret.clone());
-    }
-    let from_env = std::env::var("APP_SESSION_EXCHANGE_SHARED_SECRET").unwrap_or_default();
-    if !from_env.trim().is_empty() {
-        return Ok(from_env);
-    }
-    Err(AppError::Internal(
-        "session.exchange_shared_secret 未配置（可通过 APP_SESSION_EXCHANGE_SHARED_SECRET 设置）"
-            .into(),
-    ))
-}
-fn resolve_exchange_secret(headers: &axum::http::HeaderMap) -> Option<String> {
-    headers
-        .get("x-exchange-secret")
-        .or_else(|| headers.get("x-session-exchange-secret"))
-        .and_then(|v| v.to_str().ok())
-        .map(|v| v.trim().to_string())
-}
-fn extract_bearer_token(headers: &axum::http::HeaderMap) -> Result<String, AppError> {
-    let raw = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or_else(|| AppError::Auth("缺少 Authorization 头".into()))?;
-    let raw = raw.trim();
-    if !raw.starts_with("Bearer ") {
-        return Err(AppError::Auth("Authorization 必须使用 Bearer 方案".into()));
-    }
-    let token = raw.trim_start_matches("Bearer ").trim();
-    if token.is_empty() {
-        return Err(AppError::Auth("Bearer token 不能为空".into()));
-    }
-    Ok(token.to_string())
-}
-fn decode_access_token(
-    token: &str,
-    cfg: &crate::config::SessionConfig,
-) -> Result<SessionClaims, AppError> {
-    let jwt_secret = resolve_jwt_secret(cfg)?;
-    let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
-    validation.validate_exp = true;
-    validation.set_issuer(&[cfg.jwt_issuer.as_str()]);
-    validation.set_audience(&[cfg.jwt_audience.as_str()]);
-    let data = jsonwebtoken::decode::<SessionClaims>(
-        token,
-        &jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &validation,
-    )
-    .map_err(|_| AppError::Auth("会话令牌无效或已过期".into()))?;
-    Ok(data.claims)
-}
 async fn parse_authorization_token(
     headers: &axum::http::HeaderMap,
     cfg: &crate::config::SessionConfig,
 ) -> Result<AuthzToken, AppError> {
     let token = extract_bearer_token(headers)?;
-    let claims = decode_access_token(&token, cfg)?;
-    Ok(AuthzToken { claims })
+    let claims = super::bearer::decode_access_token(&token, cfg, true)?;
+    Ok(AuthzToken { token, claims })
+}
+
+async fn parse_authorization_token_allow_expired(
+    headers: &axum::http::HeaderMap,
+    cfg: &crate::config::SessionConfig,
+) -> Result<AuthzToken, AppError> {
+    let token = extract_bearer_token(headers)?;
+    let claims = decode_access_token_allow_expired(&token, cfg)?;
+    Ok(AuthzToken { token, claims })
+}
+
+fn ensure_exchange_secret_valid(
+    headers: &axum::http::HeaderMap,
+    cfg: &crate::config::SessionConfig,
+) -> Result<(), AppError> {
+    let expected_exchange_secret = resolve_expected_exchange_secret(cfg)?;
+    let provided = resolve_exchange_secret(headers).unwrap_or_default();
+    if provided.is_empty() || provided != expected_exchange_secret {
+        return Err(AppError::Auth("交换密钥无效".into()));
+    }
+    Ok(())
+}
+
+fn resolve_refresh_window_secs(cfg: &crate::config::SessionConfig) -> u64 {
+    std::env::var("APP_SESSION_REFRESH_WINDOW_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(cfg.revoke_ttl_secs)
+}
+
+fn issue_session_access_token(
+    auth: &crate::features::save::models::UnifiedSaveRequest,
+    sub: &str,
+    cfg: &crate::config::SessionConfig,
+    jwt_secret: &str,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Result<String, AppError> {
+    let iat = now.timestamp();
+    let exp = (now + chrono::Duration::seconds(cfg.access_ttl_secs as i64)).timestamp();
+    let claims = SessionClaims {
+        sub: sub.to_string(),
+        jti: Uuid::new_v4().to_string(),
+        iss: cfg.jwt_issuer.clone(),
+        aud: cfg.jwt_audience.clone(),
+        iat,
+        exp,
+    };
+    let embedded_auth = build_embedded_auth_claim(auth, &claims.jti, &claims.sub)?;
+    let token_claims = SessionTokenClaims {
+        sub: claims.sub.as_str(),
+        jti: claims.jti.as_str(),
+        iss: claims.iss.as_str(),
+        aud: claims.aud.as_str(),
+        iat: claims.iat,
+        exp: claims.exp,
+        sae: embedded_auth,
+    };
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &token_claims,
+        &jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes()),
+    )
+    .map_err(|e| AppError::Internal(format!("绛惧彂浼氳瘽浠ょ墝澶辫触: {e}")))?;
+    Ok(token)
 }
 
 async fn try_cleanup_expired_session_records(state: &AppState) {
@@ -316,7 +312,7 @@ async fn try_cleanup_expired_session_records(state: &AppState) {
     post,
     path = "/auth/session/exchange",
     summary = "签发后端会话令牌",
-    description = "Next.js 服务端调用该接口换取后端短期 access token。",
+    description = "使用登录凭证交换后端短期 access token。",
     request_body = SessionExchangeRequest,
     params(("X-Exchange-Secret" = String, Header, description = "Next.js 与后端共享密钥")),
     responses(
@@ -349,12 +345,8 @@ pub async fn post_session_exchange(
 ) -> Result<(StatusCode, Json<SessionExchangeResponse>), AppError> {
     try_cleanup_expired_session_records(&state).await;
     let cfg = ensure_session_config()?;
-    let expected_exchange_secret = resolve_expected_exchange_secret(cfg)?;
+    ensure_exchange_secret_valid(&headers, cfg)?;
     let jwt_secret = resolve_jwt_secret(cfg)?;
-    let provided = resolve_exchange_secret(&headers).unwrap_or_default();
-    if provided.is_empty() || provided != expected_exchange_secret {
-        return Err(AppError::Auth("交换密钥无效".into()));
-    }
     let auth = req.auth;
     if auth.session_token.is_some() && auth.external_credentials.is_some() {
         return Err(AppError::Validation(
@@ -364,19 +356,19 @@ pub async fn post_session_exchange(
     if let Some(tok) = auth.session_token.as_deref()
         && tok.trim().is_empty()
     {
-        return Err(AppError::Validation("sessionToken 不能为空".into()));
+        return Err(AppError::Validation("sessionToken 涓嶈兘涓虹┖".into()));
     }
     if let Some(ext) = auth.external_credentials.as_ref()
         && !ext.is_valid()
     {
         return Err(AppError::Validation(
-            "外部凭证无效：必须提供以下凭证之一：platform + platformId / sessiontoken / apiUserId"
+            "澶栭儴鍑瘉鏃犳晥锛氬繀椤绘彁渚涗互涓嬪嚟璇佷箣涓€锛歱latform + platformId / sessiontoken / apiUserId"
                 .into(),
         ));
     }
     if auth.session_token.is_none() && auth.external_credentials.is_none() {
         return Err(AppError::Validation(
-            "必须提供 sessionToken 或 externalCredentials 中的一项".into(),
+            "必须提供 sessionToken 或 externalCredentials 其中一项".into(),
         ));
     }
     let salt_value = crate::config::AppConfig::global()
@@ -393,25 +385,87 @@ pub async fn post_session_exchange(
         })?;
     let (user_hash_opt, _) =
         crate::features::stats::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
-    let user_hash =
-        user_hash_opt.ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
+    let user_hash = user_hash_opt
+        .ok_or_else(|| AppError::Auth("鏃犳硶璇嗗埆鐢ㄦ埛锛堢己灏戝彲鐢ㄥ嚟璇侊級".into()))?;
+    let token =
+        issue_session_access_token(&auth, &user_hash, cfg, &jwt_secret, chrono::Utc::now())?;
+    Ok((
+        StatusCode::OK,
+        Json(SessionExchangeResponse {
+            access_token: token,
+            expires_in: cfg.access_ttl_secs,
+            token_type: "Bearer",
+        }),
+    ))
+}
+
+#[utoipa::path(
+    post,
+    path = "/auth/session/refresh",
+    summary = "刷新会话令牌",
+    description = "使用旧的 Bearer access token（允许过期）与 X-Exchange-Secret 换取新的短期 access token。",
+    params(
+        ("Authorization" = String, Header, description = "Bearer access token（可过期）"),
+        ("X-Exchange-Secret" = String, Header, description = "Next.js 与后端共享密钥")
+    ),
+    responses(
+        (status = 200, description = "刷新成功", body = SessionExchangeResponse),
+        (
+            status = 401,
+            description = "共享密钥无效、令牌无效或已撤销",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "存储不可用或服务端配置错误",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Auth"
+)]
+pub async fn post_session_refresh(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> Result<(StatusCode, Json<SessionExchangeResponse>), AppError> {
+    try_cleanup_expired_session_records(&state).await;
+    let cfg = ensure_session_config()?;
+    ensure_exchange_secret_valid(&headers, cfg)?;
+    let jwt_secret = resolve_jwt_secret(cfg)?;
+    let authz = parse_authorization_token_allow_expired(&headers, cfg).await?;
+
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化，无法执行会话刷新".into()))?;
+
     let now = chrono::Utc::now();
-    let iat = now.timestamp();
-    let exp = (now + chrono::Duration::seconds(cfg.access_ttl_secs as i64)).timestamp();
-    let claims = SessionClaims {
-        sub: user_hash,
-        jti: Uuid::new_v4().to_string(),
-        iss: cfg.jwt_issuer.clone(),
-        aud: cfg.jwt_audience.clone(),
-        iat,
-        exp,
-    };
-    let token = jsonwebtoken::encode(
-        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
-        &claims,
-        &jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes()),
-    )
-    .map_err(|e| AppError::Internal(format!("签发会话令牌失败: {e}")))?;
+    let now_rfc3339 = now.to_rfc3339();
+    let (blacklisted, logout_before) = storage
+        .get_session_revoke_state(&authz.claims.jti, &authz.claims.sub, &now_rfc3339)
+        .await?;
+    if blacklisted {
+        return Err(AppError::Auth("会话令牌已失效".into()));
+    }
+    if let Some(gate) = logout_before {
+        let gate_ts = chrono::DateTime::parse_from_rfc3339(&gate)
+            .map_err(|e| AppError::Internal(format!("瑙ｆ瀽浼氳瘽鎾ら攢鏃堕棿澶辫触: {e}")))?
+            .timestamp();
+        if authz.claims.iat < gate_ts {
+            return Err(AppError::Auth("浼氳瘽浠ょ墝宸茶鐢ㄦ埛浣滃簾".into()));
+        }
+    }
+
+    let refresh_window_secs = resolve_refresh_window_secs(cfg) as i64;
+    let expired_for_secs = now.timestamp().saturating_sub(authz.claims.exp);
+    if expired_for_secs > refresh_window_secs {
+        return Err(AppError::Auth("会话令牌过期时间过长，无法刷新".into()));
+    }
+
+    let auth = decode_embedded_auth_allow_expired(&authz.token)?;
+    let token = issue_session_access_token(&auth, &authz.claims.sub, cfg, &jwt_secret, now)?;
+
     Ok((
         StatusCode::OK,
         Json(SessionExchangeResponse {
@@ -452,7 +506,6 @@ pub async fn post_session_logout(
 ) -> Result<(StatusCode, Json<SessionLogoutResponse>), AppError> {
     try_cleanup_expired_session_records(&state).await;
     let cfg = ensure_session_config()?;
-    let jwt_secret = resolve_jwt_secret(cfg)?;
     let authz = parse_authorization_token(&headers, cfg).await?;
     let storage = state
         .stats_storage
@@ -493,16 +546,8 @@ pub async fn post_session_logout(
         .unwrap_or(now + chrono::Duration::seconds(cfg.access_ttl_secs as i64))
         .to_rfc3339();
 
-    let mut logout_validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
-    logout_validation.validate_exp = false;
-    logout_validation.set_issuer(&[cfg.jwt_issuer.as_str()]);
-    logout_validation.set_audience(&[cfg.jwt_audience.as_str()]);
-    let _ = jsonwebtoken::decode::<SessionClaims>(
-        &extract_bearer_token(&headers)?,
-        &jsonwebtoken::DecodingKey::from_secret(jwt_secret.as_bytes()),
-        &logout_validation,
-    )
-    .map_err(|_| AppError::Auth("会话令牌无效".into()))?;
+    let _claims_allow_expired = decode_access_token_allow_expired(&authz.token, cfg)?;
+    let _embedded = decode_embedded_auth_allow_expired(&authz.token)?;
 
     storage
         .add_token_blacklist(&authz.claims.jti, &expires_at, &now_rfc3339)
@@ -521,9 +566,9 @@ pub async fn post_session_logout(
     post,
     path = "/auth/qrcode",
     summary = "生成登录二维码",
-    description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。客户端需保存返回的 qrId 以轮询授权状态。",
+    description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。",
     params(
-        ("taptapVersion" = Option<String>, Query, description = "TapTap 版本：cn（大陆版）或 global（国际版）")
+        ("taptapVersion" = Option<String>, Query, description = "TapTap 版本：cn 或 global")
     ),
     responses(
         (status = 200, description = "生成二维码成功", body = QrCodeCreateResponse),
@@ -558,11 +603,11 @@ pub(crate) async fn post_qrcode(
     State(state): State<AppState>,
     Query(params): Query<QrCodeQuery>,
 ) -> Result<Response, AppError> {
-    // 生成 device_id 与 qr_id
+    // 鐢熸垚 device_id 涓?qr_id
     let device_id = Uuid::new_v4().to_string();
     let qr_id = Uuid::new_v4().to_string();
 
-    // 获取版本参数
+    // 鑾峰彇鐗堟湰鍙傛暟
     let version = normalize_taptap_version(params.taptap_version.as_deref())?;
 
     // 请求 TapTap 设备码
@@ -578,7 +623,7 @@ pub(crate) async fn post_qrcode(
         .verification_url
         .ok_or_else(|| AppError::Internal("TapTap 未返回 verification_url".to_string()))?;
 
-    // 组合用于扫码/跳转的最终链接：优先使用服务端提供的 qrcode_url；
+    // 组合用于扫码/跳转的最终链接：优先使用服务端返回的 qrcode_url。
     // 否则在 verification_url 基础上拼接 user_code 参数。
     let verification_url_for_scan = if let Some(qr) = device.qrcode_url.clone() {
         qr
@@ -592,9 +637,9 @@ pub(crate) async fn post_qrcode(
         verification_url.clone()
     };
 
-    // 生成二维码（SVG）并 Base64 编码
+    // 鐢熸垚浜岀淮鐮侊紙SVG锛夊苟 Base64 缂栫爜
     let code = QrCode::new(&verification_url_for_scan)
-        .map_err(|e| AppError::Internal(format!("生成二维码失败: {e}")))?;
+        .map_err(|e| AppError::Internal(format!("鐢熸垚浜岀淮鐮佸け璐? {e}")))?;
     let image = code
         .render()
         .min_dimensions(256, 256)
@@ -606,7 +651,7 @@ pub(crate) async fn post_qrcode(
         base64::prelude::BASE64_STANDARD.encode(image)
     );
 
-    // 写入缓存为 Pending 状态
+    // 写入缓存中的 Pending 状态。
     let interval_secs = device.interval.unwrap_or(5);
     state
         .qrcode_service
@@ -632,7 +677,7 @@ pub(crate) async fn post_qrcode(
     get,
     path = "/auth/qrcode/{qr_id}/status",
     summary = "轮询二维码授权状态",
-    description = "根据 qr_id 查询当前授权进度。若返回 Pending 且包含 retry_after，客户端应按该秒数后再发起轮询。",
+    description = "根据 qr_id 查询当前授权进度。若返回 Pending 且包含 retry_after，客户端应按该秒数后再轮询。",
     params(("qr_id" = String, Path, description = "二维码ID")),
     responses(
         (status = 200, description = "状态返回", body = QrCodeStatusResponse)
@@ -646,7 +691,7 @@ pub async fn get_qrcode_status(
     let current = match state.qrcode_service.get(&qr_id).await {
         Some(c) => c,
         None => {
-            // v2 契约：二维码状态接口始终返回 200 + 状态对象，避免出现“404 但仍返回 JSON body”的特例。
+            // v2 契约：二维码状态接口始终返回 200 + 状态对象。
             return Ok(json_no_store(
                 StatusCode::OK,
                 QrCodeStatusResponse {
@@ -662,7 +707,7 @@ pub async fn get_qrcode_status(
 
     match current {
         QrCodeStatus::Confirmed { session_data } => {
-            // 命中确认，删除缓存并返回 token
+            // 鍛戒腑纭锛屽垹闄ょ紦瀛樺苟杩斿洖 token
             state.qrcode_service.remove(&qr_id).await;
             Ok(json_no_store(
                 StatusCode::OK,
@@ -683,9 +728,10 @@ pub async fn get_qrcode_status(
             expires_at,
             version,
         } => {
-            // 频率限制：遵循 TapTap 建议的 interval
+            // 频率限制：遵循 TapTap 建议的 interval。
             let now = std::time::Instant::now();
-            // 先判断是否已过期（避免无意义轮询）
+
+            // 先判断是否已过期，避免无意义轮询。
             if now >= expires_at {
                 state.qrcode_service.remove(&qr_id).await;
                 return Ok(json_no_store(
@@ -699,6 +745,7 @@ pub async fn get_qrcode_status(
                     },
                 ));
             }
+
             if now < next_poll_at {
                 let retry_secs = (next_poll_at - now).as_secs();
                 return Ok(json_no_store(
@@ -712,15 +759,14 @@ pub async fn get_qrcode_status(
                     },
                 ));
             }
-            // 轮询 TapTap，判断授权状态
-            // 使用生成二维码时保存的版本信息
+
+            // 轮询 TapTap，判断授权状态。
             match state
                 .taptap_client
                 .poll_for_token(&device_code, &device_id, version.as_deref())
                 .await
             {
                 Ok(session) => {
-                    // 更新为 Confirmed 并返回
                     state
                         .qrcode_service
                         .set_confirmed(&qr_id, session.clone())
@@ -738,7 +784,6 @@ pub async fn get_qrcode_status(
                     ))
                 }
                 Err(AppError::AuthPending(_)) => {
-                    // 按 interval 延后下一次轮询
                     state
                         .qrcode_service
                         .set_pending_next_poll(
@@ -809,5 +854,6 @@ pub fn create_auth_router() -> Router<AppState> {
         .route("/qrcode/:qr_id/status", get(get_qrcode_status))
         .route("/user-id", post(post_user_id))
         .route("/session/exchange", post(post_session_exchange))
+        .route("/session/refresh", post(post_session_refresh))
         .route("/session/logout", post(post_session_logout))
 }

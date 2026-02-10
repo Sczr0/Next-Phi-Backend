@@ -64,7 +64,15 @@ fn new_test_state(song_catalog: SongCatalog) -> AppState {
 fn build_app(state: AppState) -> Router {
     // 贴近生产部署：songs/* 实际挂在 /api/v2 下
     Router::<AppState>::new()
-        .nest("/api/v2", phi_backend::features::song::create_song_router())
+        .nest(
+            "/api/v2",
+            phi_backend::features::song::create_song_router().layer(
+                axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    phi_backend::features::auth::bearer::bearer_auth_middleware,
+                ),
+            ),
+        )
         .with_state(state)
 }
 

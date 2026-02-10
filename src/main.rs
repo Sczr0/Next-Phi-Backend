@@ -226,6 +226,10 @@ async fn main() {
         .merge(create_leaderboard_router())
         .merge(create_rks_router());
     api_router = api_router.merge(create_stats_router());
+    api_router = api_router.layer(axum::middleware::from_fn_with_state(
+        app_state.clone(),
+        phi_backend::features::auth::bearer::bearer_auth_middleware,
+    ));
 
     let ill_root = config.illustration_path();
     let mut app = Router::<AppState>::new()

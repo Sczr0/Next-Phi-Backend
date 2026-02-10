@@ -13,7 +13,7 @@ use phi_backend::config::{AppConfig, TapTapConfig, TapTapMultiConfig, TapTapVers
 use phi_backend::features::auth::client::TapTapClient;
 use phi_backend::features::auth::handler::{
     SessionExchangeRequest, SessionLogoutRequest, SessionLogoutScope, post_session_exchange,
-    post_session_logout,
+    post_session_logout, post_session_refresh,
 };
 use phi_backend::features::auth::qrcode_service::QrCodeService;
 use phi_backend::features::save::models::UnifiedSaveRequest;
@@ -99,16 +99,28 @@ fn make_exchange_headers(secret: &str) -> axum::http::HeaderMap {
     headers
 }
 
+fn make_refresh_headers(secret: &str, token: &str) -> axum::http::HeaderMap {
+    let mut headers = axum::http::HeaderMap::new();
+    headers.insert(
+        "x-exchange-secret",
+        axum::http::HeaderValue::from_str(secret).expect("header value"),
+    );
+    headers.insert(
+        header::AUTHORIZATION,
+        axum::http::HeaderValue::from_str(&format!("Bearer {token}")).expect("auth header"),
+    );
+    headers
+}
+
 async fn exchange_token(secret: &str) -> String {
     let state = make_state_with_storage().await;
-    let (_, Json(resp)) =
-        post_session_exchange(
-            State(state),
-            make_exchange_headers(secret),
-            Json(make_exchange_request()),
-        )
-            .await
-            .expect("exchange success");
+    let (_, Json(resp)) = post_session_exchange(
+        State(state),
+        make_exchange_headers(secret),
+        Json(make_exchange_request()),
+    )
+    .await
+    .expect("exchange success");
     resp.access_token
 }
 
@@ -384,4 +396,97 @@ async fn session_cleanup_removes_expired_records() {
         .await
         .expect("query live gate");
     assert!(live_gate.is_some());
+}
+
+#[tokio::test]
+async fn session_refresh_success_with_old_token_and_secret() {
+    init_test_config();
+    let state = make_state_with_storage().await;
+    let old_token = exchange_token("test-exchange-secret").await;
+
+    let (status, Json(resp)) = post_session_refresh(
+        State(state),
+        make_refresh_headers("test-exchange-secret", &old_token),
+    )
+    .await
+    .expect("refresh success");
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp.token_type, "Bearer");
+    assert_eq!(resp.expires_in, AppConfig::global().session.access_ttl_secs);
+    assert_ne!(resp.access_token, old_token);
+
+    let old_claims = decode_claims(&old_token);
+    let new_claims = decode_claims(&resp.access_token);
+    let old_sub = old_claims
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .expect("old sub");
+    let new_sub = new_claims
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .expect("new sub");
+    let old_jti = old_claims
+        .get("jti")
+        .and_then(|v| v.as_str())
+        .expect("old jti");
+    let new_jti = new_claims
+        .get("jti")
+        .and_then(|v| v.as_str())
+        .expect("new jti");
+    assert_eq!(old_sub, new_sub);
+    assert_ne!(old_jti, new_jti);
+}
+
+#[tokio::test]
+async fn session_refresh_rejects_invalid_exchange_secret() {
+    init_test_config();
+    let state = make_state_with_storage().await;
+    let old_token = exchange_token("test-exchange-secret").await;
+
+    let result = post_session_refresh(
+        State(state),
+        make_refresh_headers("wrong-secret", &old_token),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = result.err().expect("refresh should fail");
+    let response = err.into_response();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn session_refresh_rejects_blacklisted_token() {
+    init_test_config();
+    let state = make_state_with_storage().await;
+    let token = exchange_token("test-exchange-secret").await;
+    let claims = decode_claims(&token);
+    let jti = claims
+        .get("jti")
+        .and_then(|v| v.as_str())
+        .expect("jti")
+        .to_string();
+
+    let storage = state.stats_storage.clone().expect("stats storage");
+    let now = chrono::Utc::now();
+    storage
+        .add_token_blacklist(
+            &jti,
+            &(now + chrono::Duration::minutes(10)).to_rfc3339(),
+            &now.to_rfc3339(),
+        )
+        .await
+        .expect("blacklist token");
+
+    let result = post_session_refresh(
+        State(state),
+        make_refresh_headers("test-exchange-secret", &token),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = result.err().expect("refresh should fail");
+    let response = err.into_response();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

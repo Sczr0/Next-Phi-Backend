@@ -3,7 +3,8 @@ use std::collections::HashMap;
 use axum::body::Bytes;
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::rejection::JsonRejection,
+    extract::{FromRequest, Query, State},
     http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::post,
@@ -27,6 +28,10 @@ use crate::{
 
 use super::types::{RenderBnRequest, RenderSongRequest, RenderUserBnRequest};
 use serde::Deserialize;
+
+fn map_json_rejection(err: JsonRejection) -> AppError {
+    AppError::Validation(format!("请求体 JSON 无效: {err}"))
+}
 
 /// 图片输出选项（通过 Query 传入，避免破坏现有 JSON 请求体）
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -331,8 +336,24 @@ mod tests {
 pub async fn render_bn(
     State(state): State<AppState>,
     Query(q): Query<ImageQueryOpts>,
-    Json(req): Json<RenderBnRequest>,
+    request: axum::extract::Request,
 ) -> Result<impl IntoResponse, AppError> {
+    let bearer_state = request
+        .extensions()
+        .get::<crate::features::auth::bearer::BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let mut req = Json::<RenderBnRequest>::from_request(request, &())
+        .await
+        .map_err(map_json_rejection)?
+        .0;
+    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        state.stats_storage.as_ref(),
+        &bearer_state,
+        &mut req.auth,
+    )
+    .await?;
+
     // 全流程计时：从请求进入到返回响应
     let t_total = Instant::now();
     // 存档获取耗时（含认证源构造 + 解密）
@@ -385,7 +406,11 @@ pub async fn render_bn(
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash_for_cache, user_kind_for_cache) =
-        crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+        crate::features::auth::bearer::derive_user_identity_with_bearer(
+            salt,
+            &req.auth,
+            &bearer_state,
+        )?;
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
         let updated = updated_for_cache.clone();
         let theme_code = match req.theme {
@@ -812,7 +837,11 @@ pub async fn render_bn(
             .user_hash_salt
             .as_deref();
         let (user_hash, user_kind) =
-            crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+            crate::features::auth::bearer::derive_user_identity_with_bearer(
+                salt,
+                &req.auth,
+                &bearer_state,
+            )?;
         let extra = serde_json::json!({ "bestn_song_ids": bestn_song_ids, "user_kind": user_kind });
         stats.track_feature("bestn", "generate_image", user_hash, Some(extra));
     }
@@ -824,7 +853,11 @@ pub async fn render_bn(
     let mut cache_put_duration = None;
     if AppConfig::global().image.cache_enabled {
         let salt = AppConfig::global().stats.user_hash_salt.as_deref();
-        let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+        let (uh, _) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+            salt,
+            &req.auth,
+            &bearer_state,
+        )?;
         if let Some(user_hash) = uh.as_ref() {
             let t_cache_put = Instant::now();
             let updated = updated_for_cache.clone();
@@ -974,8 +1007,23 @@ pub async fn render_bn(
 pub async fn render_song(
     State(state): State<AppState>,
     Query(q): Query<ImageQueryOpts>,
-    Json(req): Json<RenderSongRequest>,
+    request: axum::extract::Request,
 ) -> Result<impl IntoResponse, AppError> {
+    let bearer_state = request
+        .extensions()
+        .get::<crate::features::auth::bearer::BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let mut req = Json::<RenderSongRequest>::from_request(request, &())
+        .await
+        .map_err(map_json_rejection)?
+        .0;
+    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        state.stats_storage.as_ref(),
+        &bearer_state,
+        &mut req.auth,
+    )
+    .await?;
     let t_total = std::time::Instant::now();
     let source = to_save_source(&req.auth)?;
     let taptap_version = req.auth.taptap_version.as_deref();
@@ -1026,7 +1074,11 @@ pub async fn render_song(
     let cache_enabled = AppConfig::global().image.cache_enabled;
     let salt = AppConfig::global().stats.user_hash_salt.as_deref();
     let (user_hash_for_cache, user_kind_for_cache) =
-        crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+        crate::features::auth::bearer::derive_user_identity_with_bearer(
+            salt,
+            &req.auth,
+            &bearer_state,
+        )?;
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
         let updated = updated_for_cache.clone();
         let width_code = if fmt_code == "svg" {
@@ -1296,7 +1348,11 @@ pub async fn render_song(
             .user_hash_salt
             .as_deref();
         let (user_hash, user_kind) =
-            crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+            crate::features::auth::bearer::derive_user_identity_with_bearer(
+                salt,
+                &req.auth,
+                &bearer_state,
+            )?;
         let extra = serde_json::json!({ "song_id": song.id, "user_kind": user_kind });
         stats.track_feature("single_query", "generate_image", user_hash, Some(extra));
     }
@@ -1306,7 +1362,11 @@ pub async fn render_song(
     // Cache put
     if AppConfig::global().image.cache_enabled {
         let salt = AppConfig::global().stats.user_hash_salt.as_deref();
-        let (uh, _) = crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+        let (uh, _) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+            salt,
+            &req.auth,
+            &bearer_state,
+        )?;
         if let Some(user_hash) = uh.as_ref() {
             let updated = updated_for_cache.clone();
             let fmt_code = format_code(&q);

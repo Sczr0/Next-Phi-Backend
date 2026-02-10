@@ -64,7 +64,13 @@ fn new_test_state(storage: Arc<StatsStorage>) -> AppState {
 fn build_app(state: AppState) -> Router {
     // 贴近生产部署：leaderboard/* 实际挂在 /api/v2 下
     Router::<AppState>::new()
-        .nest("/api/v2", create_leaderboard_router())
+        .nest(
+            "/api/v2",
+            create_leaderboard_router().layer(axum::middleware::from_fn_with_state(
+                state.clone(),
+                phi_backend::features::auth::bearer::bearer_auth_middleware,
+            )),
+        )
         .with_state(state)
 }
 

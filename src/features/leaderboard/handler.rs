@@ -1,7 +1,8 @@
 use axum::http::HeaderMap;
 use axum::{
     Router,
-    extract::{Path, Query, State},
+    extract::rejection::JsonRejection,
+    extract::{FromRequest, Path, Query, State},
     response::Json,
     routing::{get, post, put},
 };
@@ -54,6 +55,10 @@ pub struct OkResponse {
 pub struct OkAliasResponse {
     pub ok: bool,
     pub alias: String,
+}
+
+fn map_json_rejection(err: JsonRejection) -> AppError {
+    AppError::Validation(format!("请求体 JSON 无效: {err}"))
 }
 
 fn mask_user_prefix(hash: &str) -> String {
@@ -450,8 +455,25 @@ pub async fn get_by_rank(
 )]
 pub async fn post_me(
     State(state): State<AppState>,
-    Json(auth): Json<crate::features::save::models::UnifiedSaveRequest>,
+    request: axum::extract::Request,
 ) -> Result<Json<MeResponse>, AppError> {
+    let bearer_state = request
+        .extensions()
+        .get::<crate::features::auth::bearer::BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let mut auth =
+        Json::<crate::features::save::models::UnifiedSaveRequest>::from_request(request, &())
+            .await
+            .map_err(map_json_rejection)?
+            .0;
+    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        state.stats_storage.as_ref(),
+        &bearer_state,
+        &mut auth,
+    )
+    .await?;
+
     let storage = state
         .stats_storage
         .as_ref()
@@ -460,8 +482,11 @@ pub async fn post_me(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) =
-        crate::features::stats::derive_user_identity_from_auth(salt, &auth);
+    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+        salt,
+        &auth,
+        &bearer_state,
+    )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
 
@@ -543,8 +568,24 @@ pub async fn post_me(
 )]
 pub async fn put_alias(
     State(state): State<AppState>,
-    Json(req): Json<AliasRequest>,
+    request: axum::extract::Request,
 ) -> Result<Json<OkAliasResponse>, AppError> {
+    let bearer_state = request
+        .extensions()
+        .get::<crate::features::auth::bearer::BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let mut req = Json::<AliasRequest>::from_request(request, &())
+        .await
+        .map_err(map_json_rejection)?
+        .0;
+    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        state.stats_storage.as_ref(),
+        &bearer_state,
+        &mut req.auth,
+    )
+    .await?;
+
     let storage = state
         .stats_storage
         .as_ref()
@@ -553,8 +594,11 @@ pub async fn put_alias(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) =
-        crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+        salt,
+        &req.auth,
+        &bearer_state,
+    )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
 
@@ -649,8 +693,24 @@ pub async fn put_alias(
 )]
 pub async fn put_profile(
     State(state): State<AppState>,
-    Json(req): Json<ProfileUpdateRequest>,
+    request: axum::extract::Request,
 ) -> Result<Json<OkResponse>, AppError> {
+    let bearer_state = request
+        .extensions()
+        .get::<crate::features::auth::bearer::BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let mut req = Json::<ProfileUpdateRequest>::from_request(request, &())
+        .await
+        .map_err(map_json_rejection)?
+        .0;
+    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        state.stats_storage.as_ref(),
+        &bearer_state,
+        &mut req.auth,
+    )
+    .await?;
+
     let storage = state
         .stats_storage
         .as_ref()
@@ -659,8 +719,11 @@ pub async fn put_profile(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) =
-        crate::features::stats::derive_user_identity_from_auth(salt, &req.auth);
+    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+        salt,
+        &req.auth,
+        &bearer_state,
+    )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
     let now = chrono::Utc::now().to_rfc3339();
