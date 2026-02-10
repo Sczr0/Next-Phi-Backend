@@ -75,6 +75,13 @@ impl StatsStorage {
         CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_utc);
         CREATE INDEX IF NOT EXISTS idx_events_feature_ts ON events(feature, ts_utc);
         CREATE INDEX IF NOT EXISTS idx_events_route_ts ON events(route, ts_utc);
+        CREATE INDEX IF NOT EXISTS idx_events_ts_user_hash ON events(ts_utc, user_hash);
+        CREATE INDEX IF NOT EXISTS idx_events_ts_client_ip_hash ON events(ts_utc, client_ip_hash);
+        CREATE INDEX IF NOT EXISTS idx_events_http_agg ON events(ts_utc, route, method, status);
+        CREATE INDEX IF NOT EXISTS idx_events_feature_action_ts ON events(feature, action, ts_utc);
+        CREATE INDEX IF NOT EXISTS idx_events_instance_ts ON events(instance, ts_utc);
+        CREATE INDEX IF NOT EXISTS idx_events_latency_route_duration_ts ON events(route, duration_ms, ts_utc)
+            WHERE route IS NOT NULL AND duration_ms IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS daily_agg (
             date TEXT NOT NULL,
