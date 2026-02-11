@@ -8,6 +8,13 @@ use crate::error::SaveProviderError;
 
 const USER_AGENT: &str = "LeanCloud-CSharp-SDK/1.0.3";
 
+fn clamp_pbkdf2_rounds(rounds: u32) -> u32 {
+    let cfg = &crate::config::AppConfig::global().save;
+    let min = cfg.pbkdf2_rounds_min;
+    let max = cfg.pbkdf2_rounds_max.max(min);
+    rounds.clamp(min, max)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalApiCredentials {
@@ -205,7 +212,16 @@ pub async fn fetch_from_official(
                 .salt_hex
                 .and_then(|h| hex::decode(h).ok())
                 .unwrap_or_default();
-            let rounds = kdf.rounds.unwrap_or(1000);
+            let raw_rounds = kdf.rounds.unwrap_or(1000);
+            let rounds = clamp_pbkdf2_rounds(raw_rounds);
+            if rounds != raw_rounds {
+                tracing::warn!(
+                    target: "phi_backend::save::client",
+                    raw_rounds,
+                    rounds,
+                    "pbkdf2 rounds 超出配置范围，已自动收敛"
+                );
+            }
             let password = if let Some(b) = kdf.password_b64 {
                 general_purpose::STANDARD.decode(b).unwrap_or_default()
             } else {
@@ -343,4 +359,25 @@ pub async fn fetch_from_external(
         updated_at = api_response.data.summary.and_then(|s| s.updated_at);
     }
     Ok((api_response.data.save_url, updated_at))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clamp_pbkdf2_rounds;
+
+    fn ensure_config_initialized() {
+        let _ = crate::config::AppConfig::init_global();
+    }
+
+    #[test]
+    fn clamp_pbkdf2_rounds_applies_config_bounds() {
+        ensure_config_initialized();
+        // 依赖当前默认配置边界：1000..=100000
+        let low = clamp_pbkdf2_rounds(1);
+        let ok = clamp_pbkdf2_rounds(5000);
+        let high = clamp_pbkdf2_rounds(1_000_000);
+        assert!(low >= 1000);
+        assert_eq!(ok, 5000);
+        assert!(high <= 100000);
+    }
 }

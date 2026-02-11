@@ -140,6 +140,27 @@ max_parallel = 0
 # 用户自报成绩 BN：scores 条数硬上限（0=不限制，不建议）
 max_user_scores = 500
 
+# /save 资源上限
+[save]
+# 下载存档最大字节数（默认 64MB）
+max_download_bytes = 67108864
+# 解压输出最大字节数（默认 64MB）
+max_decompress_bytes = 67108864
+# 单个 zip entry 最大字节数（默认 32MB）
+max_zip_entry_bytes = 33554432
+# zip entry 最大数量（默认 16）
+max_zip_entries = 16
+# 是否启用 /save 解析结果缓存
+cache_enabled = true
+# /save 缓存最大条目数
+cache_max_entries = 512
+# /save 缓存 TTL/TTI（秒）
+cache_ttl_secs = 120
+cache_tti_secs = 60
+# PBKDF2 rounds 约束范围
+pbkdf2_rounds_min = 1000
+pbkdf2_rounds_max = 100000
+
 # TapTap API 配置
 [taptap.cn]
 # 大陆版 - 设备码请求端点 (保持不变)

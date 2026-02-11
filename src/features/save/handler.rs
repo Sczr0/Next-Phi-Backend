@@ -1,4 +1,5 @@
 //! 存档 API 处理模块（features/save）
+use axum::body::Bytes;
 use axum::{
     Router,
     extract::rejection::JsonRejection,
@@ -7,7 +8,10 @@ use axum::{
     response::{IntoResponse, Json},
     routing::post,
 };
+use moka::future::Cache;
+use once_cell::sync::OnceCell;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use crate::error::AppError;
 use crate::features::rks::engine::{
@@ -31,6 +35,30 @@ pub enum SaveApiResponse {
 
 fn map_json_rejection(err: JsonRejection) -> AppError {
     AppError::Validation(format!("请求体 JSON 无效: {err}"))
+}
+
+/// /save 缓存 key：同一用户 + 同一 updatedAt + 同一认证版本视为同一份存档结果。
+fn build_save_cache_key(
+    user_hash: Option<&str>,
+    updated_at: Option<&str>,
+    taptap_version: Option<&str>,
+) -> Option<String> {
+    let user_hash = user_hash?;
+    let updated_at = updated_at?;
+    let ver = taptap_version.unwrap_or("default");
+    Some(format!("{user_hash}:{updated_at}:{ver}"))
+}
+
+fn save_cache() -> &'static Cache<String, Bytes> {
+    static CACHE: OnceCell<Cache<String, Bytes>> = OnceCell::new();
+    CACHE.get_or_init(|| {
+        let cfg = &crate::config::AppConfig::global().save;
+        Cache::builder()
+            .max_capacity(cfg.cache_max_entries.max(1))
+            .time_to_live(Duration::from_secs(cfg.cache_ttl_secs.max(1)))
+            .time_to_idle(Duration::from_secs(cfg.cache_tti_secs.max(1)))
+            .build()
+    })
 }
 
 #[utoipa::path(
@@ -128,13 +156,42 @@ pub async fn get_save_data(
 
     let source = validate_and_create_source(&payload)?;
     let taptap_version = payload.taptap_version.as_deref();
-    let parsed = provider::get_decrypted_save(
+    let save_cfg = &crate::config::AppConfig::global().save;
+
+    // /save P1：先取 meta，再基于 user_hash + updatedAt 构造缓存键。
+    let meta = provider::fetch_save_meta(
         source,
-        &state.chart_constants,
         &crate::config::AppConfig::global().taptap,
         taptap_version,
     )
     .await?;
+    let cache_key = if save_cfg.cache_enabled {
+        build_save_cache_key(
+            user_hash.as_deref(),
+            meta.updated_at.as_deref(),
+            taptap_version,
+        )
+    } else {
+        None
+    };
+
+    let parsed = if let Some(key) = cache_key.as_ref() {
+        if let Some(v) = save_cache().get(key).await {
+            serde_json::from_slice::<provider::ParsedSave>(&v)
+                .map_err(|e| AppError::Internal(format!("反序列化 save 缓存失败: {e}")))?
+        } else {
+            let parsed =
+                provider::get_decrypted_save_from_meta(meta, &state.chart_constants).await?;
+            if let Ok(serialized) = serde_json::to_vec(&parsed) {
+                save_cache()
+                    .insert(key.clone(), Bytes::from(serialized))
+                    .await;
+            }
+            parsed
+        }
+    } else {
+        provider::get_decrypted_save_from_meta(meta, &state.chart_constants).await?
+    };
 
     // 业务打点：成功获取存档
     if let Some(stats) = state.stats.as_ref() {
@@ -540,7 +597,7 @@ fn compute_textual_details(
 mod tests {
     use std::collections::HashMap;
 
-    use super::compute_grade_counts;
+    use super::{build_save_cache_key, compute_grade_counts};
     use crate::features::save::models::{Difficulty, DifficultyRecord};
 
     fn rec(difficulty: Difficulty, score: u32, is_full_combo: bool) -> DifficultyRecord {
@@ -616,5 +673,15 @@ mod tests {
         assert!(ez.get("C").is_some());
         assert!(ez.get("FC").is_some());
         assert!(ez.get("P").is_some());
+    }
+
+    #[test]
+    fn build_save_cache_key_requires_user_and_updated_at() {
+        assert!(build_save_cache_key(None, Some("2026-02-10T00:00:00Z"), None).is_none());
+        assert!(build_save_cache_key(Some("u1"), None, None).is_none());
+
+        let key = build_save_cache_key(Some("u1"), Some("2026-02-10T00:00:00Z"), Some("global"))
+            .expect("cache key");
+        assert_eq!(key, "u1:2026-02-10T00:00:00Z:global");
     }
 }

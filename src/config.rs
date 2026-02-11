@@ -231,6 +231,9 @@ pub struct AppConfig {
     /// 图片渲染配置
     #[serde(default)]
     pub image: ImageRenderConfig,
+    /// /save 接口防护配置（下载/解压/entry 上限）
+    #[serde(default)]
+    pub save: SaveLimitsConfig,
     /// 优雅退出配置
     #[serde(default)]
     pub shutdown: ShutdownConfig,
@@ -371,6 +374,7 @@ impl Default for AppConfig {
             branding: BrandingConfig::default(),
             watermark: WatermarkConfig::default(),
             image: ImageRenderConfig::default(),
+            save: SaveLimitsConfig::default(),
             shutdown: ShutdownConfig::default(),
             leaderboard: LeaderboardConfig::default(),
         }
@@ -431,6 +435,100 @@ impl Default for ImageRenderConfig {
             cache_tti_secs: Self::default_cache_tti(),
             max_parallel: 0,
             max_user_scores: Self::default_max_user_scores(),
+        }
+    }
+}
+
+/// /save 接口资源上限配置（用于 P0 级防护）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SaveLimitsConfig {
+    /// 下载存档最大字节数（超限直接拒绝）
+    #[serde(default = "SaveLimitsConfig::default_max_download_bytes")]
+    pub max_download_bytes: u64,
+    /// 解压后最大字节数（gzip/zlib）
+    #[serde(default = "SaveLimitsConfig::default_max_decompress_bytes")]
+    pub max_decompress_bytes: u64,
+    /// 单个 zip entry 最大字节数
+    #[serde(default = "SaveLimitsConfig::default_max_zip_entry_bytes")]
+    pub max_zip_entry_bytes: u64,
+    /// zip 内允许的最大 entry 数
+    #[serde(default = "SaveLimitsConfig::default_max_zip_entries")]
+    pub max_zip_entries: u32,
+    /// 是否启用 /save 解析结果缓存
+    #[serde(default = "SaveLimitsConfig::default_cache_enabled")]
+    pub cache_enabled: bool,
+    /// /save 缓存最大条目数（0=禁用）
+    #[serde(default = "SaveLimitsConfig::default_cache_max_entries")]
+    pub cache_max_entries: u64,
+    /// /save 缓存 TTL（秒）
+    #[serde(default = "SaveLimitsConfig::default_cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+    /// /save 缓存 TTI（秒）
+    #[serde(default = "SaveLimitsConfig::default_cache_tti_secs")]
+    pub cache_tti_secs: u64,
+    /// PBKDF2 rounds 下限（防止异常小值）
+    #[serde(default = "SaveLimitsConfig::default_pbkdf2_rounds_min")]
+    pub pbkdf2_rounds_min: u32,
+    /// PBKDF2 rounds 上限（防止异常大值）
+    #[serde(default = "SaveLimitsConfig::default_pbkdf2_rounds_max")]
+    pub pbkdf2_rounds_max: u32,
+}
+
+impl SaveLimitsConfig {
+    fn default_max_download_bytes() -> u64 {
+        64 * 1024 * 1024
+    }
+
+    fn default_max_decompress_bytes() -> u64 {
+        64 * 1024 * 1024
+    }
+
+    fn default_max_zip_entry_bytes() -> u64 {
+        32 * 1024 * 1024
+    }
+
+    fn default_max_zip_entries() -> u32 {
+        16
+    }
+
+    fn default_cache_enabled() -> bool {
+        true
+    }
+
+    fn default_cache_max_entries() -> u64 {
+        512
+    }
+
+    fn default_cache_ttl_secs() -> u64 {
+        120
+    }
+
+    fn default_cache_tti_secs() -> u64 {
+        60
+    }
+
+    fn default_pbkdf2_rounds_min() -> u32 {
+        1_000
+    }
+
+    fn default_pbkdf2_rounds_max() -> u32 {
+        100_000
+    }
+}
+
+impl Default for SaveLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_download_bytes: Self::default_max_download_bytes(),
+            max_decompress_bytes: Self::default_max_decompress_bytes(),
+            max_zip_entry_bytes: Self::default_max_zip_entry_bytes(),
+            max_zip_entries: Self::default_max_zip_entries(),
+            cache_enabled: Self::default_cache_enabled(),
+            cache_max_entries: Self::default_cache_max_entries(),
+            cache_ttl_secs: Self::default_cache_ttl_secs(),
+            cache_tti_secs: Self::default_cache_tti_secs(),
+            pbkdf2_rounds_min: Self::default_pbkdf2_rounds_min(),
+            pbkdf2_rounds_max: Self::default_pbkdf2_rounds_max(),
         }
     }
 }

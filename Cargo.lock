@@ -3082,6 +3082,7 @@ dependencies = [
  "csv",
  "digest",
  "flate2",
+ "futures-util",
  "gethostname",
  "git2",
  "hex",

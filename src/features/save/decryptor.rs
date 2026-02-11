@@ -64,8 +64,16 @@ impl Default for DecryptionMeta {
 }
 
 pub fn decrypt_zip_entry(
+    encrypted_data: Vec<u8>,
+    meta: &DecryptionMeta,
+) -> Result<Vec<u8>, SaveProviderError> {
+    decrypt_zip_entry_with_derived_key(encrypted_data, meta, None)
+}
+
+pub fn decrypt_zip_entry_with_derived_key(
     mut encrypted_data: Vec<u8>,
     meta: &DecryptionMeta,
+    derived_key: Option<&[u8; 32]>,
 ) -> Result<Vec<u8>, SaveProviderError> {
     if encrypted_data.is_empty() {
         return Err(SaveProviderError::InvalidHeader);
@@ -75,11 +83,16 @@ pub fn decrypt_zip_entry(
     match &meta.cipher {
         CipherSuite::Aes256CbcPkcs7 { iv } => {
             // KdfSpec::None 时直接复用默认 key，避免一次 Vec 分配。
-            let mut key_arr = DEFAULT_KEY;
-            if matches!(&meta.kdf, KdfSpec::Pbkdf2Sha1 { .. }) {
-                let key_bytes = derive_key(&meta.kdf, 32)?;
-                key_arr.copy_from_slice(&key_bytes);
-            }
+            let key_arr = if let Some(pre) = derived_key {
+                *pre
+            } else {
+                let mut key_arr = DEFAULT_KEY;
+                if matches!(&meta.kdf, KdfSpec::Pbkdf2Sha1 { .. }) {
+                    let key_bytes = derive_key(&meta.kdf, 32)?;
+                    key_arr.copy_from_slice(&key_bytes);
+                }
+                key_arr
+            };
             // AES-CBC 需要可变 buffer；这里直接复用 zip entry 的 Vec，避免一次 `to_vec()` 拷贝
             let ciphertext = encrypted_data
                 .get_mut(1..)
