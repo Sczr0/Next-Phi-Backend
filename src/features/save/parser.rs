@@ -371,76 +371,88 @@ fn deser_map(reader: &mut Reader, end: u8) -> Result<Value, SaveProviderError> {
     Ok(Value::Object(map))
 }
 
+pub fn parse_single_save_entry_to_json(
+    name: &str,
+    entry: &[u8],
+) -> Result<Value, SaveProviderError> {
+    match name {
+        "gameRecord" => {
+            if entry.is_empty() {
+                return Err(SaveProviderError::Decrypt("gameRecord 太短".into()));
+            }
+            let mut r = Reader::new(&entry[1..]);
+            deser_map(&mut r, 2)
+        }
+        "gameKey" => {
+            if entry.is_empty() {
+                return Err(SaveProviderError::Decrypt("gameKey 太短".into()));
+            }
+            let mut r = Reader::new(entry);
+            let ver = r.read_u8()?;
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "version".to_string(),
+                Value::Number(Number::from(ver as i64)),
+            );
+            obj.insert("map".to_string(), deser_map(&mut r, 0)?);
+            deser_nodes_into(&mut obj, &mut r, &[GAMEKEY1, GAMEKEY2])?;
+            if r.off < entry.len() {
+                obj.insert(
+                    "overflow".to_string(),
+                    Value::String(general_purpose::STANDARD.encode(&entry[r.off..])),
+                );
+            }
+            Ok(Value::Object(obj))
+        }
+        "gameProgress" => {
+            if entry.is_empty() {
+                return Err(SaveProviderError::Decrypt("gameProgress 太短".into()));
+            }
+            let mut r = Reader::new(entry);
+            let ver = r.read_u8()?;
+            let mut obj = serde_json::Map::new();
+            obj.insert(
+                "version".to_string(),
+                Value::Number(Number::from(ver as i64)),
+            );
+            deser_nodes_into(&mut obj, &mut r, &[GAMEPROGRESS1, GAMEPROGRESS2, GAMEPROGRESS3])?;
+            if r.off < entry.len() {
+                obj.insert(
+                    "overflow".to_string(),
+                    Value::String(general_purpose::STANDARD.encode(&entry[r.off..])),
+                );
+            }
+            Ok(Value::Object(obj))
+        }
+        "user" => {
+            if entry.is_empty() {
+                return Err(SaveProviderError::Decrypt("user 太短".into()));
+            }
+            let mut r = Reader::new(&entry[1..]);
+            let obj = deser_object(&mut r, USER_NODES)?;
+            Ok(Value::Object(obj))
+        }
+        "settings" => {
+            if entry.is_empty() {
+                return Err(SaveProviderError::Decrypt("settings 太短".into()));
+            }
+            let mut r = Reader::new(&entry[1..]);
+            let obj = deser_object(&mut r, SETTINGS_NODES)?;
+            Ok(Value::Object(obj))
+        }
+        _ => Err(SaveProviderError::Json(format!(
+            "unsupported save entry name: {name}"
+        ))),
+    }
+}
+
 pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, SaveProviderError> {
     let mut root = serde_json::Map::new();
-    if let Some(gr) = entries.get("gameRecord") {
-        if gr.is_empty() {
-            return Err(SaveProviderError::Decrypt("gameRecord 太短".into()));
+    for name in ["gameRecord", "gameKey", "gameProgress", "user", "settings"] {
+        if let Some(entry) = entries.get(name) {
+            let parsed = parse_single_save_entry_to_json(name, entry)?;
+            root.insert(name.to_string(), parsed);
         }
-        let mut r = Reader::new(&gr[1..]);
-        let obj = deser_map(&mut r, 2)?;
-        root.insert("gameRecord".to_string(), obj);
-    }
-    if let Some(gk) = entries.get("gameKey") {
-        if gk.is_empty() {
-            return Err(SaveProviderError::Decrypt("gameKey 太短".into()));
-        }
-        let mut r = Reader::new(gk);
-        let ver = r.read_u8()?;
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "version".to_string(),
-            Value::Number(Number::from(ver as i64)),
-        );
-        obj.insert("map".to_string(), deser_map(&mut r, 0)?);
-        deser_nodes_into(&mut obj, &mut r, &[GAMEKEY1, GAMEKEY2])?;
-        if r.off < gk.len() {
-            obj.insert(
-                "overflow".to_string(),
-                Value::String(general_purpose::STANDARD.encode(&gk[r.off..])),
-            );
-        }
-        root.insert("gameKey".to_string(), Value::Object(obj));
-    }
-    if let Some(gp) = entries.get("gameProgress") {
-        if gp.is_empty() {
-            return Err(SaveProviderError::Decrypt("gameProgress 太短".into()));
-        }
-        let mut r = Reader::new(gp);
-        let ver = r.read_u8()?;
-        let mut obj = serde_json::Map::new();
-        obj.insert(
-            "version".to_string(),
-            Value::Number(Number::from(ver as i64)),
-        );
-        deser_nodes_into(
-            &mut obj,
-            &mut r,
-            &[GAMEPROGRESS1, GAMEPROGRESS2, GAMEPROGRESS3],
-        )?;
-        if r.off < gp.len() {
-            obj.insert(
-                "overflow".to_string(),
-                Value::String(general_purpose::STANDARD.encode(&gp[r.off..])),
-            );
-        }
-        root.insert("gameProgress".to_string(), Value::Object(obj));
-    }
-    if let Some(usr) = entries.get("user") {
-        if usr.is_empty() {
-            return Err(SaveProviderError::Decrypt("user 太短".into()));
-        }
-        let mut r = Reader::new(&usr[1..]);
-        let obj = deser_object(&mut r, USER_NODES)?;
-        root.insert("user".to_string(), Value::Object(obj));
-    }
-    if let Some(st) = entries.get("settings") {
-        if st.is_empty() {
-            return Err(SaveProviderError::Decrypt("settings 太短".into()));
-        }
-        let mut r = Reader::new(&st[1..]);
-        let obj = deser_object(&mut r, SETTINGS_NODES)?;
-        root.insert("settings".to_string(), Value::Object(obj));
     }
     Ok(Value::Object(root))
 }

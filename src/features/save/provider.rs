@@ -142,8 +142,15 @@ pub async fn get_decrypted_save_from_meta(
 
     let encrypted_bytes = download_encrypted_save(&download_url, limits.max_download_bytes).await?;
 
+    let permit = super::save_blocking_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| SaveProviderError::Io(format!("save blocking semaphore closed: {e}")))?;
+
     // 注意：解压/解密/解析属于 CPU/内存密集型同步任务，为避免阻塞 Tokio worker，这里 offload 到 blocking 线程池。
     let join = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         let zip_bytes = try_decompress(encrypted_bytes, limits.max_decompress_bytes)?;
         let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes))?;
 
@@ -161,8 +168,11 @@ pub async fn get_decrypted_save_from_meta(
         };
 
         let expected = ["gameRecord", "gameKey", "gameProgress", "user", "settings"];
-        let mut decrypted_entries: HashMap<String, Vec<u8>> =
-            HashMap::with_capacity(expected.len());
+        let mut game_record_entry: Option<Vec<u8>> = None;
+        let mut game_key: Option<serde_json::Value> = None;
+        let mut game_progress: Option<serde_json::Value> = None;
+        let mut user: Option<serde_json::Value> = None;
+        let mut settings: Option<serde_json::Value> = None;
         let mut entry_count = 0usize;
         for name in &expected {
             if let Ok(mut f) = archive.by_name(name) {
@@ -187,14 +197,42 @@ pub async fn get_decrypted_save_from_meta(
                     &decrypt_meta,
                     derived_key_arr.as_ref(),
                 )?;
-                decrypted_entries.insert((*name).to_string(), plain);
+                if *name == "gameRecord" {
+                    game_record_entry = Some(plain);
+                } else {
+                    let parsed = super::parser::parse_single_save_entry_to_json(name, &plain)?;
+                    match *name {
+                        "gameKey" => game_key = Some(parsed),
+                        "gameProgress" => game_progress = Some(parsed),
+                        "user" => user = Some(parsed),
+                        "settings" => settings = Some(parsed),
+                        _ => {}
+                    }
+                }
             }
         }
 
-        super::parser::parse_save_to_json(&decrypted_entries)
+        let game_record_entry = game_record_entry
+            .ok_or_else(|| SaveProviderError::MissingField("gameRecord".to_string()))?;
+        Ok::<
+            (
+                Vec<u8>,
+                Option<serde_json::Value>,
+                Option<serde_json::Value>,
+                Option<serde_json::Value>,
+                Option<serde_json::Value>,
+            ),
+            SaveProviderError,
+        >((
+            game_record_entry,
+            game_progress,
+            user,
+            settings,
+            game_key,
+        ))
     })
     .await;
-    let json_value = match join {
+    let (game_record_bytes, game_progress, user, settings, game_key) = match join {
         Ok(res) => res?,
         Err(e) => {
             // 为保持“异常情况下”的原有行为：如果 blocking 任务发生 panic，则继续向上传播 panic。
@@ -209,20 +247,7 @@ pub async fn get_decrypted_save_from_meta(
     };
 
     // 解析结构化的 gameRecord 与其余部分
-    let mut root = match json_value {
-        serde_json::Value::Object(map) => map,
-        _ => {
-            return Err(SaveProviderError::Json(
-                "root save json is not an object".to_string(),
-            ));
-        }
-    };
-
-    let game_record_val = root
-        .remove("gameRecord")
-        .ok_or_else(|| SaveProviderError::MissingField("gameRecord".to_string()))?;
-
-    let game_record = record_parser::parse_game_record(&game_record_val, chart_constants)
+    let game_record = record_parser::parse_game_record_bytes(&game_record_bytes, chart_constants)
         .map_err(|e| SaveProviderError::Json(format!("parse gameRecord failed: {e}")))?;
 
     let summary_parsed = summary_b64
@@ -231,12 +256,10 @@ pub async fn get_decrypted_save_from_meta(
 
     Ok(ParsedSave {
         game_record,
-        game_progress: root
-            .remove("gameProgress")
-            .unwrap_or(serde_json::Value::Null),
-        user: root.remove("user").unwrap_or(serde_json::Value::Null),
-        settings: root.remove("settings").unwrap_or(serde_json::Value::Null),
-        game_key: root.remove("gameKey").unwrap_or(serde_json::Value::Null),
+        game_progress: game_progress.unwrap_or(serde_json::Value::Null),
+        user: user.unwrap_or(serde_json::Value::Null),
+        settings: settings.unwrap_or(serde_json::Value::Null),
+        game_key: game_key.unwrap_or(serde_json::Value::Null),
         summary_parsed,
         updated_at,
     })

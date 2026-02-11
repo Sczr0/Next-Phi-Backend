@@ -858,14 +858,10 @@ pub async fn get_stats_summary(
             let mut by_kind_qb = QueryBuilder::<Sqlite>::new(
                 "SELECT id, user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL",
             );
-            by_kind_qb
-                .push(" AND id > ")
-                .push_bind(last_id);
+            by_kind_qb.push(" AND id > ").push_bind(last_id);
             push_ts_range_filters(&mut by_kind_qb, start_utc_ref, end_utc_ref);
             push_feature_filter(&mut by_kind_qb, feature_ref);
-            by_kind_qb
-                .push(" ORDER BY id ASC LIMIT ")
-                .push_bind(BATCH);
+            by_kind_qb.push(" ORDER BY id ASC LIMIT ").push_bind(BATCH);
             let rows = by_kind_qb
                 .build()
                 .fetch_all(&storage.pool)
@@ -1821,9 +1817,7 @@ async fn query_daily_dau(
 
     if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
         let modifier = sqlite_minutes_modifier(off_min);
-        let mut qb = QueryBuilder::<Sqlite>::new(
-            "SELECT date(ts_utc, ",
-        );
+        let mut qb = QueryBuilder::<Sqlite>::new("SELECT date(ts_utc, ");
         qb.push_bind(modifier)
             .push(
                 ") as date, COUNT(DISTINCT user_hash) as active_users, COUNT(DISTINCT client_ip_hash) as active_ips FROM events WHERE ts_utc BETWEEN ",
@@ -2043,9 +2037,7 @@ async fn query_daily_http(
             });
         }
 
-        let mut totals_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT date(ts_utc, ",
-        );
+        let mut totals_qb = QueryBuilder::<Sqlite>::new("SELECT date(ts_utc, ");
         totals_qb
             .push_bind(modifier_ref)
             .push(
@@ -2059,7 +2051,9 @@ async fn query_daily_http(
             totals_qb.push(" AND route = ").push_bind(route.to_string());
         }
         if let Some(method) = method {
-            totals_qb.push(" AND method = ").push_bind(method.to_string());
+            totals_qb
+                .push(" AND method = ")
+                .push_bind(method.to_string());
         }
 
         totals_qb

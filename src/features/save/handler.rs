@@ -1,5 +1,4 @@
 //! 存档 API 处理模块（features/save）
-use axum::body::Bytes;
 use axum::{
     Router,
     extract::rejection::JsonRejection,
@@ -11,11 +10,12 @@ use axum::{
 use moka::future::Cache;
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::error::AppError;
 use crate::features::rks::engine::{
-    PlayerRksResult, calculate_player_rks, calculate_single_chart_rks,
+    ChartRankingScore, PlayerRksResult, calculate_player_rks,
 };
 use crate::features::stats::storage::SubmissionRecord;
 use crate::state::AppState;
@@ -37,6 +37,12 @@ fn map_json_rejection(err: JsonRejection) -> AppError {
     AppError::Validation(format!("请求体 JSON 无效: {err}"))
 }
 
+/// /save 缓存项。
+#[derive(Clone)]
+struct SaveCacheEntry {
+    parsed: Arc<provider::ParsedSave>,
+}
+
 /// /save 缓存 key：同一用户 + 同一 updatedAt + 同一认证版本视为同一份存档结果。
 fn build_save_cache_key(
     user_hash: Option<&str>,
@@ -49,8 +55,8 @@ fn build_save_cache_key(
     Some(format!("{user_hash}:{updated_at}:{ver}"))
 }
 
-fn save_cache() -> &'static Cache<String, Bytes> {
-    static CACHE: OnceCell<Cache<String, Bytes>> = OnceCell::new();
+fn save_cache() -> &'static Cache<String, SaveCacheEntry> {
+    static CACHE: OnceCell<Cache<String, SaveCacheEntry>> = OnceCell::new();
     CACHE.get_or_init(|| {
         let cfg = &crate::config::AppConfig::global().save;
         Cache::builder()
@@ -120,6 +126,8 @@ pub async fn get_save_data(
     Query(params): Query<HashMap<String, String>>,
     req: axum::extract::Request,
 ) -> Result<impl IntoResponse, AppError> {
+    let t_total = Instant::now();
+
     let bearer_state = req
         .extensions()
         .get::<crate::features::auth::bearer::BearerAuthState>()
@@ -137,6 +145,7 @@ pub async fn get_save_data(
     .await?;
 
     // 提前计算用户去敏哈希（避免 move 后不可用）
+    let t_auth = Instant::now();
     let salt = crate::config::AppConfig::global()
         .stats
         .user_hash_salt
@@ -153,18 +162,31 @@ pub async fn get_save_data(
         .unwrap_or(false);
     // 排行榜写入需要：统计存储开启 + 能识别到用户身份
     let need_leaderboard = state.stats_storage.is_some() && user_hash.is_some();
+    let auth_ms = t_auth.elapsed().as_millis() as i64;
 
+    let t_source = Instant::now();
     let source = validate_and_create_source(&payload)?;
+    let source_ms = t_source.elapsed().as_millis() as i64;
     let taptap_version = payload.taptap_version.as_deref();
     let save_cfg = &crate::config::AppConfig::global().save;
 
     // /save P1：先取 meta，再基于 user_hash + updatedAt 构造缓存键。
+    let t_meta = Instant::now();
     let meta = provider::fetch_save_meta(
         source,
         &crate::config::AppConfig::global().taptap,
         taptap_version,
     )
     .await?;
+    let meta_ms = t_meta.elapsed().as_millis() as i64;
+    let mut cache_skip_reason: Option<&'static str> = None;
+    if !save_cfg.cache_enabled {
+        cache_skip_reason = Some("disabled");
+    } else if user_hash.is_none() {
+        cache_skip_reason = Some("missing_user_hash");
+    } else if meta.updated_at.is_none() {
+        cache_skip_reason = Some("missing_updated_at");
+    }
     let cache_key = if save_cfg.cache_enabled {
         build_save_cache_key(
             user_hash.as_deref(),
@@ -175,22 +197,64 @@ pub async fn get_save_data(
         None
     };
 
-    let parsed = if let Some(key) = cache_key.as_ref() {
-        if let Some(v) = save_cache().get(key).await {
-            serde_json::from_slice::<provider::ParsedSave>(&v)
-                .map_err(|e| AppError::Internal(format!("反序列化 save 缓存失败: {e}")))?
+    let (parsed_cached, cache_lookup_ms, save_decode_ms, cache_status) = if let Some(key) =
+        cache_key.as_ref()
+    {
+        let t_cache = Instant::now();
+        if let Some(entry) = save_cache().get(key).await {
+            let cache_lookup_ms = t_cache.elapsed().as_millis() as i64;
+            if let Some(stats) = state.stats.as_ref() {
+                let extra = serde_json::json!({
+                    "status": "hit",
+                    "version": taptap_version.unwrap_or("default")
+                });
+                stats.track_feature("save_cache", "hit", user_hash.clone(), Some(extra));
+            }
+
+            let t_decode = Instant::now();
+            let parsed = entry.parsed.clone();
+            let save_decode_ms = t_decode.elapsed().as_millis() as i64;
+            (parsed, cache_lookup_ms, save_decode_ms, "hit")
         } else {
+            let cache_lookup_ms = t_cache.elapsed().as_millis() as i64;
+            if let Some(stats) = state.stats.as_ref() {
+                let extra = serde_json::json!({
+                    "status": "miss",
+                    "version": taptap_version.unwrap_or("default")
+                });
+                stats.track_feature("save_cache", "miss", user_hash.clone(), Some(extra));
+            }
+
+            let t_decode = Instant::now();
             let parsed =
                 provider::get_decrypted_save_from_meta(meta, &state.chart_constants).await?;
-            if let Ok(serialized) = serde_json::to_vec(&parsed) {
-                save_cache()
-                    .insert(key.clone(), Bytes::from(serialized))
-                    .await;
-            }
-            parsed
+            let parsed = Arc::new(parsed);
+            let save_decode_ms = t_decode.elapsed().as_millis() as i64;
+            save_cache()
+                .insert(
+                    key.clone(),
+                    SaveCacheEntry {
+                        parsed: parsed.clone(),
+                    },
+                )
+                .await;
+            (parsed, cache_lookup_ms, save_decode_ms, "miss")
         }
     } else {
-        provider::get_decrypted_save_from_meta(meta, &state.chart_constants).await?
+        if let Some(stats) = state.stats.as_ref() {
+            let extra = serde_json::json!({
+                "status": "skipped",
+                "reason": cache_skip_reason.unwrap_or("unknown"),
+                "version": taptap_version.unwrap_or("default")
+            });
+            stats.track_feature("save_cache", "skipped", user_hash.clone(), Some(extra));
+        }
+
+        let t_decode = Instant::now();
+        let parsed = provider::get_decrypted_save_from_meta(meta, &state.chart_constants).await?;
+        let parsed = Arc::new(parsed);
+        let save_decode_ms = t_decode.elapsed().as_millis() as i64;
+        (parsed, 0_i64, save_decode_ms, "skipped")
     };
 
     // 业务打点：成功获取存档
@@ -201,51 +265,72 @@ pub async fn get_save_data(
 
     // 计算 RKS / 文本详情属于 CPU 密集任务：移出 Tokio worker，避免影响吞吐与尾延迟。
     let need_calc = calc_rks || need_leaderboard;
-    let (parsed, rks_res, best_top3_json, ap_top3_json, rks_comp_json) = if need_calc {
-        let state = state.clone();
-        let join = tokio::task::spawn_blocking(move || {
-            let mut parsed = parsed;
-            if calc_rks {
-                crate::features::rks::engine::fill_push_acc_for_game_record(
-                    &mut parsed.game_record,
-                );
-            }
-            let rks_res = calculate_player_rks(&parsed.game_record, &state.chart_constants);
-            let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
-                let (best_top3, ap_top3, rks_comp) =
-                    compute_textual_details(&parsed.game_record, &state);
-                (
-                    serde_json::to_string(&best_top3).ok(),
-                    serde_json::to_string(&ap_top3).ok(),
-                    serde_json::to_string(&rks_comp).ok(),
-                )
-            } else {
-                (None, None, None)
-            };
-            (
-                parsed,
-                Some(rks_res),
-                best_top3_json,
-                ap_top3_json,
-                rks_comp_json,
-            )
-        })
-        .await;
-        match join {
-            Ok(v) => v,
-            Err(e) => {
-                let e_str = e.to_string();
-                if let Ok(panic) = e.try_into_panic() {
-                    std::panic::resume_unwind(panic);
-                }
-                return Err(AppError::Internal(format!(
-                    "spawn_blocking cancelled: {e_str}"
-                )));
-            }
+    if !need_calc {
+        let t_serialize = Instant::now();
+        let body = serde_json::json!({ "data": parsed_cached.as_ref() });
+        let serialize_ms = t_serialize.elapsed().as_millis() as i64;
+        if let Some(stats) = state.stats.as_ref() {
+            let extra = serde_json::json!({
+                "cache_status": cache_status,
+                "cache_lookup_ms": cache_lookup_ms,
+                "save_decode_ms": save_decode_ms,
+                "auth_ms": auth_ms,
+                "source_ms": source_ms,
+                "meta_ms": meta_ms,
+                "calc_ms": 0_i64,
+                "serialize_ms": serialize_ms,
+                "total_ms": t_total.elapsed().as_millis() as i64,
+                "calculate_rks": false,
+                "version": taptap_version.unwrap_or("default")
+            });
+            stats.track_feature("save", "perf", user_hash.clone(), Some(extra));
         }
-    } else {
-        (parsed, None, None, None, None)
+        return Ok((StatusCode::OK, Json(body)));
+    }
+
+    let parsed_for_calc = parsed_cached.as_ref().clone();
+    let permit = super::save_blocking_semaphore()
+        .clone()
+        .acquire_owned()
+        .await
+        .map_err(|e| AppError::Internal(format!("save blocking semaphore closed: {e}")))?;
+    let t_calc = Instant::now();
+    let state_for_calc = state.clone();
+    let join = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let mut parsed = parsed_for_calc;
+        if calc_rks {
+            crate::features::rks::engine::fill_push_acc_for_game_record(&mut parsed.game_record);
+        }
+        let rks_res = calculate_player_rks(&parsed.game_record, &state_for_calc.chart_constants);
+        let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
+            let (best_top3, ap_top3, rks_comp) =
+                build_textual_details_from_rks(&parsed.game_record, &rks_res, &state_for_calc);
+            (
+                serde_json::to_string(&best_top3).ok(),
+                serde_json::to_string(&ap_top3).ok(),
+                serde_json::to_string(&rks_comp).ok(),
+            )
+        } else {
+            (None, None, None)
+        };
+        (parsed, Some(rks_res), best_top3_json, ap_top3_json, rks_comp_json)
+    })
+    .await;
+    let (parsed, rks_res, best_top3_json, ap_top3_json, rks_comp_json) = match join {
+        Ok(v) => v,
+        Err(e) => {
+            let e_str = e.to_string();
+            if let Ok(panic) = e.try_into_panic() {
+                std::panic::resume_unwind(panic);
+            }
+            return Err(AppError::Internal(format!(
+                "spawn_blocking cancelled: {e_str}"
+            )));
+        }
     };
+    let calc_ms = t_calc.elapsed().as_millis() as i64;
+
     // 排行榜入库（无论是否返回RKS）
     if let Some(storage) = state.stats_storage.as_ref()
         && let Some(user_hash_ref) = user_hash.as_ref()
@@ -394,9 +479,25 @@ pub async fn get_save_data(
     }
 
     if !calc_rks {
-        let value = serde_json::to_value(&parsed)
-            .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {e}")))?;
-        let body = serde_json::json!({ "data": value });
+        let t_serialize = Instant::now();
+        let body = serde_json::json!({ "data": parsed });
+        let serialize_ms = t_serialize.elapsed().as_millis() as i64;
+        if let Some(stats) = state.stats.as_ref() {
+            let extra = serde_json::json!({
+                "cache_status": cache_status,
+                "cache_lookup_ms": cache_lookup_ms,
+                "save_decode_ms": save_decode_ms,
+                "auth_ms": auth_ms,
+                "source_ms": source_ms,
+                "meta_ms": meta_ms,
+                "calc_ms": calc_ms,
+                "serialize_ms": serialize_ms,
+                "total_ms": t_total.elapsed().as_millis() as i64,
+                "calculate_rks": false,
+                "version": taptap_version.unwrap_or("default")
+            });
+            stats.track_feature("save", "perf", user_hash.clone(), Some(extra));
+        }
         return Ok((StatusCode::OK, Json(body)));
     }
 
@@ -404,15 +505,30 @@ pub async fn get_save_data(
     let rks = rks_res
         .unwrap_or_else(|| calculate_player_rks(&parsed.game_record, &state.chart_constants));
     let grade_counts = compute_grade_counts(&parsed.game_record);
-    let save_value = serde_json::to_value(&parsed)
-        .map_err(|e| AppError::Internal(format!("序列化 ParsedSave 失败: {e}")))?;
     let resp = SaveAndRksResponse {
-        save: save_value,
+        save: parsed,
         rks,
         grade_counts,
     };
-    let body = serde_json::to_value(&resp)
-        .map_err(|e| AppError::Internal(format!("序列化 SaveAndRksResponse 失败: {e}")))?;
+    let t_serialize = Instant::now();
+    let body = serde_json::json!(resp);
+    let serialize_ms = t_serialize.elapsed().as_millis() as i64;
+    if let Some(stats) = state.stats.as_ref() {
+        let extra = serde_json::json!({
+            "cache_status": cache_status,
+            "cache_lookup_ms": cache_lookup_ms,
+            "save_decode_ms": save_decode_ms,
+            "auth_ms": auth_ms,
+            "source_ms": source_ms,
+            "meta_ms": meta_ms,
+            "calc_ms": calc_ms,
+            "serialize_ms": serialize_ms,
+            "total_ms": t_total.elapsed().as_millis() as i64,
+            "calculate_rks": true,
+            "version": taptap_version.unwrap_or("default")
+        });
+        stats.track_feature("save", "perf", user_hash.clone(), Some(extra));
+    }
     Ok((StatusCode::OK, Json(body)))
 }
 
@@ -449,10 +565,10 @@ pub fn create_save_router() -> Router<AppState> {
     Router::<AppState>::new().route("/save", post(get_save_data))
 }
 
-#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+#[derive(Debug, serde::Serialize)]
 pub struct SaveAndRksResponse {
     /// 解析后的存档对象（等价于 SaveResponse.data）
-    save: serde_json::Value,
+    save: provider::ParsedSave,
     /// 计算得到的玩家 RKS 概览
     rks: PlayerRksResult,
     /// 按难度统计的 C/FC/P 成绩数量（累计口径）
@@ -514,52 +630,55 @@ fn compute_grade_counts(
     counts
 }
 
-/// 计算用于公开展示的文字详情（BestTop3、APTop3、RKS 构成）
-fn compute_textual_details(
+fn normalize_accuracy_percent(acc: f32) -> f64 {
+    let raw = acc as f64;
+    if raw <= 1.5 { raw * 100.0 } else { raw }
+}
+
+fn build_chart_acc_index(
     records: &std::collections::HashMap<String, Vec<super::models::DifficultyRecord>>,
+) -> (HashMap<String, f64>, usize, usize) {
+    let mut acc_by_chart = HashMap::new();
+    let mut valid_count = 0usize;
+    let mut ap_count = 0usize;
+
+    for (song_id, diffs) in records {
+        for rec in diffs {
+            // 与 calculate_player_rks 的口径保持一致，仅统计存在定数的谱面。
+            if rec.chart_constant.is_none() {
+                continue;
+            }
+            let acc = normalize_accuracy_percent(rec.accuracy);
+            let key = format!("{song_id}-{}", rec.difficulty);
+            acc_by_chart.insert(key, acc);
+            valid_count = valid_count.saturating_add(1);
+            if acc >= 100.0 {
+                ap_count = ap_count.saturating_add(1);
+            }
+        }
+    }
+
+    (acc_by_chart, valid_count, ap_count)
+}
+
+/// 基于已计算完成的 RKS 结果构建文本详情，避免重复计算每个谱面的 RKS。
+fn build_textual_details_from_rks(
+    records: &std::collections::HashMap<String, Vec<super::models::DifficultyRecord>>,
+    rks_result: &PlayerRksResult,
     state: &AppState,
 ) -> (
     Vec<crate::features::leaderboard::models::ChartTextItem>,
     Vec<crate::features::leaderboard::models::ChartTextItem>,
     crate::features::leaderboard::models::RksCompositionText,
 ) {
-    use super::models::Difficulty;
     use crate::features::leaderboard::models::{ChartTextItem, RksCompositionText};
-    let chart_constants = &state.chart_constants;
+    let (acc_by_chart, valid_count, ap_count) = build_chart_acc_index(records);
+    let total_charts = rks_result.b30_charts.len();
+    let best27_len = valid_count.min(27).min(total_charts);
+    let ap3_len = ap_count.min(3).min(total_charts.saturating_sub(best27_len));
 
-    let mut all_scores: Vec<(String, Difficulty, f64, f64)> = Vec::new(); // (song_id, diff, acc_percent, rks)
-    let mut ap_scores: Vec<(String, Difficulty, f64, f64)> = Vec::new();
-
-    for (song_id, diffs) in records.iter() {
-        for rec in diffs.iter() {
-            let Some(consts) = chart_constants.get(song_id) else {
-                continue;
-            };
-            let level_opt = match rec.difficulty {
-                Difficulty::EZ => consts.ez,
-                Difficulty::HD => consts.hd,
-                Difficulty::IN => consts.in_level,
-                Difficulty::AT => consts.at,
-            };
-            let Some(level) = level_opt else {
-                continue;
-            };
-            let acc_percent = rec.accuracy as f64;
-            let acc_decimal = if acc_percent > 1.5 {
-                acc_percent / 100.0
-            } else {
-                acc_percent
-            } as f32;
-            let rks = calculate_single_chart_rks(acc_decimal, level);
-            all_scores.push((song_id.clone(), rec.difficulty.clone(), acc_percent, rks));
-            if acc_percent >= 100.0 {
-                ap_scores.push((song_id.clone(), rec.difficulty.clone(), acc_percent, rks));
-            }
-        }
-    }
-
-    all_scores.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(core::cmp::Ordering::Equal));
-    ap_scores.sort_by(|a, b| b.3.partial_cmp(&a.3).unwrap_or(core::cmp::Ordering::Equal));
+    let best_slice = &rks_result.b30_charts[..best27_len];
+    let ap_slice = &rks_result.b30_charts[best27_len..best27_len + ap3_len];
 
     let name_of = |sid: &str| -> String {
         state
@@ -570,27 +689,34 @@ fn compute_textual_details(
             .unwrap_or_else(|| sid.to_string())
     };
 
-    let to_text = |v: &[(String, Difficulty, f64, f64)]| -> Vec<ChartTextItem> {
+    let to_text = |v: &[ChartRankingScore]| -> Vec<ChartTextItem> {
         v.iter()
             .take(3)
-            .map(|(sid, d, acc, rks)| ChartTextItem {
-                song: name_of(sid),
-                difficulty: d.to_string(),
-                acc: (*acc),
-                rks: (*rks),
+            .map(|score| {
+                let key = format!("{}-{}", score.song_id, score.difficulty);
+                let acc = acc_by_chart.get(&key).copied().unwrap_or(0.0);
+                ChartTextItem {
+                    song: name_of(&score.song_id),
+                    difficulty: score.difficulty.to_string(),
+                    acc,
+                    rks: score.rks,
+                }
             })
             .collect()
     };
-    let best_top3 = to_text(&all_scores);
-    let ap_top3 = to_text(&ap_scores);
+    let best_top3 = to_text(best_slice);
+    let ap_top3 = to_text(ap_slice);
+    let best27_sum: f64 = best_slice.iter().map(|v| v.rks).sum();
+    let ap3_sum: f64 = ap_slice.iter().map(|v| v.rks).sum();
 
-    let best27_sum: f64 = all_scores.iter().take(27).map(|t| t.3).sum();
-    let ap3_sum: f64 = ap_scores.iter().take(3).map(|t| t.3).sum();
-    let rks_comp = RksCompositionText {
-        best27_sum,
-        ap_top3_sum: ap3_sum,
-    };
-    (best_top3, ap_top3, rks_comp)
+    (
+        best_top3,
+        ap_top3,
+        RksCompositionText {
+            best27_sum,
+            ap_top3_sum: ap3_sum,
+        },
+    )
 }
 
 #[cfg(test)]
