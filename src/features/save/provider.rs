@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
+use std::sync::Arc;
 
 use axum::body::Bytes;
 use flate2::read::{GzDecoder, ZlibDecoder};
@@ -57,10 +58,10 @@ pub struct SaveMeta {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ParsedSave {
     pub game_record: HashMap<String, Vec<DifficultyRecord>>,
-    pub game_progress: serde_json::Value,
-    pub user: serde_json::Value,
-    pub settings: serde_json::Value,
-    pub game_key: serde_json::Value,
+    pub game_progress: Option<super::parser::GameProgressParsed>,
+    pub user: Option<super::parser::UserParsed>,
+    pub settings: Option<super::parser::SettingsParsed>,
+    pub game_key: Option<super::parser::GameKeyParsed>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "summaryParsed")]
     pub summary_parsed: Option<SummaryParsed>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "updatedAt")]
@@ -124,13 +125,13 @@ pub async fn get_decrypted_save(
     version: Option<&str>,
 ) -> Result<ParsedSave, SaveProviderError> {
     let meta = fetch_save_meta(source, taptap_config, version).await?;
-    get_decrypted_save_from_meta(meta, chart_constants).await
+    get_decrypted_save_from_meta(meta, Arc::new(chart_constants.clone())).await
 }
 
 /// 使用已获取的元信息下载/解密/解析存档（用于缓存前移后的 miss 路径，避免重复请求元信息接口）。
 pub async fn get_decrypted_save_from_meta(
     meta: SaveMeta,
-    chart_constants: &ChartConstantsMap,
+    chart_constants: Arc<ChartConstantsMap>,
 ) -> Result<ParsedSave, SaveProviderError> {
     let limits = SaveLimits::from_global()?;
     let SaveMeta {
@@ -142,11 +143,12 @@ pub async fn get_decrypted_save_from_meta(
 
     let encrypted_bytes = download_encrypted_save(&download_url, limits.max_download_bytes).await?;
 
-    let permit = super::save_blocking_semaphore()
+    let permit = super::save_decode_blocking_semaphore()
         .clone()
         .acquire_owned()
         .await
         .map_err(|e| SaveProviderError::Io(format!("save blocking semaphore closed: {e}")))?;
+    let chart_constants_for_parse = Arc::clone(&chart_constants);
 
     // 注意：解压/解密/解析属于 CPU/内存密集型同步任务，为避免阻塞 Tokio worker，这里 offload 到 blocking 线程池。
     let join = tokio::task::spawn_blocking(move || {
@@ -167,72 +169,92 @@ pub async fn get_decrypted_save_from_meta(
             None
         };
 
-        let expected = ["gameRecord", "gameKey", "gameProgress", "user", "settings"];
         let mut game_record_entry: Option<Vec<u8>> = None;
-        let mut game_key: Option<serde_json::Value> = None;
-        let mut game_progress: Option<serde_json::Value> = None;
-        let mut user: Option<serde_json::Value> = None;
-        let mut settings: Option<serde_json::Value> = None;
-        let mut entry_count = 0usize;
-        for name in &expected {
-            if let Ok(mut f) = archive.by_name(name) {
-                entry_count = entry_count.saturating_add(1);
-                if entry_count > limits.max_zip_entries {
-                    return Err(SaveProviderError::Io(format!(
-                        "zip entry 数量超限: count={} limit={}",
-                        entry_count, limits.max_zip_entries
-                    )));
-                }
-                // zip entry 通常携带 size 信息，预分配可以显著减少扩容次数。
-                let size = usize::try_from(f.size()).unwrap_or(usize::MAX);
-                let mut enc = Vec::with_capacity(size.min(ZIP_ENTRY_PREALLOC_CAP));
-                read_to_end_limited(
-                    &mut f,
-                    &mut enc,
-                    limits.max_zip_entry_bytes,
-                    "zip entry 读取超限",
-                )?;
-                let plain = decrypt_zip_entry_with_derived_key(
-                    enc,
-                    &decrypt_meta,
-                    derived_key_arr.as_ref(),
-                )?;
-                if *name == "gameRecord" {
-                    game_record_entry = Some(plain);
-                } else {
-                    let parsed = super::parser::parse_single_save_entry_to_json(name, &plain)?;
-                    match *name {
-                        "gameKey" => game_key = Some(parsed),
-                        "gameProgress" => game_progress = Some(parsed),
-                        "user" => user = Some(parsed),
-                        "settings" => settings = Some(parsed),
-                        _ => {}
+        let mut game_key: Option<super::parser::GameKeyParsed> = None;
+        let mut game_progress: Option<super::parser::GameProgressParsed> = None;
+        let mut user: Option<super::parser::UserParsed> = None;
+        let mut settings: Option<super::parser::SettingsParsed> = None;
+        let archive_len = archive.len();
+        if archive_len > limits.max_zip_entries {
+            return Err(SaveProviderError::Io(format!(
+                "zip entry 数量超限: count={} limit={}",
+                archive_len, limits.max_zip_entries
+            )));
+        }
+        let mut matched_count = 0usize;
+        for idx in 0..archive_len {
+            let mut f = archive.by_index(idx)?;
+            let name = {
+                let raw_name = f.name();
+                raw_name.rsplit('/').next().unwrap_or(raw_name).to_owned()
+            };
+            let supported = matches!(
+                name.as_str(),
+                "gameRecord" | "gameKey" | "gameProgress" | "user" | "settings"
+            );
+            if !supported {
+                continue;
+            }
+            if (name == "gameRecord" && game_record_entry.is_some())
+                || (name == "gameKey" && game_key.is_some())
+                || (name == "gameProgress" && game_progress.is_some())
+                || (name == "user" && user.is_some())
+                || (name == "settings" && settings.is_some())
+            {
+                continue;
+            }
+
+            matched_count = matched_count.saturating_add(1);
+            // zip entry 通常携带 size 信息，预分配可以显著减少扩容次数。
+            let size = usize::try_from(f.size()).unwrap_or(usize::MAX);
+            let mut enc = Vec::with_capacity(size.min(ZIP_ENTRY_PREALLOC_CAP));
+            read_to_end_limited(
+                &mut f,
+                &mut enc,
+                limits.max_zip_entry_bytes,
+                "zip entry 读取超限",
+            )?;
+            let plain =
+                decrypt_zip_entry_with_derived_key(enc, &decrypt_meta, derived_key_arr.as_ref())?;
+            if name == "gameRecord" {
+                game_record_entry = Some(plain);
+            } else {
+                match name.as_str() {
+                    "gameKey" => game_key = Some(super::parser::parse_game_key_entry(&plain)?),
+                    "gameProgress" => {
+                        game_progress = Some(super::parser::parse_game_progress_entry(&plain)?)
                     }
+                    "user" => user = Some(super::parser::parse_user_entry(&plain)?),
+                    "settings" => settings = Some(super::parser::parse_settings_entry(&plain)?),
+                    _ => {}
                 }
+            }
+
+            if matched_count >= 5 {
+                break;
             }
         }
 
         let game_record_entry = game_record_entry
             .ok_or_else(|| SaveProviderError::MissingField("gameRecord".to_string()))?;
+        let game_record = record_parser::parse_game_record_bytes(
+            &game_record_entry,
+            chart_constants_for_parse.as_ref(),
+        )
+        .map_err(|e| SaveProviderError::Json(format!("parse gameRecord failed: {e}")))?;
         Ok::<
             (
-                Vec<u8>,
-                Option<serde_json::Value>,
-                Option<serde_json::Value>,
-                Option<serde_json::Value>,
-                Option<serde_json::Value>,
+                HashMap<String, Vec<DifficultyRecord>>,
+                Option<super::parser::GameProgressParsed>,
+                Option<super::parser::UserParsed>,
+                Option<super::parser::SettingsParsed>,
+                Option<super::parser::GameKeyParsed>,
             ),
             SaveProviderError,
-        >((
-            game_record_entry,
-            game_progress,
-            user,
-            settings,
-            game_key,
-        ))
+        >((game_record, game_progress, user, settings, game_key))
     })
     .await;
-    let (game_record_bytes, game_progress, user, settings, game_key) = match join {
+    let (game_record, game_progress, user, settings, game_key) = match join {
         Ok(res) => res?,
         Err(e) => {
             // 为保持“异常情况下”的原有行为：如果 blocking 任务发生 panic，则继续向上传播 panic。
@@ -246,20 +268,16 @@ pub async fn get_decrypted_save_from_meta(
         }
     };
 
-    // 解析结构化的 gameRecord 与其余部分
-    let game_record = record_parser::parse_game_record_bytes(&game_record_bytes, chart_constants)
-        .map_err(|e| SaveProviderError::Json(format!("parse gameRecord failed: {e}")))?;
-
     let summary_parsed = summary_b64
         .as_deref()
         .and_then(|b64| parse_summary_base64(b64).ok());
 
     Ok(ParsedSave {
         game_record,
-        game_progress: game_progress.unwrap_or(serde_json::Value::Null),
-        user: user.unwrap_or(serde_json::Value::Null),
-        settings: settings.unwrap_or(serde_json::Value::Null),
-        game_key: game_key.unwrap_or(serde_json::Value::Null),
+        game_progress,
+        user,
+        settings,
+        game_key,
         summary_parsed,
         updated_at,
     })

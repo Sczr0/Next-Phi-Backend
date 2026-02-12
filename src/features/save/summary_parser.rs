@@ -92,8 +92,8 @@ impl<'a> Reader<'a> {
         }
         let s = &self.data[self.off..self.off + len];
         self.off += len;
-        match String::from_utf8(s.to_vec()) {
-            Ok(ok) => Ok(ok),
+        match std::str::from_utf8(s) {
+            Ok(ok) => Ok(ok.to_owned()),
             Err(_) => Ok(String::from_utf8_lossy(s).into_owned()),
         }
     }

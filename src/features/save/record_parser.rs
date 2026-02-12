@@ -140,11 +140,11 @@ pub fn parse_game_record(
 
             // 查询定数
             let chart_constant = song_constants.and_then(|consts| match difficulty {
-                    Difficulty::EZ => consts.ez,
-                    Difficulty::HD => consts.hd,
-                    Difficulty::IN => consts.in_level,
-                    Difficulty::AT => consts.at,
-                });
+                Difficulty::EZ => consts.ez,
+                Difficulty::HD => consts.hd,
+                Difficulty::IN => consts.in_level,
+                Difficulty::AT => consts.at,
+            });
 
             records.push(DifficultyRecord {
                 difficulty,
@@ -217,11 +217,11 @@ pub fn parse_game_record_bytes(
             let difficulty = Difficulty::try_from(idx)
                 .map_err(|_| format!("invalid difficulty index {idx} for '{song_id}'"))?;
             let chart_constant = song_constants.and_then(|consts| match difficulty {
-                    Difficulty::EZ => consts.ez,
-                    Difficulty::HD => consts.hd,
-                    Difficulty::IN => consts.in_level,
-                    Difficulty::AT => consts.at,
-                });
+                Difficulty::EZ => consts.ez,
+                Difficulty::HD => consts.hd,
+                Difficulty::IN => consts.in_level,
+                Difficulty::AT => consts.at,
+            });
 
             records.push(DifficultyRecord {
                 difficulty,

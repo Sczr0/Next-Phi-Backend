@@ -4,171 +4,6 @@ use std::collections::HashMap;
 
 use crate::error::SaveProviderError;
 
-#[derive(Clone, Copy)]
-enum NodeType {
-    Bool,
-    U8,
-    U16,
-    Float,
-    Str,
-    VarShort,
-}
-
-struct LeafNode {
-    typ: NodeType,
-    name: &'static str,
-}
-
-const GAMEKEY1: &[LeafNode] = &[LeafNode {
-    typ: NodeType::U8,
-    name: "lanotaReadKeys",
-}];
-const GAMEKEY2: &[LeafNode] = &[LeafNode {
-    typ: NodeType::Bool,
-    name: "camelliaReadKey",
-}];
-
-const GAMEPROGRESS1: &[LeafNode] = &[
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "isFirstRun",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "legacyChapterFinished",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "alreadyShowCollectionTip",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "alreadyShowAutoUnlockINTip",
-    },
-    LeafNode {
-        typ: NodeType::Str,
-        name: "completed",
-    },
-    LeafNode {
-        typ: NodeType::U8,
-        name: "songUpdateInfo",
-    },
-    LeafNode {
-        typ: NodeType::U16,
-        name: "challengeModeRank",
-    },
-    LeafNode {
-        typ: NodeType::VarShort,
-        name: "money",
-    },
-    LeafNode {
-        typ: NodeType::U8,
-        name: "unlockFlagOfSpasmodic",
-    },
-    LeafNode {
-        typ: NodeType::U8,
-        name: "unlockFlagOfIgallta",
-    },
-    LeafNode {
-        typ: NodeType::U8,
-        name: "unlockFlagOfRrharil",
-    },
-    LeafNode {
-        typ: NodeType::U8,
-        name: "flagOfSongRecordKey",
-    },
-];
-
-const GAMEPROGRESS2: &[LeafNode] = &[LeafNode {
-    typ: NodeType::U8,
-    name: "randomVersionUnlocked",
-}];
-
-const GAMEPROGRESS3: &[LeafNode] = &[
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "chapter8UnlockBegin",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "chapter8UnlockSecondPhase",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "chapter8Passed",
-    },
-    LeafNode {
-        typ: NodeType::U8,
-        name: "chapter8SongUnlocked",
-    },
-];
-
-const USER_NODES: &[LeafNode] = &[
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "showPlayerId",
-    },
-    LeafNode {
-        typ: NodeType::Str,
-        name: "selfIntro",
-    },
-    LeafNode {
-        typ: NodeType::Str,
-        name: "avatar",
-    },
-    LeafNode {
-        typ: NodeType::Str,
-        name: "background",
-    },
-];
-
-const SETTINGS_NODES: &[LeafNode] = &[
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "chordSupport",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "fcAPIndicator",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "enableHitSound",
-    },
-    LeafNode {
-        typ: NodeType::Bool,
-        name: "lowResolutionMode",
-    },
-    LeafNode {
-        typ: NodeType::Str,
-        name: "deviceName",
-    },
-    LeafNode {
-        typ: NodeType::Float,
-        name: "bright",
-    },
-    LeafNode {
-        typ: NodeType::Float,
-        name: "musicVolume",
-    },
-    LeafNode {
-        typ: NodeType::Float,
-        name: "effectVolume",
-    },
-    LeafNode {
-        typ: NodeType::Float,
-        name: "hitSoundVolume",
-    },
-    LeafNode {
-        typ: NodeType::Float,
-        name: "soundOffset",
-    },
-    LeafNode {
-        typ: NodeType::Float,
-        name: "noteScale",
-    },
-];
-
 struct Reader<'a> {
     data: &'a [u8],
     off: usize,
@@ -242,92 +77,245 @@ impl<'a> Reader<'a> {
     }
 }
 
-fn deser_object(
-    reader: &mut Reader,
-    nodes: &[LeafNode],
-) -> Result<serde_json::Map<String, Value>, SaveProviderError> {
-    let mut obj = serde_json::Map::new();
-    let mut bit: u8 = 0;
-    let mut bool_byte_pos = reader.off;
-    for nd in nodes {
-        match nd.typ {
-            NodeType::Bool => {
-                if bit == 0 {
-                    bool_byte_pos = reader.off;
-                    if reader.remain() < 1 {
-                        return Err(SaveProviderError::Decrypt("EOF bool".into()));
-                    }
-                }
-                let b = reader.data[bool_byte_pos];
-                let val = ((b >> bit) & 1) != 0;
-                obj.insert(nd.name.to_string(), Value::Bool(val));
-                bit = bit.wrapping_add(1);
-                if bit == 8 {
-                    bit = 0;
-                    reader.off = bool_byte_pos + 1;
-                }
-            }
-            _ => {
-                if bit != 0 {
-                    reader.off = bool_byte_pos + 1;
-                    bit = 0;
-                }
-                match nd.typ {
-                    NodeType::U8 => {
-                        let v = reader.read_u8()? as i64;
-                        obj.insert(nd.name.to_string(), Value::Number(Number::from(v)));
-                    }
-                    NodeType::U16 => {
-                        let v = reader.read_u16_le()? as i64;
-                        obj.insert(nd.name.to_string(), Value::Number(Number::from(v)));
-                    }
-                    NodeType::Float => {
-                        let v = reader.read_f32_le()? as f64;
-                        obj.insert(
-                            nd.name.to_string(),
-                            Value::Number(Number::from_f64(v).unwrap_or_else(|| Number::from(0))),
-                        );
-                    }
-                    NodeType::Str => {
-                        let s = reader.read_string(0)?;
-                        obj.insert(nd.name.to_string(), Value::String(s));
-                    }
-                    NodeType::VarShort => {
-                        let mut arr = Vec::with_capacity(5);
-                        for _ in 0..5 {
-                            arr.push(Value::Number(Number::from(reader.read_varshort()? as i64)));
-                        }
-                        obj.insert(nd.name.to_string(), Value::Array(arr));
-                    }
-                    NodeType::Bool => unreachable!(),
-                }
-            }
-        }
-    }
-    if bit != 0 {
-        reader.off = bool_byte_pos + 1;
-    }
-    Ok(obj)
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameKeyParsed {
+    pub version: u8,
+    pub map: HashMap<String, [u8; 5]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lanota_read_keys: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camellia_read_key: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overflow: Option<String>,
 }
 
-fn deser_nodes_into(
-    obj: &mut serde_json::Map<String, Value>,
-    reader: &mut Reader,
-    groups: &[&[LeafNode]],
-) -> Result<(), SaveProviderError> {
-    let version = obj.get("version").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
-    for group in groups.iter().take(version.min(groups.len())) {
-        let sub = deser_object(reader, group)?;
-        for (k, v) in sub {
-            obj.insert(k, v);
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameProgressParsed {
+    pub version: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_first_run: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legacy_chapter_finished: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub already_show_collection_tip: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub already_show_auto_unlock_in_tip: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completed: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub song_update_info: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub challenge_mode_rank: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub money: Option<[i32; 5]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unlock_flag_of_spasmodic: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unlock_flag_of_igallta: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unlock_flag_of_rrharil: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flag_of_song_record_key: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub random_version_unlocked: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chapter8_unlock_begin: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chapter8_unlock_second_phase: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chapter8_passed: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chapter8_song_unlocked: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub overflow: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UserParsed {
+    pub show_player_id: bool,
+    pub self_intro: String,
+    pub avatar: String,
+    pub background: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsParsed {
+    pub chord_support: bool,
+    pub fc_ap_indicator: bool,
+    pub enable_hit_sound: bool,
+    pub low_resolution_mode: bool,
+    pub device_name: String,
+    pub bright: f64,
+    pub music_volume: f64,
+    pub effect_volume: f64,
+    pub hit_sound_volume: f64,
+    pub sound_offset: f64,
+    pub note_scale: f64,
+}
+
+fn parse_game_key_map(reader: &mut Reader) -> Result<HashMap<String, [u8; 5]>, SaveProviderError> {
+    let length = reader.read_varshort()?;
+    let mut map = HashMap::with_capacity(usize::try_from(length).unwrap_or(0));
+    for _ in 0..length {
+        let key = reader.read_string(0)?;
+        if reader.remain() < 1 {
+            return Err(SaveProviderError::Decrypt("EOF map len".into()));
         }
+        let first_len = reader.data[reader.off] as usize;
+        let next = reader.off + 1 + first_len;
+        if next > reader.data.len() {
+            return Err(SaveProviderError::Decrypt("EOF map payload".into()));
+        }
+        reader.off += 1;
+        let len = reader.read_u8()?;
+        let mut arr = [0u8; 5];
+        for (idx, slot) in arr.iter_mut().enumerate() {
+            if ((len >> idx) & 1) != 0 {
+                *slot = reader.read_u8()?;
+            }
+        }
+        map.insert(key, arr);
+        reader.off = next;
     }
-    Ok(())
+    Ok(map)
+}
+
+pub fn parse_game_key_entry(entry: &[u8]) -> Result<GameKeyParsed, SaveProviderError> {
+    if entry.is_empty() {
+        return Err(SaveProviderError::Decrypt("gameKey 澶煭".into()));
+    }
+    let mut r = Reader::new(entry);
+    let version = r.read_u8()?;
+    let map = parse_game_key_map(&mut r)?;
+    let lanota_read_keys = if version >= 1 {
+        Some(r.read_u8()?)
+    } else {
+        None
+    };
+    let camellia_read_key = if version >= 2 {
+        Some((r.read_u8()? & 1) != 0)
+    } else {
+        None
+    };
+    let overflow = if r.off < entry.len() {
+        Some(general_purpose::STANDARD.encode(&entry[r.off..]))
+    } else {
+        None
+    };
+    Ok(GameKeyParsed {
+        version,
+        map,
+        lanota_read_keys,
+        camellia_read_key,
+        overflow,
+    })
+}
+
+pub fn parse_game_progress_entry(entry: &[u8]) -> Result<GameProgressParsed, SaveProviderError> {
+    if entry.is_empty() {
+        return Err(SaveProviderError::Decrypt("gameProgress 澶煭".into()));
+    }
+    let mut r = Reader::new(entry);
+    let version = r.read_u8()?;
+    let mut out = GameProgressParsed {
+        version,
+        is_first_run: None,
+        legacy_chapter_finished: None,
+        already_show_collection_tip: None,
+        already_show_auto_unlock_in_tip: None,
+        completed: None,
+        song_update_info: None,
+        challenge_mode_rank: None,
+        money: None,
+        unlock_flag_of_spasmodic: None,
+        unlock_flag_of_igallta: None,
+        unlock_flag_of_rrharil: None,
+        flag_of_song_record_key: None,
+        random_version_unlocked: None,
+        chapter8_unlock_begin: None,
+        chapter8_unlock_second_phase: None,
+        chapter8_passed: None,
+        chapter8_song_unlocked: None,
+        overflow: None,
+    };
+
+    if version >= 1 {
+        let flags = r.read_u8()?;
+        out.is_first_run = Some((flags & 0b0001) != 0);
+        out.legacy_chapter_finished = Some((flags & 0b0010) != 0);
+        out.already_show_collection_tip = Some((flags & 0b0100) != 0);
+        out.already_show_auto_unlock_in_tip = Some((flags & 0b1000) != 0);
+        out.completed = Some(r.read_string(0)?);
+        out.song_update_info = Some(r.read_u8()?);
+        out.challenge_mode_rank = Some(r.read_u16_le()?);
+        let mut money = [0_i32; 5];
+        for slot in &mut money {
+            *slot = r.read_varshort()?;
+        }
+        out.money = Some(money);
+        out.unlock_flag_of_spasmodic = Some(r.read_u8()?);
+        out.unlock_flag_of_igallta = Some(r.read_u8()?);
+        out.unlock_flag_of_rrharil = Some(r.read_u8()?);
+        out.flag_of_song_record_key = Some(r.read_u8()?);
+    }
+    if version >= 2 {
+        out.random_version_unlocked = Some(r.read_u8()?);
+    }
+    if version >= 3 {
+        let flags = r.read_u8()?;
+        out.chapter8_unlock_begin = Some((flags & 0b0001) != 0);
+        out.chapter8_unlock_second_phase = Some((flags & 0b0010) != 0);
+        out.chapter8_passed = Some((flags & 0b0100) != 0);
+        out.chapter8_song_unlocked = Some(r.read_u8()?);
+    }
+    if r.off < entry.len() {
+        out.overflow = Some(general_purpose::STANDARD.encode(&entry[r.off..]));
+    }
+    Ok(out)
+}
+
+pub fn parse_user_entry(entry: &[u8]) -> Result<UserParsed, SaveProviderError> {
+    if entry.is_empty() {
+        return Err(SaveProviderError::Decrypt("user 澶煭".into()));
+    }
+    let mut r = Reader::new(&entry[1..]);
+    let flags = r.read_u8()?;
+    Ok(UserParsed {
+        show_player_id: (flags & 0b0001) != 0,
+        self_intro: r.read_string(0)?,
+        avatar: r.read_string(0)?,
+        background: r.read_string(0)?,
+    })
+}
+
+pub fn parse_settings_entry(entry: &[u8]) -> Result<SettingsParsed, SaveProviderError> {
+    if entry.is_empty() {
+        return Err(SaveProviderError::Decrypt("settings 澶煭".into()));
+    }
+    let mut r = Reader::new(&entry[1..]);
+    let flags = r.read_u8()?;
+    Ok(SettingsParsed {
+        chord_support: (flags & 0b0001) != 0,
+        fc_ap_indicator: (flags & 0b0010) != 0,
+        enable_hit_sound: (flags & 0b0100) != 0,
+        low_resolution_mode: (flags & 0b1000) != 0,
+        device_name: r.read_string(0)?,
+        bright: r.read_f32_le()? as f64,
+        music_volume: r.read_f32_le()? as f64,
+        effect_volume: r.read_f32_le()? as f64,
+        hit_sound_volume: r.read_f32_le()? as f64,
+        sound_offset: r.read_f32_le()? as f64,
+        note_scale: r.read_f32_le()? as f64,
+    })
 }
 
 fn deser_map(reader: &mut Reader, end: u8) -> Result<Value, SaveProviderError> {
-    let mut map = serde_json::Map::new();
     let length = reader.read_varshort()?;
+    let mut map = serde_json::Map::with_capacity(usize::try_from(length).unwrap_or(0));
     for _ in 0..length {
         let key = reader.read_string(end as usize)?;
         if reader.remain() < 1 {
@@ -336,7 +324,7 @@ fn deser_map(reader: &mut Reader, end: u8) -> Result<Value, SaveProviderError> {
         let first_len = reader.data[reader.off] as usize;
         let next = reader.off + 1 + first_len;
         reader.off += 1;
-        let mut arr = Vec::new();
+        let mut arr = Vec::with_capacity(if end != 0 { 12 } else { 5 });
         let len = reader.read_u8()?;
         if end != 0 {
             let fc = reader.read_u8()?;
@@ -383,63 +371,18 @@ pub fn parse_single_save_entry_to_json(
             let mut r = Reader::new(&entry[1..]);
             deser_map(&mut r, 2)
         }
-        "gameKey" => {
-            if entry.is_empty() {
-                return Err(SaveProviderError::Decrypt("gameKey 太短".into()));
-            }
-            let mut r = Reader::new(entry);
-            let ver = r.read_u8()?;
-            let mut obj = serde_json::Map::new();
-            obj.insert(
-                "version".to_string(),
-                Value::Number(Number::from(ver as i64)),
-            );
-            obj.insert("map".to_string(), deser_map(&mut r, 0)?);
-            deser_nodes_into(&mut obj, &mut r, &[GAMEKEY1, GAMEKEY2])?;
-            if r.off < entry.len() {
-                obj.insert(
-                    "overflow".to_string(),
-                    Value::String(general_purpose::STANDARD.encode(&entry[r.off..])),
-                );
-            }
-            Ok(Value::Object(obj))
-        }
-        "gameProgress" => {
-            if entry.is_empty() {
-                return Err(SaveProviderError::Decrypt("gameProgress 太短".into()));
-            }
-            let mut r = Reader::new(entry);
-            let ver = r.read_u8()?;
-            let mut obj = serde_json::Map::new();
-            obj.insert(
-                "version".to_string(),
-                Value::Number(Number::from(ver as i64)),
-            );
-            deser_nodes_into(&mut obj, &mut r, &[GAMEPROGRESS1, GAMEPROGRESS2, GAMEPROGRESS3])?;
-            if r.off < entry.len() {
-                obj.insert(
-                    "overflow".to_string(),
-                    Value::String(general_purpose::STANDARD.encode(&entry[r.off..])),
-                );
-            }
-            Ok(Value::Object(obj))
-        }
-        "user" => {
-            if entry.is_empty() {
-                return Err(SaveProviderError::Decrypt("user 太短".into()));
-            }
-            let mut r = Reader::new(&entry[1..]);
-            let obj = deser_object(&mut r, USER_NODES)?;
-            Ok(Value::Object(obj))
-        }
-        "settings" => {
-            if entry.is_empty() {
-                return Err(SaveProviderError::Decrypt("settings 太短".into()));
-            }
-            let mut r = Reader::new(&entry[1..]);
-            let obj = deser_object(&mut r, SETTINGS_NODES)?;
-            Ok(Value::Object(obj))
-        }
+        "gameKey" => serde_json::to_value(parse_game_key_entry(entry)?).map_err(|e| {
+            SaveProviderError::Json(format!("serialize parsed save entry failed: {e}"))
+        }),
+        "gameProgress" => serde_json::to_value(parse_game_progress_entry(entry)?).map_err(|e| {
+            SaveProviderError::Json(format!("serialize parsed save entry failed: {e}"))
+        }),
+        "user" => serde_json::to_value(parse_user_entry(entry)?).map_err(|e| {
+            SaveProviderError::Json(format!("serialize parsed save entry failed: {e}"))
+        }),
+        "settings" => serde_json::to_value(parse_settings_entry(entry)?).map_err(|e| {
+            SaveProviderError::Json(format!("serialize parsed save entry failed: {e}"))
+        }),
         _ => Err(SaveProviderError::Json(format!(
             "unsupported save entry name: {name}"
         ))),
@@ -447,7 +390,7 @@ pub fn parse_single_save_entry_to_json(
 }
 
 pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, SaveProviderError> {
-    let mut root = serde_json::Map::new();
+    let mut root = serde_json::Map::with_capacity(entries.len().min(5));
     for name in ["gameRecord", "gameKey", "gameProgress", "user", "settings"] {
         if let Some(entry) = entries.get(name) {
             let parsed = parse_single_save_entry_to_json(name, entry)?;

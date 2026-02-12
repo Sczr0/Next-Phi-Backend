@@ -506,7 +506,7 @@ pub async fn render_bn(
     }
 
     // cache miss：下载/解密/解析存档本体
-    let parsed = provider::get_decrypted_save_from_meta(meta, &state.chart_constants)
+    let parsed = provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone())
         .await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
     let save_ms = t_save.elapsed().as_millis() as i64;
@@ -631,8 +631,9 @@ pub async fn render_bn(
     } else {
         parsed
             .game_progress
-            .get("challengeModeRank")
-            .and_then(|v| v.as_i64())
+            .as_ref()
+            .and_then(|progress| progress.challenge_mode_rank)
+            .map(i64::from)
     }
     .and_then(|rank_num| {
         if rank_num <= 0 {
@@ -660,21 +661,16 @@ pub async fn render_bn(
     // Data 数（money）展示
     let data_string = parsed
         .game_progress
-        .get("money")
-        .and_then(|v| v.as_array())
+        .as_ref()
+        .and_then(|progress| progress.money.as_ref())
         .and_then(|arr| {
             let units = ["KB", "MB", "GB", "TB"];
             let mut parts: Vec<String> = arr
                 .iter()
                 .zip(units.iter())
                 .filter_map(|(val, unit)| {
-                    val.as_i64().and_then(|u| {
-                        if u > 0 {
-                            Some(format!("{u} {unit}"))
-                        } else {
-                            None
-                        }
-                    })
+                    let u = *val as i64;
+                    (u > 0).then(|| format!("{u} {unit}"))
                 })
                 .collect();
             parts.reverse();
@@ -1147,7 +1143,7 @@ pub async fn render_song(
     // 构建所有引擎记录用于推分
     let mut engine_all: Vec<crate::features::rks::engine::RksRecord> = Vec::new();
     // cache miss：下载/解密/解析存档本体
-    let parsed = provider::get_decrypted_save_from_meta(meta, &state.chart_constants)
+    let parsed = provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone())
         .await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
     for (sid, diffs) in parsed.game_record.iter() {
