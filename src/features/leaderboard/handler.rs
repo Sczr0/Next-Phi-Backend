@@ -1,8 +1,7 @@
 use axum::http::HeaderMap;
 use axum::{
     Router,
-    extract::rejection::JsonRejection,
-    extract::{FromRequest, Path, Query, State},
+    extract::{Path, Query, State},
     response::Json,
     routing::{get, post, put},
 };
@@ -55,10 +54,6 @@ pub struct OkResponse {
 pub struct OkAliasResponse {
     pub ok: bool,
     pub alias: String,
-}
-
-fn map_json_rejection(err: JsonRejection) -> AppError {
-    AppError::Validation(format!("请求体 JSON 无效: {err}"))
 }
 
 fn mask_user_prefix(hash: &str) -> String {
@@ -457,16 +452,10 @@ pub async fn post_me(
     State(state): State<AppState>,
     request: axum::extract::Request,
 ) -> Result<Json<MeResponse>, AppError> {
-    let bearer_state = request
-        .extensions()
-        .get::<crate::features::auth::bearer::BearerAuthState>()
-        .cloned()
-        .unwrap_or_default();
-    let mut auth =
-        Json::<crate::features::save::models::UnifiedSaveRequest>::from_request(request, &())
-            .await
-            .map_err(map_json_rejection)?
-            .0;
+    let (mut auth, bearer_state) = crate::features::auth::bearer::parse_json_with_bearer_state::<
+        crate::features::save::models::UnifiedSaveRequest,
+    >(request)
+    .await?;
     crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
@@ -570,15 +559,9 @@ pub async fn put_alias(
     State(state): State<AppState>,
     request: axum::extract::Request,
 ) -> Result<Json<OkAliasResponse>, AppError> {
-    let bearer_state = request
-        .extensions()
-        .get::<crate::features::auth::bearer::BearerAuthState>()
-        .cloned()
-        .unwrap_or_default();
-    let mut req = Json::<AliasRequest>::from_request(request, &())
-        .await
-        .map_err(map_json_rejection)?
-        .0;
+    let (mut req, bearer_state) =
+        crate::features::auth::bearer::parse_json_with_bearer_state::<AliasRequest>(request)
+            .await?;
     crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
@@ -695,15 +678,10 @@ pub async fn put_profile(
     State(state): State<AppState>,
     request: axum::extract::Request,
 ) -> Result<Json<OkResponse>, AppError> {
-    let bearer_state = request
-        .extensions()
-        .get::<crate::features::auth::bearer::BearerAuthState>()
-        .cloned()
-        .unwrap_or_default();
-    let mut req = Json::<ProfileUpdateRequest>::from_request(request, &())
-        .await
-        .map_err(map_json_rejection)?
-        .0;
+    let (mut req, bearer_state) = crate::features::auth::bearer::parse_json_with_bearer_state::<
+        ProfileUpdateRequest,
+    >(request)
+    .await?;
     crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,

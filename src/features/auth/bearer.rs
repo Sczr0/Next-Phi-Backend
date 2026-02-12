@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{Request, State},
+    extract::{FromRequest, Request, State},
     middleware::Next,
     response::Response,
 };
@@ -181,7 +181,7 @@ pub fn decode_access_token_allow_expired(
     decode_access_token(token, cfg, false)
 }
 
-async fn validate_bearer_not_revoked(
+pub(crate) async fn validate_bearer_not_revoked(
     storage: Option<&Arc<crate::features::stats::storage::StatsStorage>>,
     claims: &SessionClaims,
 ) -> Result<(), AppError> {
@@ -206,11 +206,20 @@ async fn validate_bearer_not_revoked(
     Ok(())
 }
 
+fn should_skip_bearer_validation(path: &str) -> bool {
+    path.ends_with("/auth/session/refresh") || path.ends_with("/auth/session/logout")
+}
+
 pub async fn bearer_auth_middleware(
     State(state): State<AppState>,
     mut req: Request,
     next: Next,
 ) -> Response {
+    if should_skip_bearer_validation(req.uri().path()) {
+        req.extensions_mut().insert(BearerAuthState::Absent);
+        return next.run(req).await;
+    }
+
     let bearer_state = if req
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -238,6 +247,22 @@ pub async fn bearer_auth_middleware(
     next.run(req).await
 }
 
+pub async fn parse_json_with_bearer_state<T>(req: Request) -> Result<(T, BearerAuthState), AppError>
+where
+    T: serde::de::DeserializeOwned + Send + 'static,
+{
+    let bearer_state = req
+        .extensions()
+        .get::<BearerAuthState>()
+        .cloned()
+        .unwrap_or_default();
+    let payload = axum::Json::<T>::from_request(req, &())
+        .await
+        .map_err(|err| AppError::Validation(format!("请求体 JSON 无效: {err}")))?
+        .0;
+    Ok((payload, bearer_state))
+}
+
 pub async fn merge_auth_from_bearer_if_missing(
     _stats_storage: Option<&Arc<crate::features::stats::storage::StatsStorage>>,
     bearer: &BearerAuthState,
@@ -263,7 +288,7 @@ pub async fn merge_auth_from_bearer_if_missing(
                 return Ok(());
             }
 
-            let parsed = decode_embedded_auth(&ctx.token)?;
+            let parsed = decode_embedded_auth_with_claims(&ctx.token, &ctx.claims)?;
             tracing::debug!(target: "phi_backend::auth::bearer", "merge auth from bearer: decoded embedded auth");
             cache_put_session_auth(ctx.token.clone(), parsed.clone(), ctx.claims.exp).await;
 
@@ -400,7 +425,7 @@ pub fn decode_embedded_auth_allow_expired(token: &str) -> Result<UnifiedSaveRequ
     decode_embedded_auth_with_claims(token, &claims)
 }
 
-fn decode_embedded_auth_with_claims(
+pub(crate) fn decode_embedded_auth_with_claims(
     token: &str,
     claims: &SessionClaims,
 ) -> Result<UnifiedSaveRequest, AppError> {

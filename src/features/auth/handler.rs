@@ -15,8 +15,9 @@ use crate::state::AppState;
 
 use super::bearer::{
     SessionClaims, build_embedded_auth_claim, decode_access_token_allow_expired,
-    decode_embedded_auth_allow_expired, ensure_session_config, extract_bearer_token,
+    decode_embedded_auth_with_claims, ensure_session_config, extract_bearer_token,
     resolve_exchange_secret, resolve_expected_exchange_secret, resolve_jwt_secret,
+    validate_bearer_not_revoked,
 };
 use super::qrcode_service::QrCodeStatus;
 
@@ -441,21 +442,7 @@ pub async fn post_session_refresh(
         .ok_or_else(|| AppError::Internal("统计存储未初始化，无法执行会话刷新".into()))?;
 
     let now = chrono::Utc::now();
-    let now_rfc3339 = now.to_rfc3339();
-    let (blacklisted, logout_before) = storage
-        .get_session_revoke_state(&authz.claims.jti, &authz.claims.sub, &now_rfc3339)
-        .await?;
-    if blacklisted {
-        return Err(AppError::Auth("会话令牌已失效".into()));
-    }
-    if let Some(gate) = logout_before {
-        let gate_ts = chrono::DateTime::parse_from_rfc3339(&gate)
-            .map_err(|e| AppError::Internal(format!("瑙ｆ瀽浼氳瘽鎾ら攢鏃堕棿澶辫触: {e}")))?
-            .timestamp();
-        if authz.claims.iat < gate_ts {
-            return Err(AppError::Auth("浼氳瘽浠ょ墝宸茶鐢ㄦ埛浣滃簾".into()));
-        }
-    }
+    validate_bearer_not_revoked(Some(storage), &authz.claims).await?;
 
     let refresh_window_secs = resolve_refresh_window_secs(cfg) as i64;
     let expired_for_secs = now.timestamp().saturating_sub(authz.claims.exp);
@@ -463,7 +450,7 @@ pub async fn post_session_refresh(
         return Err(AppError::Auth("会话令牌过期时间过长，无法刷新".into()));
     }
 
-    let auth = decode_embedded_auth_allow_expired(&authz.token)?;
+    let auth = decode_embedded_auth_with_claims(&authz.token, &authz.claims)?;
     let token = issue_session_access_token(&auth, &authz.claims.sub, cfg, &jwt_secret, now)?;
 
     Ok((
@@ -513,23 +500,7 @@ pub async fn post_session_logout(
         .ok_or_else(|| AppError::Internal("统计存储未初始化，无法执行会话撤销".into()))?;
     let now = chrono::Utc::now();
     let now_rfc3339 = now.to_rfc3339();
-    if storage
-        .is_token_blacklisted(&authz.claims.jti, &now_rfc3339)
-        .await?
-    {
-        return Err(AppError::Auth("会话令牌已失效".into()));
-    }
-    if let Some(gate) = storage
-        .get_logout_gate(&authz.claims.sub, &now_rfc3339)
-        .await?
-    {
-        let gate_ts = chrono::DateTime::parse_from_rfc3339(&gate)
-            .map_err(|e| AppError::Internal(format!("解析时间门失败: {e}")))?
-            .timestamp();
-        if authz.claims.iat < gate_ts {
-            return Err(AppError::Auth("会话令牌已被用户作废".into()));
-        }
-    }
+    validate_bearer_not_revoked(Some(storage), &authz.claims).await?;
     let mut logout_before = None;
     if req.scope == SessionLogoutScope::All {
         let gate = now + chrono::Duration::seconds(cfg.revoke_all_grace_secs as i64);
@@ -546,8 +517,7 @@ pub async fn post_session_logout(
         .unwrap_or(now + chrono::Duration::seconds(cfg.access_ttl_secs as i64))
         .to_rfc3339();
 
-    let _claims_allow_expired = decode_access_token_allow_expired(&authz.token, cfg)?;
-    let _embedded = decode_embedded_auth_allow_expired(&authz.token)?;
+    let _embedded_auth = decode_embedded_auth_with_claims(&authz.token, &authz.claims)?;
 
     storage
         .add_token_blacklist(&authz.claims.jti, &expires_at, &now_rfc3339)

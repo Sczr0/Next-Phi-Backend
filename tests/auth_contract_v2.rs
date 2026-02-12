@@ -144,6 +144,53 @@ fn decode_claims(token: &str) -> serde_json::Value {
     data.claims
 }
 
+fn session_jwt_secret() -> String {
+    let cfg = &AppConfig::global().session;
+    if !cfg.jwt_secret.trim().is_empty() {
+        cfg.jwt_secret.clone()
+    } else {
+        std::env::var("APP_SESSION_JWT_SECRET").expect("APP_SESSION_JWT_SECRET")
+    }
+}
+
+fn mint_session_token_from_auth(
+    auth: &UnifiedSaveRequest,
+    sub: &str,
+    iat: i64,
+    exp: i64,
+) -> String {
+    #[derive(serde::Serialize)]
+    struct SessionTokenClaimsForTest<'a> {
+        sub: &'a str,
+        jti: String,
+        iss: &'a str,
+        aud: &'a str,
+        iat: i64,
+        exp: i64,
+        sae: String,
+    }
+
+    let cfg = &AppConfig::global().session;
+    let jti = Uuid::new_v4().to_string();
+    let sae = phi_backend::features::auth::bearer::build_embedded_auth_claim(auth, &jti, sub)
+        .expect("build embedded auth claim");
+    let claims = SessionTokenClaimsForTest {
+        sub,
+        jti,
+        iss: cfg.jwt_issuer.as_str(),
+        aud: cfg.jwt_audience.as_str(),
+        iat,
+        exp,
+        sae,
+    };
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(session_jwt_secret().as_bytes()),
+    )
+    .expect("encode session token")
+}
+
 #[tokio::test]
 async fn qrcode_status_missing_is_expired_and_no_store() {
     let state = make_state();
@@ -482,6 +529,69 @@ async fn session_refresh_rejects_blacklisted_token() {
     let result = post_session_refresh(
         State(state),
         make_refresh_headers("test-exchange-secret", &token),
+    )
+    .await;
+
+    assert!(result.is_err());
+    let err = result.err().expect("refresh should fail");
+    let response = err.into_response();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn session_refresh_accepts_expired_token_within_refresh_window() {
+    init_test_config();
+    let state = make_state_with_storage().await;
+    let fresh_token = exchange_token("test-exchange-secret").await;
+    let fresh_claims = decode_claims(&fresh_token);
+    let sub = fresh_claims
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .expect("sub claim");
+    let auth = phi_backend::features::auth::bearer::decode_embedded_auth(&fresh_token)
+        .expect("decode embedded auth");
+
+    let now_ts = chrono::Utc::now().timestamp();
+    let expired_token = mint_session_token_from_auth(&auth, sub, now_ts - 120, now_ts - 30);
+
+    let (status, Json(resp)) = post_session_refresh(
+        State(state),
+        make_refresh_headers("test-exchange-secret", &expired_token),
+    )
+    .await
+    .expect("refresh should succeed for recently expired token");
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(resp.token_type, "Bearer");
+    assert_eq!(resp.expires_in, AppConfig::global().session.access_ttl_secs);
+    assert_ne!(resp.access_token, expired_token);
+}
+
+#[tokio::test]
+async fn session_refresh_rejects_token_expired_too_long() {
+    init_test_config();
+    let state = make_state_with_storage().await;
+    let fresh_token = exchange_token("test-exchange-secret").await;
+    let fresh_claims = decode_claims(&fresh_token);
+    let sub = fresh_claims
+        .get("sub")
+        .and_then(|v| v.as_str())
+        .expect("sub claim");
+    let auth = phi_backend::features::auth::bearer::decode_embedded_auth(&fresh_token)
+        .expect("decode embedded auth");
+
+    let now_ts = chrono::Utc::now().timestamp();
+    let refresh_window = AppConfig::global().session.revoke_ttl_secs as i64;
+    let expired_too_long_token = mint_session_token_from_auth(
+        &auth,
+        sub,
+        now_ts - refresh_window - 300,
+        now_ts - refresh_window - 120,
+    );
+
+    let result = post_session_refresh(
+        State(state),
+        make_refresh_headers("test-exchange-secret", &expired_too_long_token),
     )
     .await;
 

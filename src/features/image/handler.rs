@@ -3,8 +3,7 @@ use std::collections::HashMap;
 use axum::body::Bytes;
 use axum::{
     Json, Router,
-    extract::rejection::JsonRejection,
-    extract::{FromRequest, Query, State},
+    extract::{Query, State},
     http::{HeaderValue, StatusCode, header},
     response::IntoResponse,
     routing::post,
@@ -28,10 +27,6 @@ use crate::{
 
 use super::types::{RenderBnRequest, RenderSongRequest, RenderUserBnRequest};
 use serde::Deserialize;
-
-fn map_json_rejection(err: JsonRejection) -> AppError {
-    AppError::Validation(format!("请求体 JSON 无效: {err}"))
-}
 
 /// 图片输出选项（通过 Query 传入，避免破坏现有 JSON 请求体）
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -338,15 +333,9 @@ pub async fn render_bn(
     Query(q): Query<ImageQueryOpts>,
     request: axum::extract::Request,
 ) -> Result<impl IntoResponse, AppError> {
-    let bearer_state = request
-        .extensions()
-        .get::<crate::features::auth::bearer::BearerAuthState>()
-        .cloned()
-        .unwrap_or_default();
-    let mut req = Json::<RenderBnRequest>::from_request(request, &())
-        .await
-        .map_err(map_json_rejection)?
-        .0;
+    let (mut req, bearer_state) =
+        crate::features::auth::bearer::parse_json_with_bearer_state::<RenderBnRequest>(request)
+            .await?;
     crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
@@ -1005,15 +994,9 @@ pub async fn render_song(
     Query(q): Query<ImageQueryOpts>,
     request: axum::extract::Request,
 ) -> Result<impl IntoResponse, AppError> {
-    let bearer_state = request
-        .extensions()
-        .get::<crate::features::auth::bearer::BearerAuthState>()
-        .cloned()
-        .unwrap_or_default();
-    let mut req = Json::<RenderSongRequest>::from_request(request, &())
-        .await
-        .map_err(map_json_rejection)?
-        .0;
+    let (mut req, bearer_state) =
+        crate::features::auth::bearer::parse_json_with_bearer_state::<RenderSongRequest>(request)
+            .await?;
     crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,

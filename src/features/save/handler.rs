@@ -2,10 +2,9 @@
 use axum::{
     Router,
     body::Bytes,
-    extract::rejection::JsonRejection,
-    extract::{FromRequest, Query, State},
+    extract::{Query, State},
     http::{StatusCode, header::CONTENT_TYPE},
-    response::{IntoResponse, Json, Response},
+    response::{IntoResponse, Response},
     routing::post,
 };
 use moka::future::Cache;
@@ -30,10 +29,6 @@ use super::{
 pub enum SaveApiResponse {
     Save(SaveResponseDoc),
     SaveAndRks(SaveAndRksResponseDoc),
-}
-
-fn map_json_rejection(err: JsonRejection) -> AppError {
-    AppError::Validation(format!("请求体 JSON 无效: {err}"))
 }
 
 /// /save 缓存项。
@@ -149,15 +144,9 @@ pub async fn get_save_data(
 ) -> Result<Response, AppError> {
     let t_total = Instant::now();
 
-    let bearer_state = req
-        .extensions()
-        .get::<crate::features::auth::bearer::BearerAuthState>()
-        .cloned()
-        .unwrap_or_default();
-    let mut payload = Json::<UnifiedSaveRequest>::from_request(req, &())
-        .await
-        .map_err(map_json_rejection)?
-        .0;
+    let (mut payload, bearer_state) =
+        crate::features::auth::bearer::parse_json_with_bearer_state::<UnifiedSaveRequest>(req)
+            .await?;
     crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
