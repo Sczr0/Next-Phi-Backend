@@ -1,5 +1,6 @@
 use base64::{Engine as _, engine::general_purpose};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 use super::decryptor::{CipherSuite, DEFAULT_IV, DecryptionMeta, KdfSpec};
 
@@ -121,6 +122,7 @@ pub async fn fetch_from_official(
     config: &crate::config::TapTapMultiConfig,
     version: Option<&str>,
 ) -> Result<(String, DecryptionMeta, Option<String>, Option<String>), SaveProviderError> {
+    let t_total = Instant::now();
     let client = crate::http::client_timeout_30s()?;
 
     // 根据版本选择配置
@@ -142,6 +144,7 @@ pub async fn fetch_from_official(
         tap_config.leancloud_base_url
     );
 
+    let t_http = Instant::now();
     let response = client
         .get(&url)
         .header("X-LC-Id", &tap_config.leancloud_app_id)
@@ -150,8 +153,19 @@ pub async fn fetch_from_official(
         .header("User-Agent", USER_AGENT)
         .send()
         .await?;
+    let http_ms = t_http.elapsed().as_millis();
 
     if !response.status().is_success() {
+        tracing::info!(
+            target: "phi_backend::save::performance",
+            phase = "fetch_from_official",
+            provider = "official",
+            status = "error",
+            status_code = response.status().as_u16(),
+            dur_ms = http_ms,
+            total_dur_ms = t_total.elapsed().as_millis(),
+            "save provider performance"
+        );
         return Err(SaveProviderError::Auth(format!(
             "API 请求失败: {}",
             response.status()
@@ -247,6 +261,16 @@ pub async fn fetch_from_official(
         meta.cipher = CipherSuite::Aes256CbcPkcs7 { iv: DEFAULT_IV };
     }
 
+    tracing::info!(
+        target: "phi_backend::save::performance",
+        phase = "fetch_from_official",
+        provider = "official",
+        status = "ok",
+        status_code = 200_u16,
+        dur_ms = http_ms,
+        total_dur_ms = t_total.elapsed().as_millis(),
+        "save provider performance"
+    );
     Ok((download_url, meta, summary_b64, updated_at))
 }
 
@@ -311,6 +335,7 @@ struct ExternalSummary {
 pub async fn fetch_from_external(
     credentials: &ExternalApiCredentials,
 ) -> Result<(String, Option<String>), SaveProviderError> {
+    let t_total = Instant::now();
     if !credentials.is_valid() {
         return Err(SaveProviderError::InvalidCredentials(
             "必须提供以下凭证之一：platform + platform_id / sessiontoken / api_user_id".to_string(),
@@ -327,13 +352,25 @@ pub async fn fetch_from_external(
 
     let client = crate::http::client_timeout_30s()?;
 
+    let t_http = Instant::now();
     let response = client
         .post("https://phib19.top:8080/get/cloud/saves")
         .json(&request_body)
         .send()
         .await?;
+    let http_ms = t_http.elapsed().as_millis();
 
     if !response.status().is_success() {
+        tracing::info!(
+            target: "phi_backend::save::performance",
+            phase = "fetch_from_external",
+            provider = "external",
+            status = "error",
+            status_code = response.status().as_u16(),
+            dur_ms = http_ms,
+            total_dur_ms = t_total.elapsed().as_millis(),
+            "save provider performance"
+        );
         return Err(SaveProviderError::InvalidResponse(format!(
             "外部 API 请求失败: {}",
             response.status()
@@ -358,6 +395,16 @@ pub async fn fetch_from_external(
     if updated_at.is_none() {
         updated_at = api_response.data.summary.and_then(|s| s.updated_at);
     }
+    tracing::info!(
+        target: "phi_backend::save::performance",
+        phase = "fetch_from_external",
+        provider = "external",
+        status = "ok",
+        status_code = 200_u16,
+        dur_ms = http_ms,
+        total_dur_ms = t_total.elapsed().as_millis(),
+        "save provider performance"
+    );
     Ok((api_response.data.save_url, updated_at))
 }
 

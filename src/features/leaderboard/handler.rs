@@ -8,6 +8,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use sqlx::{QueryBuilder, Row, Sqlite};
 use std::collections::HashMap;
+use std::time::Instant;
 
 use crate::{error::AppError, state::AppState};
 
@@ -146,6 +147,7 @@ pub async fn get_top(
     State(state): State<AppState>,
     Query(q): Query<TopQuery>,
 ) -> Result<Json<LeaderboardTopResponse>, AppError> {
+    let t_total = Instant::now();
     let storage = state
         .stats_storage
         .as_ref()
@@ -266,6 +268,17 @@ pub async fn get_top(
         });
     }
 
+    tracing::info!(
+        target: "phi_backend::leaderboard::performance",
+        route = "/leaderboard/rks/top",
+        phase = "total",
+        status = "ok",
+        lite,
+        items = items.len(),
+        total,
+        total_dur_ms = t_total.elapsed().as_millis(),
+        "leaderboard performance"
+    );
     Ok(Json(LeaderboardTopResponse {
         items,
         total,
@@ -312,6 +325,7 @@ pub async fn get_by_rank(
     State(state): State<AppState>,
     Query(q): Query<RankQuery>,
 ) -> Result<Json<LeaderboardTopResponse>, AppError> {
+    let t_total = Instant::now();
     let storage = state
         .stats_storage
         .as_ref()
@@ -418,6 +432,17 @@ pub async fn get_by_rank(
         });
     }
 
+    tracing::info!(
+        target: "phi_backend::leaderboard::performance",
+        route = "/leaderboard/rks/by-rank",
+        phase = "total",
+        status = "ok",
+        lite,
+        items = items.len(),
+        total,
+        total_dur_ms = t_total.elapsed().as_millis(),
+        "leaderboard performance"
+    );
     Ok(Json(LeaderboardTopResponse {
         items,
         total,

@@ -2,6 +2,7 @@
 
 use axum::{Router, extract::State, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 
 use crate::{error::AppError, state::AppState};
 
@@ -92,6 +93,7 @@ pub async fn post_rks_history(
     State(state): State<AppState>,
     request: axum::extract::Request,
 ) -> Result<Json<RksHistoryResponse>, AppError> {
+    let t_total = Instant::now();
     let (mut req, bearer_state) =
         crate::features::auth::bearer::parse_json_with_bearer_state::<RksHistoryRequest>(request)
             .await?;
@@ -131,6 +133,7 @@ pub async fn post_rks_history(
     let offset = req.offset.unwrap_or(0).max(0);
 
     // 查询历史记录
+    let t_query = Instant::now();
     let (items, total) = storage.query_rks_history(&user_hash, limit, offset).await?;
 
     // 获取当前 RKS
@@ -142,6 +145,19 @@ pub async fn post_rks_history(
 
     // 获取历史最高 RKS
     let peak_rks = storage.get_peak_rks(&user_hash).await?;
+    let query_ms = t_query.elapsed().as_millis();
+
+    tracing::info!(
+        target: "phi_backend::rks::performance",
+        route = "/rks/history",
+        phase = "total",
+        status = "ok",
+        items = items.len(),
+        total,
+        query_ms,
+        total_dur_ms = t_total.elapsed().as_millis(),
+        "rks performance"
+    );
 
     Ok(Json(RksHistoryResponse {
         items,

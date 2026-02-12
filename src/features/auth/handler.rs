@@ -8,6 +8,7 @@ use axum::{
 use base64::Engine;
 use qrcode::{QrCode, render::svg};
 use serde::{Deserialize, Serialize};
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -344,6 +345,7 @@ pub async fn post_session_exchange(
     headers: axum::http::HeaderMap,
     Json(req): Json<SessionExchangeRequest>,
 ) -> Result<(StatusCode, Json<SessionExchangeResponse>), AppError> {
+    let t_total = Instant::now();
     try_cleanup_expired_session_records(&state).await;
     let cfg = ensure_session_config()?;
     ensure_exchange_secret_valid(&headers, cfg)?;
@@ -390,6 +392,14 @@ pub async fn post_session_exchange(
         .ok_or_else(|| AppError::Auth("鏃犳硶璇嗗埆鐢ㄦ埛锛堢己灏戝彲鐢ㄥ嚟璇侊級".into()))?;
     let token =
         issue_session_access_token(&auth, &user_hash, cfg, &jwt_secret, chrono::Utc::now())?;
+    tracing::info!(
+        target: "phi_backend::auth::performance",
+        route = "/auth/session/exchange",
+        phase = "total",
+        status = "ok",
+        dur_ms = t_total.elapsed().as_millis(),
+        "auth performance"
+    );
     Ok((
         StatusCode::OK,
         Json(SessionExchangeResponse {
@@ -430,6 +440,7 @@ pub async fn post_session_refresh(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
 ) -> Result<(StatusCode, Json<SessionExchangeResponse>), AppError> {
+    let t_total = Instant::now();
     try_cleanup_expired_session_records(&state).await;
     let cfg = ensure_session_config()?;
     ensure_exchange_secret_valid(&headers, cfg)?;
@@ -452,6 +463,14 @@ pub async fn post_session_refresh(
 
     let auth = decode_embedded_auth_with_claims(&authz.token, &authz.claims)?;
     let token = issue_session_access_token(&auth, &authz.claims.sub, cfg, &jwt_secret, now)?;
+    tracing::info!(
+        target: "phi_backend::auth::performance",
+        route = "/auth/session/refresh",
+        phase = "total",
+        status = "ok",
+        dur_ms = t_total.elapsed().as_millis(),
+        "auth performance"
+    );
 
     Ok((
         StatusCode::OK,
@@ -491,6 +510,7 @@ pub async fn post_session_logout(
     headers: axum::http::HeaderMap,
     Json(req): Json<SessionLogoutRequest>,
 ) -> Result<(StatusCode, Json<SessionLogoutResponse>), AppError> {
+    let t_total = Instant::now();
     try_cleanup_expired_session_records(&state).await;
     let cfg = ensure_session_config()?;
     let authz = parse_authorization_token(&headers, cfg).await?;
@@ -522,6 +542,14 @@ pub async fn post_session_logout(
     storage
         .add_token_blacklist(&authz.claims.jti, &expires_at, &now_rfc3339)
         .await?;
+    tracing::info!(
+        target: "phi_backend::auth::performance",
+        route = "/auth/session/logout",
+        phase = "total",
+        status = "ok",
+        dur_ms = t_total.elapsed().as_millis(),
+        "auth performance"
+    );
     Ok((
         StatusCode::OK,
         Json(SessionLogoutResponse {
@@ -573,18 +601,67 @@ pub(crate) async fn post_qrcode(
     State(state): State<AppState>,
     Query(params): Query<QrCodeQuery>,
 ) -> Result<Response, AppError> {
-    // 鐢熸垚 device_id 涓?qr_id
+    let t_total = Instant::now();
+
     let device_id = Uuid::new_v4().to_string();
     let qr_id = Uuid::new_v4().to_string();
 
-    // 鑾峰彇鐗堟湰鍙傛暟
-    let version = normalize_taptap_version(params.taptap_version.as_deref())?;
+    let t_version = Instant::now();
+    let version = match normalize_taptap_version(params.taptap_version.as_deref()) {
+        Ok(v) => {
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode",
+                phase = "normalize_version",
+                status = "ok",
+                dur_ms = t_version.elapsed().as_millis(),
+                "auth performance"
+            );
+            v
+        }
+        Err(e) => {
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode",
+                phase = "normalize_version",
+                status = "failed",
+                dur_ms = t_version.elapsed().as_millis(),
+                "auth performance"
+            );
+            return Err(e);
+        }
+    };
 
-    // 请求 TapTap 设备码
-    let device = state
+    let t_request = Instant::now();
+    let device = match state
         .taptap_client
         .request_device_code(&device_id, version)
-        .await?;
+        .await
+    {
+        Ok(device) => {
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode",
+                phase = "request_device_code",
+                status = "ok",
+                dur_ms = t_request.elapsed().as_millis(),
+                "auth performance"
+            );
+            device
+        }
+        Err(e) => {
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode",
+                phase = "request_device_code",
+                status = "failed",
+                dur_ms = t_request.elapsed().as_millis(),
+                err = %e,
+                "auth performance"
+            );
+            return Err(e);
+        }
+    };
 
     let device_code = device
         .device_code
@@ -593,8 +670,6 @@ pub(crate) async fn post_qrcode(
         .verification_url
         .ok_or_else(|| AppError::Internal("TapTap 未返回 verification_url".to_string()))?;
 
-    // 组合用于扫码/跳转的最终链接：优先使用服务端返回的 qrcode_url。
-    // 否则在 verification_url 基础上拼接 user_code 参数。
     let verification_url_for_scan = if let Some(qr) = device.qrcode_url.clone() {
         qr
     } else if let Some(code) = device.user_code.clone() {
@@ -607,22 +682,42 @@ pub(crate) async fn post_qrcode(
         verification_url.clone()
     };
 
-    // 鐢熸垚浜岀淮鐮侊紙SVG锛夊苟 Base64 缂栫爜
-    let code = QrCode::new(&verification_url_for_scan)
-        .map_err(|e| AppError::Internal(format!("鐢熸垚浜岀淮鐮佸け璐? {e}")))?;
+    let t_qrcode = Instant::now();
+    let code = match QrCode::new(&verification_url_for_scan) {
+        Ok(code) => code,
+        Err(e) => {
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode",
+                phase = "generate_qrcode_svg",
+                status = "failed",
+                dur_ms = t_qrcode.elapsed().as_millis(),
+                "auth performance"
+            );
+            return Err(AppError::Internal(format!("生成二维码失败: {e}")));
+        }
+    };
     let image = code
         .render()
         .min_dimensions(256, 256)
         .dark_color(svg::Color("#000"))
         .light_color(svg::Color("#fff"))
         .build();
+    tracing::info!(
+        target: "phi_backend::auth::performance",
+        route = "/auth/qrcode",
+        phase = "generate_qrcode_svg",
+        status = "ok",
+        dur_ms = t_qrcode.elapsed().as_millis(),
+        "auth performance"
+    );
     let qrcode_base64 = format!(
         "data:image/svg+xml;base64,{}",
         base64::prelude::BASE64_STANDARD.encode(image)
     );
 
-    // 写入缓存中的 Pending 状态。
     let interval_secs = device.interval.unwrap_or(5);
+    let t_cache_set = Instant::now();
     state
         .qrcode_service
         .set_pending(
@@ -634,12 +729,28 @@ pub(crate) async fn post_qrcode(
             version.map(|v| v.to_string()),
         )
         .await;
+    tracing::info!(
+        target: "phi_backend::auth::performance",
+        route = "/auth/qrcode",
+        phase = "cache_set_pending",
+        status = "ok",
+        dur_ms = t_cache_set.elapsed().as_millis(),
+        "auth performance"
+    );
 
     let resp = QrCodeCreateResponse {
         qr_id,
         verification_url: verification_url_for_scan,
         qrcode_base64,
     };
+    tracing::info!(
+        target: "phi_backend::auth::performance",
+        route = "/auth/qrcode",
+        phase = "total",
+        status = "ok",
+        dur_ms = t_total.elapsed().as_millis(),
+        "auth performance"
+    );
     Ok(json_no_store(StatusCode::OK, resp))
 }
 
@@ -658,10 +769,42 @@ pub async fn get_qrcode_status(
     State(state): State<AppState>,
     Path(qr_id): Path<String>,
 ) -> Result<Response, AppError> {
+    let t_total = Instant::now();
+    let log_total = |result_status: &'static str| {
+        tracing::info!(
+            target: "phi_backend::auth::performance",
+            route = "/auth/qrcode/:qr_id/status",
+            phase = "total",
+            status = "ok",
+            result_status,
+            dur_ms = t_total.elapsed().as_millis(),
+            "auth performance"
+        );
+    };
+
+    let t_cache_get = Instant::now();
     let current = match state.qrcode_service.get(&qr_id).await {
-        Some(c) => c,
+        Some(c) => {
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode/:qr_id/status",
+                phase = "cache_get",
+                status = "hit",
+                dur_ms = t_cache_get.elapsed().as_millis(),
+                "auth performance"
+            );
+            c
+        }
         None => {
-            // v2 契约：二维码状态接口始终返回 200 + 状态对象。
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode/:qr_id/status",
+                phase = "cache_get",
+                status = "miss",
+                dur_ms = t_cache_get.elapsed().as_millis(),
+                "auth performance"
+            );
+            log_total("expired_not_found");
             return Ok(json_no_store(
                 StatusCode::OK,
                 QrCodeStatusResponse {
@@ -677,8 +820,17 @@ pub async fn get_qrcode_status(
 
     match current {
         QrCodeStatus::Confirmed { session_data } => {
-            // 鍛戒腑纭锛屽垹闄ょ紦瀛樺苟杩斿洖 token
+            let t_cache_remove = Instant::now();
             state.qrcode_service.remove(&qr_id).await;
+            tracing::info!(
+                target: "phi_backend::auth::performance",
+                route = "/auth/qrcode/:qr_id/status",
+                phase = "cache_remove",
+                status = "ok",
+                dur_ms = t_cache_remove.elapsed().as_millis(),
+                "auth performance"
+            );
+            log_total("confirmed");
             Ok(json_no_store(
                 StatusCode::OK,
                 QrCodeStatusResponse {
@@ -698,12 +850,20 @@ pub async fn get_qrcode_status(
             expires_at,
             version,
         } => {
-            // 频率限制：遵循 TapTap 建议的 interval。
             let now = std::time::Instant::now();
 
-            // 先判断是否已过期，避免无意义轮询。
             if now >= expires_at {
+                let t_cache_remove = Instant::now();
                 state.qrcode_service.remove(&qr_id).await;
+                tracing::info!(
+                    target: "phi_backend::auth::performance",
+                    route = "/auth/qrcode/:qr_id/status",
+                    phase = "cache_remove",
+                    status = "expired",
+                    dur_ms = t_cache_remove.elapsed().as_millis(),
+                    "auth performance"
+                );
+                log_total("expired");
                 return Ok(json_no_store(
                     StatusCode::OK,
                     QrCodeStatusResponse {
@@ -718,6 +878,16 @@ pub async fn get_qrcode_status(
 
             if now < next_poll_at {
                 let retry_secs = (next_poll_at - now).as_secs();
+                tracing::info!(
+                    target: "phi_backend::auth::performance",
+                    route = "/auth/qrcode/:qr_id/status",
+                    phase = "poll_gate",
+                    status = "deferred",
+                    retry_after = retry_secs,
+                    dur_ms = 0_u64,
+                    "auth performance"
+                );
+                log_total("pending_wait");
                 return Ok(json_no_store(
                     StatusCode::OK,
                     QrCodeStatusResponse {
@@ -730,18 +900,36 @@ pub async fn get_qrcode_status(
                 ));
             }
 
-            // 轮询 TapTap，判断授权状态。
+            let t_poll = Instant::now();
             match state
                 .taptap_client
                 .poll_for_token(&device_code, &device_id, version.as_deref())
                 .await
             {
                 Ok(session) => {
+                    tracing::info!(
+                        target: "phi_backend::auth::performance",
+                        route = "/auth/qrcode/:qr_id/status",
+                        phase = "poll_for_token",
+                        status = "ok",
+                        dur_ms = t_poll.elapsed().as_millis(),
+                        "auth performance"
+                    );
+                    let t_cache_update = Instant::now();
                     state
                         .qrcode_service
                         .set_confirmed(&qr_id, session.clone())
                         .await;
                     state.qrcode_service.remove(&qr_id).await;
+                    tracing::info!(
+                        target: "phi_backend::auth::performance",
+                        route = "/auth/qrcode/:qr_id/status",
+                        phase = "cache_update",
+                        status = "confirmed",
+                        dur_ms = t_cache_update.elapsed().as_millis(),
+                        "auth performance"
+                    );
+                    log_total("confirmed");
                     Ok(json_no_store(
                         StatusCode::OK,
                         QrCodeStatusResponse {
@@ -754,6 +942,15 @@ pub async fn get_qrcode_status(
                     ))
                 }
                 Err(AppError::AuthPending(_)) => {
+                    tracing::info!(
+                        target: "phi_backend::auth::performance",
+                        route = "/auth/qrcode/:qr_id/status",
+                        phase = "poll_for_token",
+                        status = "pending",
+                        dur_ms = t_poll.elapsed().as_millis(),
+                        "auth performance"
+                    );
+                    let t_cache_update = Instant::now();
                     state
                         .qrcode_service
                         .set_pending_next_poll(
@@ -765,6 +962,15 @@ pub async fn get_qrcode_status(
                             version,
                         )
                         .await;
+                    tracing::info!(
+                        target: "phi_backend::auth::performance",
+                        route = "/auth/qrcode/:qr_id/status",
+                        phase = "cache_update",
+                        status = "pending",
+                        dur_ms = t_cache_update.elapsed().as_millis(),
+                        "auth performance"
+                    );
+                    log_total("pending");
                     Ok(json_no_store(
                         StatusCode::OK,
                         QrCodeStatusResponse {
@@ -778,6 +984,15 @@ pub async fn get_qrcode_status(
                 }
                 Err(e) => {
                     tracing::warn!(err = %e, "qrcode poll failed");
+                    tracing::info!(
+                        target: "phi_backend::auth::performance",
+                        route = "/auth/qrcode/:qr_id/status",
+                        phase = "poll_for_token",
+                        status = "failed",
+                        dur_ms = t_poll.elapsed().as_millis(),
+                        err = %e,
+                        "auth performance"
+                    );
                     let (error_code, message) = match &e {
                         AppError::Auth(_) => ("UNAUTHORIZED", "认证失败"),
                         AppError::Network(_) => ("UPSTREAM_ERROR", "上游网络错误"),
@@ -792,6 +1007,7 @@ pub async fn get_qrcode_status(
                         | AppError::ImageRendererError(_)
                         | AppError::AuthPending(_) => ("INTERNAL_ERROR", "服务器内部错误"),
                     };
+                    log_total("error");
                     Ok(json_no_store(
                         StatusCode::OK,
                         QrCodeStatusResponse {
@@ -805,16 +1021,19 @@ pub async fn get_qrcode_status(
                 }
             }
         }
-        QrCodeStatus::Scanned => Ok(json_no_store(
-            StatusCode::OK,
-            QrCodeStatusResponse {
-                status: QrCodeStatusValue::Scanned,
-                session_token: None,
-                error_code: None,
-                message: None,
-                retry_after: None,
-            },
-        )),
+        QrCodeStatus::Scanned => {
+            log_total("scanned");
+            Ok(json_no_store(
+                StatusCode::OK,
+                QrCodeStatusResponse {
+                    status: QrCodeStatusValue::Scanned,
+                    session_token: None,
+                    error_code: None,
+                    message: None,
+                    retry_after: None,
+                },
+            ))
+        }
     }
 }
 
