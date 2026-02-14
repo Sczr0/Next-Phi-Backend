@@ -14,9 +14,9 @@ pub async fn run_startup_checks(config: &AppConfig) -> Result<(), AppError> {
     // 检查并创建 resources 文件夹
     ensure_resources_folder(config)?;
 
-    // 检查并克隆曲绘仓库
-    {
-        let illustration_path = config.illustration_path();
+    // 曲绘仓库自动同步默认关闭，避免启动阶段强依赖外部 Git/网络
+    let illustration_path = config.illustration_path();
+    if config.resources.illustration_repo_auto_sync {
         let illustration_repo = config.resources.illustration_repo.clone();
         let join = tokio::task::spawn_blocking(move || {
             ensure_illustration_repo_blocking(&illustration_repo, &illustration_path)
@@ -37,6 +37,16 @@ pub async fn run_startup_checks(config: &AppConfig) -> Result<(), AppError> {
                 }
             }
         }
+    } else if illustration_path.exists() {
+        tracing::info!(
+            "ℹ️ 已跳过曲绘仓库自动同步（resources.illustration_repo_auto_sync=false），使用本地目录: {:?}",
+            illustration_path
+        );
+    } else {
+        tracing::warn!(
+            "⚠️ 已跳过曲绘仓库自动同步（resources.illustration_repo_auto_sync=false），且本地目录不存在: {:?}。服务将继续启动；如需自动拉取请开启该配置。",
+            illustration_path
+        );
     }
 
     // 检查字体资源（仅告警，不阻断启动）

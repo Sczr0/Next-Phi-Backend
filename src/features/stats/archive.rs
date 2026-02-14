@@ -526,7 +526,7 @@ fn append_opt_string(b: &mut StringBuilder, v: Option<String>) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     use chrono::{NaiveDate, TimeZone, Utc};
 
@@ -566,7 +566,7 @@ mod tests {
         }
     }
 
-    async fn build_storage(db_path: &PathBuf) -> StatsStorage {
+    async fn build_storage(db_path: &Path) -> StatsStorage {
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent).expect("create temp db dir");
         }

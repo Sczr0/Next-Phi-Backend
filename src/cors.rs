@@ -55,10 +55,10 @@ pub fn build_cors_layer(cors: &CorsConfig) -> Option<CorsLayer> {
         layer = layer.allow_credentials(true);
     }
 
-    if let Some(secs) = cors.max_age_secs {
-        if secs > 0 {
-            layer = layer.max_age(Duration::from_secs(secs));
-        }
+    if let Some(secs) = cors.max_age_secs
+        && secs > 0
+    {
+        layer = layer.max_age(Duration::from_secs(secs));
     }
 
     Some(layer)
@@ -134,18 +134,22 @@ mod tests {
 
     #[test]
     fn build_cors_layer_skips_when_origins_empty() {
-        let mut cors = CorsConfig::default();
-        cors.enabled = true;
+        let cors = CorsConfig {
+            enabled: true,
+            ..CorsConfig::default()
+        };
         let layer = build_cors_layer(&cors);
         assert!(layer.is_none());
     }
 
     #[test]
     fn build_cors_layer_rejects_credentials_with_wildcard() {
-        let mut cors = CorsConfig::default();
-        cors.enabled = true;
-        cors.allow_credentials = true;
-        cors.allowed_origins = vec!["*".to_string()];
+        let cors = CorsConfig {
+            enabled: true,
+            allow_credentials: true,
+            allowed_origins: vec!["*".to_string()],
+            ..CorsConfig::default()
+        };
         let layer = build_cors_layer(&cors);
         assert!(layer.is_none());
     }

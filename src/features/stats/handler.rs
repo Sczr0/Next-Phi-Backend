@@ -491,17 +491,12 @@ pub async fn get_latency_agg(
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
 
-    let rows = query_latency_agg(
-        storage,
-        tz,
-        bucket,
-        start,
-        end,
-        q.feature.as_deref(),
-        q.route.as_deref(),
-        q.method.as_deref(),
-    )
-    .await?;
+    let filters = LatencyAggFilters {
+        feature: q.feature.as_deref(),
+        route: q.route.as_deref(),
+        method: q.method.as_deref(),
+    };
+    let rows = query_latency_agg(storage, tz, bucket, start, end, filters).await?;
 
     Ok(Json(LatencyAggResponse {
         timezone: tz_name,
@@ -1281,7 +1276,7 @@ fn fixed_offset_minutes_for_range(
             LocalResult::None => tz.from_utc_datetime(&local_noon),
         };
         let off_secs = dt.offset().fix().local_minus_utc();
-        let off_min = (off_secs / 60) as i32;
+        let off_min = off_secs / 60;
         match offset {
             None => offset = Some(off_min),
             Some(prev) if prev == off_min => {}
@@ -1321,6 +1316,13 @@ impl LatencyBucket {
             LatencyBucket::Month => "month",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LatencyAggFilters<'a> {
+    feature: Option<&'a str>,
+    route: Option<&'a str>,
+    method: Option<&'a str>,
 }
 
 fn parse_latency_bucket(s: Option<&str>) -> Result<LatencyBucket, AppError> {
@@ -1474,10 +1476,14 @@ async fn query_latency_agg(
     bucket: LatencyBucket,
     start: NaiveDate,
     end: NaiveDate,
-    feature: Option<&str>,
-    route: Option<&str>,
-    method: Option<&str>,
+    filters: LatencyAggFilters<'_>,
 ) -> Result<Vec<LatencyAggRow>, AppError> {
+    let LatencyAggFilters {
+        feature,
+        route,
+        method,
+    } = filters;
+
     // 统计口径：只统计“请求返回耗时”事件
     // - route IS NOT NULL：来自 HTTP stats_middleware 的 MatchedPath
     // - duration_ms IS NOT NULL：有耗时样本
@@ -2250,7 +2256,7 @@ fn parse_include_flags(include: Option<&str>) -> IncludeFlags {
     };
 
     let mut flags = IncludeFlags::default();
-    for raw in s.split(|c| c == ',' || c == ';' || c == ' ' || c == '\t' || c == '\n') {
+    for raw in s.split([',', ';', ' ', '\t', '\n']) {
         let t = raw.trim().to_ascii_lowercase();
         if t.is_empty() {
             continue;

@@ -28,8 +28,17 @@ pub struct ResourcesConfig {
     /// 曲绘外部资源基地址（HTTP），用于不依赖 Git/本地仓库时按需回源（例如 https://somnia.xtower.site）
     #[serde(default)]
     pub illustration_external_base_url: Option<String>,
+    /// 启动时是否自动同步曲绘仓库（默认关闭，避免启动强依赖外部网络/Git）
+    #[serde(default = "ResourcesConfig::default_illustration_repo_auto_sync")]
+    pub illustration_repo_auto_sync: bool,
     /// info 数据目录（包含 difficulty.csv）
     pub info_path: String,
+}
+
+impl ResourcesConfig {
+    fn default_illustration_repo_auto_sync() -> bool {
+        false
+    }
 }
 
 /// 日志配置
@@ -358,6 +367,7 @@ impl Default for AppConfig {
                 illustration_repo: "https://github.com/Catrong/phi-plugin-ill".to_string(),
                 illustration_folder: "phi-plugin-ill".to_string(),
                 illustration_external_base_url: None,
+                illustration_repo_auto_sync: ResourcesConfig::default_illustration_repo_auto_sync(),
                 info_path: "./info".to_string(),
             },
             logging: LoggingConfig {

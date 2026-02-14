@@ -11,11 +11,13 @@ use phi_backend::cors::build_cors_layer;
 
 #[tokio::test]
 async fn cors_layer_adds_allow_origin_header() {
-    let mut cors = CorsConfig::default();
-    cors.enabled = true;
-    cors.allowed_origins = vec!["https://example.com".to_string()];
-    cors.allowed_methods = vec!["GET".to_string()];
-    cors.allowed_headers = vec!["Content-Type".to_string()];
+    let cors = CorsConfig {
+        enabled: true,
+        allowed_origins: vec!["https://example.com".to_string()],
+        allowed_methods: vec!["GET".to_string()],
+        allowed_headers: vec!["Content-Type".to_string()],
+        ..CorsConfig::default()
+    };
 
     let layer = build_cors_layer(&cors).expect("cors layer");
     let app = Router::new()
@@ -41,10 +43,12 @@ async fn cors_layer_adds_allow_origin_header() {
 
 #[tokio::test]
 async fn cors_preflight_includes_allow_methods() {
-    let mut cors = CorsConfig::default();
-    cors.enabled = true;
-    cors.allowed_origins = vec!["https://example.com".to_string()];
-    cors.allowed_methods = vec!["GET".to_string(), "POST".to_string()];
+    let cors = CorsConfig {
+        enabled: true,
+        allowed_origins: vec!["https://example.com".to_string()],
+        allowed_methods: vec!["GET".to_string(), "POST".to_string()],
+        ..CorsConfig::default()
+    };
 
     let layer = build_cors_layer(&cors).expect("cors layer");
     let app = Router::new()

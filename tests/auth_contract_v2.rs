@@ -498,7 +498,7 @@ async fn session_refresh_rejects_invalid_exchange_secret() {
     .await;
 
     assert!(result.is_err());
-    let err = result.err().expect("refresh should fail");
+    let err = result.expect_err("refresh should fail");
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
@@ -533,7 +533,7 @@ async fn session_refresh_rejects_blacklisted_token() {
     .await;
 
     assert!(result.is_err());
-    let err = result.err().expect("refresh should fail");
+    let err = result.expect_err("refresh should fail");
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
@@ -596,7 +596,7 @@ async fn session_refresh_rejects_token_expired_too_long() {
     .await;
 
     assert!(result.is_err());
-    let err = result.err().expect("refresh should fail");
+    let err = result.expect_err("refresh should fail");
     let response = err.into_response();
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

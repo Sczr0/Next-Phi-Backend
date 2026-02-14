@@ -31,17 +31,12 @@ pub struct BearerAuthContext {
     pub claims: SessionClaims,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum BearerAuthState {
+    #[default]
     Absent,
     Valid(BearerAuthContext),
     Invalid(String),
-}
-
-impl Default for BearerAuthState {
-    fn default() -> Self {
-        Self::Absent
-    }
 }
 
 #[derive(Debug, Clone)]

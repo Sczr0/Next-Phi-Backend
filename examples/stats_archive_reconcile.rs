@@ -353,10 +353,11 @@ async fn run() -> Result<(), AppError> {
         return Ok(());
     }
 
-    let mut arcfg = StatsArchiveConfig::default();
-    arcfg.parquet = true;
-    arcfg.dir = archive_dir.to_string_lossy().to_string();
-    arcfg.compress = cfg.stats.archive.compress.clone();
+    let arcfg = StatsArchiveConfig {
+        parquet: true,
+        dir: archive_dir.to_string_lossy().to_string(),
+        compress: cfg.stats.archive.compress.clone(),
+    };
 
     println!("=== 开始补档 ===");
     let mut ok_days = 0usize;

@@ -46,7 +46,7 @@ uuid = { version = "1", features = ["v4", "fast-rng"] }
 gethostname = "0.4"
 
 # SQLite 持久化
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "chrono", "json"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "json"] }
 
 # Parquet 导出
 parquet = { version = "53", features = ["arrow"] }
@@ -64,7 +64,7 @@ toml = "0.8"
 once_cell = "1.20"
 
 # Git 操作
-git2 = { version = "0.19", features = ["vendored-openssl"] }
+git2 = { version = "0.20", features = ["vendored-openssl"] }
 
 # 时间与日期
 chrono = { version = "0.4", features = ["serde"] }
@@ -76,7 +76,7 @@ tiny-skia = { version = "0.11", features = ["png"] }
 png = "0.17"
 image = { version = "0.25", features = ["webp"] }
 webp = "0.3.1"
-lru = "0.12"
+lru = "0.16"
 num_cpus = "1.16"
 
 [features]

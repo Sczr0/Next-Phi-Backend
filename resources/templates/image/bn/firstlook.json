@@ -1,0 +1,10 @@
+{
+  "width": 1200,
+  "header_height": 120,
+  "footer_height": 50,
+  "columns": 3,
+  "card_gap": 12,
+  "footer_padding": 40.0,
+  "song_name_max_width": 28,
+  "song_name_max_lines": 1
+}

@@ -161,7 +161,7 @@ async fn songs_search_default_limit_is_applied() {
     assert_eq!(v["total"].as_u64().expect("total"), 50);
     assert_eq!(v["limit"].as_u64().expect("limit"), 20);
     assert_eq!(v["offset"].as_u64().expect("offset"), 0);
-    assert_eq!(v["hasMore"].as_bool().expect("hasMore"), true);
+    assert!(v["hasMore"].as_bool().expect("hasMore"));
     assert_eq!(v["nextOffset"].as_u64().expect("nextOffset"), 20);
 }
 
@@ -205,7 +205,7 @@ async fn songs_search_limit_is_clamped_to_max() {
     assert_eq!(v["total"].as_u64().expect("total"), 150);
     assert_eq!(v["limit"].as_u64().expect("limit"), 100);
     assert_eq!(v["offset"].as_u64().expect("offset"), 0);
-    assert_eq!(v["hasMore"].as_bool().expect("hasMore"), true);
+    assert!(v["hasMore"].as_bool().expect("hasMore"));
     assert_eq!(v["nextOffset"].as_u64().expect("nextOffset"), 100);
 }
 
@@ -250,7 +250,7 @@ async fn songs_search_offset_paginates_and_reports_next_offset() {
     assert_eq!(v["total"].as_u64().expect("total"), 50);
     assert_eq!(v["limit"].as_u64().expect("limit"), 20);
     assert_eq!(v["offset"].as_u64().expect("offset"), 20);
-    assert_eq!(v["hasMore"].as_bool().expect("hasMore"), true);
+    assert!(v["hasMore"].as_bool().expect("hasMore"));
     assert_eq!(v["nextOffset"].as_u64().expect("nextOffset"), 40);
 
     // 由于缓存已稳定排序，第二页第一条应为 song-020
@@ -298,7 +298,7 @@ async fn songs_search_last_page_has_no_next_offset() {
     assert_eq!(v["total"].as_u64().expect("total"), 50);
     assert_eq!(v["limit"].as_u64().expect("limit"), 20);
     assert_eq!(v["offset"].as_u64().expect("offset"), 40);
-    assert_eq!(v["hasMore"].as_bool().expect("hasMore"), false);
+    assert!(!v["hasMore"].as_bool().expect("hasMore"));
     assert!(v.get("nextOffset").is_none() || v["nextOffset"].is_null());
 }
 

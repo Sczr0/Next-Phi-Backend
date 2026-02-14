@@ -119,19 +119,19 @@ impl SongCatalog {
         }
         // 官方名：子串包含（忽略大小写）
         for (item, name_lower) in self.search_cache_name_lower.iter() {
-            if let Some(pos) = name_lower.find(q_lower.as_str()) {
-                if seen.insert(item.id.as_str()) {
-                    on_match(
-                        item,
+            if let Some(pos) = name_lower.find(q_lower.as_str())
+                && seen.insert(item.id.as_str())
+            {
+                on_match(
+                    item,
+                    SearchMatchKind::NameContains,
+                    Self::score_match(
                         SearchMatchKind::NameContains,
-                        Self::score_match(
-                            SearchMatchKind::NameContains,
-                            &q_lower,
-                            name_lower,
-                            Some(pos),
-                        ),
-                    );
-                }
+                        &q_lower,
+                        name_lower,
+                        Some(pos),
+                    ),
+                );
             }
         }
 

@@ -76,7 +76,7 @@ async fn main() {
         )
         .init();
 
-    // 创建优���退出管理器
+    // 创建优雅退出管理器
     let shutdown_manager = ShutdownManager::new();
 
     // Load config

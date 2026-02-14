@@ -103,7 +103,7 @@ fn hostname() -> &'static str {
         .as_str()
 }
 
-/// 初始化统计���务：创建 SQLite、spawn 批量写入与每日归档任务
+/// 初始化统计服务：创建 SQLite、spawn 批量写入与每日归档任务
 pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsStorage>), AppError> {
     if !config.stats.enabled {
         tracing::warn!("统计功能已禁用（config.stats.enabled=false）");
