@@ -28,6 +28,56 @@ fn map_reqwest_error(context: &'static str, err: reqwest::Error) -> AppError {
     }
 }
 
+fn parse_taptap_business_error(body: &Value) -> Option<(String, String)> {
+    let success = body
+        .get("success")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if success {
+        return None;
+    }
+
+    let data = body.get("data").cloned().unwrap_or(Value::Null);
+    let (code, message) = if let Some(obj) = data.as_object() {
+        let code = obj
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let message = obj
+            .get("error_description")
+            .or_else(|| obj.get("msg"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        (code, message)
+    } else if let Some(s) = data.as_str() {
+        (String::new(), s.to_string())
+    } else {
+        (String::new(), data.to_string())
+    };
+
+    Some((code, message))
+}
+
+fn map_token_business_error(body: &Value) -> Option<AppError> {
+    let (code, message) = parse_taptap_business_error(body)?;
+    let msg = if !message.trim().is_empty() {
+        message.clone()
+    } else if !code.trim().is_empty() {
+        format!("TapTap 业务错误: {code}")
+    } else {
+        "TapTap 业务错误".to_string()
+    };
+
+    let classifier = format!("{code} {message}").to_ascii_lowercase();
+    if classifier.contains("authorization_pending") || classifier.contains("slow_down") {
+        Some(AppError::AuthPending(msg))
+    } else {
+        Some(AppError::Auth(msg))
+    }
+}
+
 impl TapTapClient {
     pub fn new(config: &TapTapMultiConfig) -> Result<Self, AppError> {
         let client = reqwest::Client::builder()
@@ -208,56 +258,23 @@ impl TapTapClient {
             .text()
             .await
             .map_err(|e| map_reqwest_error("读取 Token 响应体失败", e))?;
+
+        let parsed_body = serde_json::from_str::<Value>(&body_text);
+        if let Ok(body) = &parsed_body {
+            if let Some(err) = map_token_business_error(body) {
+                return Err(err);
+            }
+        }
+
         if !status.is_success() {
             tracing::warn!("TapTap token 请求失败：HTTP {status}");
             return Err(AppError::Network(format!(
                 "TapTap token 请求失败: HTTP {status}"
             )));
         }
-        let body: Value = serde_json::from_str(&body_text)
+
+        let body = parsed_body
             .map_err(|e| AppError::Network(format!("TapTap token 响应解析失败: {e}")))?;
-
-        let success = body
-            .get("success")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(false);
-        if !success {
-            let data = body.get("data").cloned().unwrap_or(Value::Null);
-            // 尝试提取标准的 OAuth 设备码错误码
-            let (code, message) = if let Some(obj) = data.as_object() {
-                let code = obj
-                    .get("error")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let message = obj
-                    .get("error_description")
-                    .or_else(|| obj.get("msg"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                (code, message)
-            } else if let Some(s) = data.as_str() {
-                (String::new(), s.to_string())
-            } else {
-                (String::new(), data.to_string())
-            };
-
-            let msg = if !message.trim().is_empty() {
-                message
-            } else if !code.trim().is_empty() {
-                format!("TapTap 业务错误: {code}")
-            } else {
-                "TapTap 业务错误".to_string()
-            };
-
-            let code_l = code.to_ascii_lowercase();
-            if code_l.contains("authorization_pending") || code_l.contains("slow_down") {
-                return Err(AppError::AuthPending(msg));
-            } else {
-                return Err(AppError::Auth(msg));
-            }
-        }
 
         let token_val = body.get("data").cloned().unwrap_or(Value::Null);
         let token: Token = serde_json::from_value(token_val)
@@ -497,6 +514,38 @@ mod tests {
         assert!(
             matches!(app_err, AppError::Network(_)),
             "expected AppError::Network, got: {app_err:?}"
+        );
+    }
+
+    #[test]
+    fn map_token_business_error_recognizes_pending_code() {
+        let body = serde_json::json!({
+            "success": false,
+            "data": {
+                "error": "authorization_pending",
+                "error_description": "authorization pending"
+            }
+        });
+        let err = super::map_token_business_error(&body).expect("expected business error");
+        assert!(
+            matches!(err, AppError::AuthPending(_)),
+            "expected AppError::AuthPending, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn map_token_business_error_maps_other_code_to_auth() {
+        let body = serde_json::json!({
+            "success": false,
+            "data": {
+                "error": "invalid_grant",
+                "error_description": "invalid code"
+            }
+        });
+        let err = super::map_token_business_error(&body).expect("expected business error");
+        assert!(
+            matches!(err, AppError::Auth(_)),
+            "expected AppError::Auth, got: {err:?}"
         );
     }
 }
