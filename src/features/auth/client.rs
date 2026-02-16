@@ -260,10 +260,10 @@ impl TapTapClient {
             .map_err(|e| map_reqwest_error("读取 Token 响应体失败", e))?;
 
         let parsed_body = serde_json::from_str::<Value>(&body_text);
-        if let Ok(body) = &parsed_body {
-            if let Some(err) = map_token_business_error(body) {
-                return Err(err);
-            }
+        if let Ok(body) = &parsed_body
+            && let Some(err) = map_token_business_error(body)
+        {
+            return Err(err);
         }
 
         if !status.is_success() {

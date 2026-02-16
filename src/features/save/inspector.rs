@@ -562,8 +562,7 @@ fn redact_url(url: &str) -> String {
     // 提取 path 的最后一个 segment。
     let last_seg = base
         .split('/')
-        .filter(|s| !s.is_empty())
-        .next_back()
+        .rfind(|s| !s.is_empty())
         .unwrap_or("unknown");
 
     format!(
