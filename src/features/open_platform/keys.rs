@@ -55,11 +55,25 @@ pub struct RevokeApiKeyRequest {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteApiKeyRequest {
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventsQuery {
     #[serde(default)]
     pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyListQuery {
+    #[serde(default)]
+    pub include_inactive: bool,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -373,6 +387,9 @@ pub async fn post_create_api_key(
     get,
     path = "/developer/api-keys",
     summary = "列出当前开发者 API Keys（掩码）",
+    params(
+        ("includeInactive" = Option<bool>, Query, description = "是否包含非 active 的历史 Key（默认 false）")
+    ),
     responses(
         (status = 200, description = "查询成功", body = ApiKeyListResponse),
         (
@@ -386,10 +403,13 @@ pub async fn post_create_api_key(
 )]
 pub async fn get_api_keys(
     headers: HeaderMap,
+    Query(query): Query<ApiKeyListQuery>,
 ) -> Result<(StatusCode, Json<ApiKeyListResponse>), AppError> {
     let developer = auth::require_developer(&headers).await?;
     let st = storage::global()?;
-    let items = st.list_api_keys_by_developer(&developer.id).await?;
+    let items = st
+        .list_api_keys_by_developer(&developer.id, query.include_inactive)
+        .await?;
     Ok((
         StatusCode::OK,
         Json(ApiKeyListResponse {
@@ -521,6 +541,42 @@ pub async fn post_revoke_api_key(
 }
 
 #[utoipa::path(
+    post,
+    path = "/developer/api-keys/{key_id}/delete",
+    summary = "删除 API Key（软删除）",
+    request_body = DeleteApiKeyRequest,
+    params(("key_id" = String, Path, description = "待删除的 key_id")),
+    responses(
+        (status = 200, description = "删除成功", body = OkResponse),
+        (
+            status = 401,
+            description = "开发者会话无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "OpenPlatformKeys"
+)]
+pub async fn post_delete_api_key(
+    headers: HeaderMap,
+    Path(key_id): Path<String>,
+    Json(req): Json<DeleteApiKeyRequest>,
+) -> Result<(StatusCode, Json<OkResponse>), AppError> {
+    let developer = auth::require_developer(&headers).await?;
+    let _old_key = ensure_key_owned_by_developer(&key_id, &developer.id).await?;
+    let st = storage::global()?;
+    st.soft_delete_api_key(
+        &key_id,
+        req.reason.as_deref(),
+        Some(&developer.id),
+        crate::request_id::current_request_id().as_deref(),
+        chrono::Utc::now().timestamp(),
+    )
+    .await?;
+    Ok((StatusCode::OK, Json(OkResponse { ok: true })))
+}
+
+#[utoipa::path(
     get,
     path = "/developer/api-keys/{key_id}/events",
     summary = "查询 API Key 事件",
@@ -582,6 +638,10 @@ pub fn create_open_platform_keys_router() -> Router<AppState> {
         .route(
             "/developer/api-keys/:key_id/revoke",
             post(post_revoke_api_key),
+        )
+        .route(
+            "/developer/api-keys/:key_id/delete",
+            post(post_delete_api_key),
         )
         .route(
             "/developer/api-keys/:key_id/events",

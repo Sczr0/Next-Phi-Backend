@@ -10,11 +10,13 @@ use crate::error::AppError;
 pub const API_KEY_STATUS_ACTIVE: &str = "active";
 pub const API_KEY_STATUS_REVOKED: &str = "revoked";
 pub const API_KEY_STATUS_EXPIRED: &str = "expired";
+pub const API_KEY_STATUS_DELETED: &str = "deleted";
 
 pub const API_KEY_EVENT_ISSUED: &str = "issued";
 pub const API_KEY_EVENT_ROTATED: &str = "rotated";
 pub const API_KEY_EVENT_REVOKED: &str = "revoked";
 pub const API_KEY_EVENT_AUTH_FAILED: &str = "auth_failed";
+pub const API_KEY_EVENT_DELETED: &str = "deleted";
 
 static OPEN_PLATFORM_STORAGE: OnceCell<Arc<OpenPlatformStorage>> = OnceCell::new();
 
@@ -161,10 +163,19 @@ fn row_to_api_key(row: &sqlx::sqlite::SqliteRow) -> Result<ApiKeyRecord, AppErro
         scopes: parse_scopes_json(&scopes_raw)?,
         status: row.get("status"),
         created_at: row.get("created_at"),
-        expires_at: row.try_get("expires_at").ok(),
-        revoked_at: row.try_get("revoked_at").ok(),
+        expires_at: row
+            .try_get::<Option<i64>, _>("expires_at")
+            .ok()
+            .flatten(),
+        revoked_at: row
+            .try_get::<Option<i64>, _>("revoked_at")
+            .ok()
+            .flatten(),
         replaced_by_key_id: normalize_optional_text(row.try_get("replaced_by_key_id").ok()),
-        last_used_at: row.try_get("last_used_at").ok(),
+        last_used_at: row
+            .try_get::<Option<i64>, _>("last_used_at")
+            .ok()
+            .flatten(),
         last_used_ip: normalize_optional_text(row.try_get("last_used_ip").ok()),
         usage_count: row.get("usage_count"),
     })
@@ -401,13 +412,24 @@ impl OpenPlatformStorage {
     pub async fn list_api_keys_by_developer(
         &self,
         developer_id: &str,
+        include_inactive: bool,
     ) -> Result<Vec<ApiKeyRecord>, AppError> {
-        let rows =
+        let rows = if include_inactive {
             sqlx::query("SELECT * FROM api_keys WHERE developer_id = ? ORDER BY created_at DESC")
                 .bind(developer_id)
                 .fetch_all(&self.pool)
                 .await
-                .map_err(|e| AppError::Internal(format!("list api keys by developer: {e}")))?;
+                .map_err(|e| AppError::Internal(format!("list api keys by developer: {e}")))?
+        } else {
+            sqlx::query(
+                "SELECT * FROM api_keys WHERE developer_id = ? AND status = ? ORDER BY created_at DESC",
+            )
+            .bind(developer_id)
+            .bind(API_KEY_STATUS_ACTIVE)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("list active api keys by developer: {e}")))?
+        };
 
         rows.into_iter()
             .map(|r| row_to_api_key(&r))
@@ -460,8 +482,8 @@ impl OpenPlatformStorage {
 
         sqlx::query(
             "INSERT INTO api_keys(
-                id, developer_id, name, key_prefix, key_last4, key_hash, scopes, status, created_at
-             ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                id, developer_id, name, key_prefix, key_last4, key_hash, scopes, status, created_at, expires_at
+             ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&new_key_id)
         .bind(&developer_id)
@@ -472,6 +494,7 @@ impl OpenPlatformStorage {
         .bind(scopes_json)
         .bind(API_KEY_STATUS_ACTIVE)
         .bind(now_ts)
+        .bind(Option::<i64>::None)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Internal(format!("insert rotated api key: {e}")))?;
@@ -598,6 +621,56 @@ impl OpenPlatformStorage {
         Ok(())
     }
 
+    pub async fn soft_delete_api_key(
+        &self,
+        key_id: &str,
+        reason: Option<&str>,
+        operator_id: Option<&str>,
+        request_id: Option<&str>,
+        now_ts: i64,
+    ) -> Result<(), AppError> {
+        let row = sqlx::query("SELECT developer_id, status FROM api_keys WHERE id = ? LIMIT 1")
+            .bind(key_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("query api key before soft delete: {e}")))?;
+        let Some(row) = row else {
+            return Err(AppError::Validation("待删除的 API Key 不存在".into()));
+        };
+        let developer_id: String = row.get("developer_id");
+        let status: String = row.get("status");
+        if status == API_KEY_STATUS_DELETED {
+            return Ok(());
+        }
+
+        sqlx::query(
+            "UPDATE api_keys
+             SET status = ?, revoked_at = COALESCE(revoked_at, ?), expires_at = COALESCE(expires_at, ?), replaced_by_key_id = NULL
+             WHERE id = ?",
+        )
+        .bind(API_KEY_STATUS_DELETED)
+        .bind(now_ts)
+        .bind(now_ts)
+        .bind(key_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("soft delete api key: {e}")))?;
+
+        self.record_api_key_event(
+            key_id,
+            &developer_id,
+            API_KEY_EVENT_DELETED,
+            reason,
+            operator_id,
+            request_id,
+            None,
+            now_ts,
+        )
+        .await?;
+
+        Ok(())
+    }
+
     pub async fn touch_api_key_usage(
         &self,
         key_id: &str,
@@ -622,7 +695,7 @@ impl OpenPlatformStorage {
         let ret = sqlx::query(
             "UPDATE api_keys
              SET status = ?, revoked_at = COALESCE(revoked_at, expires_at)
-             WHERE status = ? AND expires_at IS NOT NULL AND expires_at <= ?",
+             WHERE status = ? AND expires_at IS NOT NULL AND expires_at > 0 AND expires_at <= ?",
         )
         .bind(API_KEY_STATUS_EXPIRED)
         .bind(API_KEY_STATUS_ACTIVE)
@@ -759,7 +832,7 @@ mod tests {
         assert_eq!(key1.scopes.len(), 2);
 
         let listed = storage
-            .list_api_keys_by_developer(&developer.id)
+            .list_api_keys_by_developer(&developer.id, false)
             .await
             .expect("list keys");
         assert_eq!(listed.len(), 1);
@@ -782,6 +855,7 @@ mod tests {
             .expect("rotate key");
         assert_eq!(key2.status, API_KEY_STATUS_ACTIVE);
         assert_eq!(key2.name, "prod-key-v2");
+        assert_eq!(key2.expires_at, None);
 
         let old_after_rotate = storage
             .get_api_key_by_id(&key1.id)
@@ -813,6 +887,11 @@ mod tests {
             .expect("key2 exists");
         assert_eq!(key2_after_revoke.status, API_KEY_STATUS_REVOKED);
         assert_eq!(key2_after_revoke.revoked_at, Some(now + 20));
+        let active_after_revoke = storage
+            .list_api_keys_by_developer(&developer.id, false)
+            .await
+            .expect("list active keys after revoke");
+        assert_eq!(active_after_revoke.len(), 1);
 
         let events_key1 = storage
             .list_api_key_events(&key1.id, 20)
@@ -854,5 +933,44 @@ mod tests {
             .expect("query old key after cleanup")
             .expect("old key exists");
         assert_eq!(old_after_cleanup.status, API_KEY_STATUS_EXPIRED);
+
+        let active_after_cleanup = storage
+            .list_api_keys_by_developer(&developer.id, false)
+            .await
+            .expect("list active keys after cleanup");
+        assert_eq!(active_after_cleanup.len(), 0);
+        let all_after_cleanup = storage
+            .list_api_keys_by_developer(&developer.id, true)
+            .await
+            .expect("list all keys after cleanup");
+        assert_eq!(all_after_cleanup.len(), 2);
+
+        storage
+            .soft_delete_api_key(
+                &key2.id,
+                Some("hide from default list"),
+                Some(&developer.id),
+                Some("req_delete_001"),
+                now + 30,
+            )
+            .await
+            .expect("soft delete key2");
+        let key2_after_delete = storage
+            .get_api_key_by_id(&key2.id)
+            .await
+            .expect("query key2 after delete")
+            .expect("key2 exists after soft delete");
+        assert_eq!(key2_after_delete.status, API_KEY_STATUS_DELETED);
+
+        let events_key2_after_delete = storage
+            .list_api_key_events(&key2.id, 20)
+            .await
+            .expect("list events key2 after delete");
+        assert!(
+            events_key2_after_delete
+                .iter()
+                .any(|e| e.event_type == API_KEY_EVENT_DELETED),
+            "key2 should have deleted event"
+        );
     }
 }

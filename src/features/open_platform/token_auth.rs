@@ -238,6 +238,7 @@ pub async fn open_api_token_middleware(
     }
 
     if let Some(expires_at) = key.expires_at
+        && expires_at > 0
         && expires_at <= now_ts
     {
         let _ = st.cleanup_expired_active_keys(now_ts).await;
