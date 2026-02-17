@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use axum::{
     Router,
-    extract::{Query, Request, State},
+    extract::{Path, Query, Request, State},
     response::{Json, Response},
     routing::{get, post},
 };
@@ -10,6 +10,76 @@ use axum::{
 use crate::{error::AppError, state::AppState};
 
 use super::token_auth::{OpenApiRoutePolicy, open_api_token_middleware};
+
+#[utoipa::path(
+    post,
+    path = "/open/auth/qrcode",
+    summary = "Open API: 生成 TapTap 登录二维码",
+    description = "开放平台二维码登录入口。需要 X-OpenApi-Token，且 API Key 包含 profile.read scope。",
+    security(
+        ("OpenApiToken" = [])
+    ),
+    params(
+        ("taptapVersion" = Option<String>, Query, description = "TapTap 版本：cn（大陆版）或 global（国际版）")
+    ),
+    responses(
+        (status = 200, description = "生成二维码成功", body = crate::features::auth::handler::QrCodeCreateResponse),
+        (
+            status = 401,
+            description = "Token 缺失、无效、被吊销或已过期",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "Scope 不足或请求触发限流",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "OpenPlatformOpenApi"
+)]
+pub(crate) async fn open_auth_qrcode(
+    State(state): State<AppState>,
+    Query(params): Query<crate::features::auth::handler::QrCodeQuery>,
+) -> Result<Response, AppError> {
+    crate::features::auth::handler::post_qrcode(State(state), Query(params)).await
+}
+
+#[utoipa::path(
+    get,
+    path = "/open/auth/qrcode/{qr_id}/status",
+    summary = "Open API: 轮询 TapTap 二维码登录状态",
+    description = "开放平台二维码登录状态轮询入口。需要 X-OpenApi-Token，且 API Key 包含 profile.read scope。",
+    security(
+        ("OpenApiToken" = [])
+    ),
+    params(
+        ("qr_id" = String, Path, description = "二维码 ID")
+    ),
+    responses(
+        (status = 200, description = "状态返回", body = crate::features::auth::handler::QrCodeStatusResponse),
+        (
+            status = 401,
+            description = "Token 缺失、无效、被吊销或已过期",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "Scope 不足或请求触发限流",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "OpenPlatformOpenApi"
+)]
+pub(crate) async fn open_auth_qrcode_status(
+    State(state): State<AppState>,
+    Path(qr_id): Path<String>,
+) -> Result<Response, AppError> {
+    crate::features::auth::handler::get_qrcode_status(State(state), Path(qr_id)).await
+}
 
 #[utoipa::path(
     post,
@@ -182,6 +252,20 @@ pub fn create_open_platform_open_api_router() -> Router<AppState> {
     let profile_read_policy = OpenApiRoutePolicy::new(&["profile.read"]);
 
     Router::<AppState>::new()
+        .route(
+            "/open/auth/qrcode",
+            post(open_auth_qrcode).route_layer(axum::middleware::from_fn_with_state(
+                profile_read_policy.clone(),
+                open_api_token_middleware,
+            )),
+        )
+        .route(
+            "/open/auth/qrcode/:qr_id/status",
+            get(open_auth_qrcode_status).route_layer(axum::middleware::from_fn_with_state(
+                profile_read_policy.clone(),
+                open_api_token_middleware,
+            )),
+        )
         .route(
             "/open/save",
             post(open_save_data).route_layer(axum::middleware::from_fn_with_state(

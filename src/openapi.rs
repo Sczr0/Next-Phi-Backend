@@ -62,6 +62,8 @@ impl Modify for ApiServers {
         crate::features::open_platform::keys::post_rotate_api_key,
         crate::features::open_platform::keys::post_revoke_api_key,
         crate::features::open_platform::keys::get_api_key_events,
+        crate::features::open_platform::open_api::open_auth_qrcode,
+        crate::features::open_platform::open_api::open_auth_qrcode_status,
         crate::features::open_platform::open_api::open_save_data,
         crate::features::open_platform::open_api::open_search_songs,
         crate::features::open_platform::open_api::open_get_leaderboard_top,
