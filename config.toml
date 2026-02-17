@@ -195,3 +195,63 @@ leancloud_app_key = "tG9CTm0LDD736k9HMM9lBZrbeBGRmUkjSfNLDNib"
 [taptap]
 # 默认版本：cn 或 global
 default_version = "cn"
+
+[open_platform]
+# 是否启用开放平台能力
+enabled = false
+# 开放平台 SQLite 路径
+sqlite_path = "./resources/open_platform.db"
+# 开放平台 SQLite 启用 WAL
+sqlite_wal = true
+
+[open_platform.github]
+# GitHub OAuth 应用凭证（建议通过环境变量覆盖）
+client_id = ""
+client_secret = ""
+# 回调地址（需与 GitHub OAuth App 配置一致）
+redirect_uri = "http://localhost:3939/api/v2/auth/github/callback"
+# scope 建议最小化
+scope = "read:user user:email"
+# GitHub OAuth 授权/换 token 地址
+authorize_url = "https://github.com/login/oauth/authorize"
+token_url = "https://github.com/login/oauth/access_token"
+# GitHub API 基地址
+api_base_url = "https://api.github.com"
+# 登录成功后跳转控制台地址
+post_login_redirect = "/open-platform"
+# OAuth state 有效期（秒）
+state_ttl_secs = 600
+# OAuth HTTP 超时与重试
+http_timeout_secs = 10
+http_retry_count = 2
+
+[open_platform.session]
+# 开发者会话 JWT 配置（建议通过 APP_OPEN_PLATFORM_SESSION_JWT_SECRET 设置密钥）
+jwt_issuer = "phi-open-platform"
+jwt_audience = "phi-open-platform-console"
+jwt_secret = ""
+# 会话有效期（秒）
+ttl_secs = 86400
+# 会话 Cookie 名称
+cookie_name = "op_session"
+# 生产环境建议开启 true（需 HTTPS）
+cookie_secure = false
+
+[open_platform.api_key]
+# API Key 前缀（区分 live / test）
+live_prefix = "pgr_live_"
+test_prefix = "pgr_test_"
+# 生产环境建议留空并通过 APP_OPEN_PLATFORM_API_KEY_HASH_SECRET 注入
+hash_secret = ""
+# 生成 token 后缀的随机字节数
+random_bytes = 24
+# 轮换旧 key 的过渡期（秒）
+rotate_grace_secs = 86400
+# 每分钟限流阈值（按 key_id + client_ip）
+rate_limit_per_minute = 120
+# 新建 key 的默认 scopes
+# - public.read: /open/songs/search, /open/leaderboard/rks/top, /open/leaderboard/rks/by-rank
+# - profile.read: /open/save, /open/rks/history
+# 如果希望新建 key 默认可调用个人数据接口，可加入 profile.read
+# 示例: default_scopes = ["public.read", "profile.read"]
+default_scopes = ["public.read"]

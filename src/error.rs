@@ -298,7 +298,7 @@ impl IntoResponse for AppError {
             status: status.as_u16(),
             detail,
             code,
-            request_id: None,
+            request_id: crate::request_id::current_request_id(),
             errors: None,
             candidates,
             candidates_total,

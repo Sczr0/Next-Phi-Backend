@@ -9,6 +9,9 @@ use phi_backend::cors::build_cors_layer;
 use phi_backend::features::auth::client::TapTapClient;
 use phi_backend::features::health::handler::health_check;
 use phi_backend::features::leaderboard::handler::create_leaderboard_router;
+use phi_backend::features::open_platform::auth::create_open_platform_auth_router;
+use phi_backend::features::open_platform::keys::create_open_platform_keys_router;
+use phi_backend::features::open_platform::open_api::create_open_platform_open_api_router;
 use phi_backend::features::rks::handler::create_rks_router;
 use phi_backend::features::stats::{
     self,
@@ -182,6 +185,38 @@ async fn main() {
         (None, None)
     };
 
+    // 初始化开放平台存储与鉴权服务（仅在启用时）
+    if config.open_platform.enabled {
+        let op_storage = match phi_backend::features::open_platform::storage::OpenPlatformStorage::connect_sqlite(
+            &config.open_platform.sqlite_path,
+            config.open_platform.sqlite_wal,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!("开放平台存储初始化失败: {}", e);
+                std::process::exit(1);
+            }
+        };
+        if let Err(e) = op_storage.init_schema().await {
+            tracing::error!("开放平台存储建表失败: {}", e);
+            std::process::exit(1);
+        }
+        if let Err(e) =
+            phi_backend::features::open_platform::storage::init_global(Arc::new(op_storage))
+        {
+            tracing::error!("开放平台存储注册失败: {}", e);
+            std::process::exit(1);
+        }
+        if let Err(e) =
+            phi_backend::features::open_platform::auth::init_global(&config.open_platform)
+        {
+            tracing::error!("开放平台鉴权服务初始化失败: {}", e);
+            std::process::exit(1);
+        }
+    }
+
     // 初始化图片缓存（容量按总字节数加权）
     let bn_image_cache: Cache<String, Bytes> = {
         let img = &config.image;
@@ -226,6 +261,12 @@ async fn main() {
         .merge(create_leaderboard_router())
         .merge(create_rks_router());
     api_router = api_router.merge(create_stats_router());
+    if config.open_platform.enabled {
+        api_router = api_router
+            .merge(create_open_platform_auth_router())
+            .merge(create_open_platform_keys_router())
+            .merge(create_open_platform_open_api_router());
+    }
     api_router = api_router.layer(axum::middleware::from_fn_with_state(
         app_state.clone(),
         phi_backend::features::auth::bearer::bearer_auth_middleware,
@@ -264,6 +305,11 @@ async fn main() {
         tracing::info!("CORS 已启用");
         app = app.layer(layer);
     }
+
+    // 统一 request_id：优先透传 X-Request-Id，缺失时自动生成并回写。
+    app = app.layer(axum::middleware::from_fn(
+        phi_backend::request_id::request_id_middleware,
+    ));
 
     // 启动看门狗任务
     if let Err(e) = watchdog.start_watchdog_task().await {

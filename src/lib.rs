@@ -25,6 +25,9 @@ pub mod watchdog;
 /// HTTP Client 复用工具
 pub mod http;
 
+/// 请求 request_id 中间件与上下文工具
+pub mod request_id;
+
 /// OpenAPI 文档（utoipa）
 pub mod openapi;
 

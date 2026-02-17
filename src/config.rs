@@ -115,6 +115,267 @@ impl Default for SessionConfig {
         }
     }
 }
+/// 开放平台 GitHub OAuth 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenPlatformGithubConfig {
+    /// GitHub OAuth client_id
+    #[serde(default = "OpenPlatformGithubConfig::default_client_id")]
+    pub client_id: String,
+    /// GitHub OAuth client_secret
+    #[serde(default = "OpenPlatformGithubConfig::default_client_secret")]
+    pub client_secret: String,
+    /// GitHub OAuth 回调地址
+    #[serde(default = "OpenPlatformGithubConfig::default_redirect_uri")]
+    pub redirect_uri: String,
+    /// OAuth scope
+    #[serde(default = "OpenPlatformGithubConfig::default_scope")]
+    pub scope: String,
+    /// GitHub OAuth 授权地址
+    #[serde(default = "OpenPlatformGithubConfig::default_authorize_url")]
+    pub authorize_url: String,
+    /// GitHub OAuth token 交换地址
+    #[serde(default = "OpenPlatformGithubConfig::default_token_url")]
+    pub token_url: String,
+    /// GitHub API 基地址
+    #[serde(default = "OpenPlatformGithubConfig::default_api_base_url")]
+    pub api_base_url: String,
+    /// 登录成功后跳转地址（控制台）
+    #[serde(default = "OpenPlatformGithubConfig::default_post_login_redirect")]
+    pub post_login_redirect: String,
+    /// OAuth state 有效期（秒）
+    #[serde(default = "OpenPlatformGithubConfig::default_state_ttl_secs")]
+    pub state_ttl_secs: u64,
+    /// OAuth HTTP 超时（秒）
+    #[serde(default = "OpenPlatformGithubConfig::default_http_timeout_secs")]
+    pub http_timeout_secs: u64,
+    /// OAuth HTTP 重试次数（仅网络波动时）
+    #[serde(default = "OpenPlatformGithubConfig::default_http_retry_count")]
+    pub http_retry_count: u32,
+}
+
+impl OpenPlatformGithubConfig {
+    fn default_client_id() -> String {
+        std::env::var("APP_OPEN_PLATFORM_GITHUB_CLIENT_ID").unwrap_or_default()
+    }
+    fn default_client_secret() -> String {
+        std::env::var("APP_OPEN_PLATFORM_GITHUB_CLIENT_SECRET").unwrap_or_default()
+    }
+    fn default_redirect_uri() -> String {
+        std::env::var("APP_OPEN_PLATFORM_GITHUB_REDIRECT_URI")
+            .unwrap_or_else(|_| "http://localhost:3939/api/v2/auth/github/callback".into())
+    }
+    fn default_scope() -> String {
+        "read:user user:email".to_string()
+    }
+    fn default_authorize_url() -> String {
+        "https://github.com/login/oauth/authorize".to_string()
+    }
+    fn default_token_url() -> String {
+        "https://github.com/login/oauth/access_token".to_string()
+    }
+    fn default_api_base_url() -> String {
+        "https://api.github.com".to_string()
+    }
+    fn default_post_login_redirect() -> String {
+        "/open-platform".to_string()
+    }
+    fn default_state_ttl_secs() -> u64 {
+        600
+    }
+    fn default_http_timeout_secs() -> u64 {
+        10
+    }
+    fn default_http_retry_count() -> u32 {
+        2
+    }
+}
+
+impl Default for OpenPlatformGithubConfig {
+    fn default() -> Self {
+        Self {
+            client_id: Self::default_client_id(),
+            client_secret: Self::default_client_secret(),
+            redirect_uri: Self::default_redirect_uri(),
+            scope: Self::default_scope(),
+            authorize_url: Self::default_authorize_url(),
+            token_url: Self::default_token_url(),
+            api_base_url: Self::default_api_base_url(),
+            post_login_redirect: Self::default_post_login_redirect(),
+            state_ttl_secs: Self::default_state_ttl_secs(),
+            http_timeout_secs: Self::default_http_timeout_secs(),
+            http_retry_count: Self::default_http_retry_count(),
+        }
+    }
+}
+
+/// 开放平台开发者会话配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenPlatformSessionConfig {
+    /// 开发者会话 JWT 发行方
+    #[serde(default = "OpenPlatformSessionConfig::default_jwt_issuer")]
+    pub jwt_issuer: String,
+    /// 开发者会话 JWT 受众
+    #[serde(default = "OpenPlatformSessionConfig::default_jwt_audience")]
+    pub jwt_audience: String,
+    /// 开发者会话 JWT 密钥
+    #[serde(default = "OpenPlatformSessionConfig::default_jwt_secret")]
+    pub jwt_secret: String,
+    /// 会话有效期（秒）
+    #[serde(default = "OpenPlatformSessionConfig::default_ttl_secs")]
+    pub ttl_secs: u64,
+    /// 会话 cookie 名称
+    #[serde(default = "OpenPlatformSessionConfig::default_cookie_name")]
+    pub cookie_name: String,
+    /// 会话 cookie 是否强制 Secure
+    #[serde(default = "OpenPlatformSessionConfig::default_cookie_secure")]
+    pub cookie_secure: bool,
+}
+
+impl OpenPlatformSessionConfig {
+    fn default_jwt_issuer() -> String {
+        "phi-open-platform".to_string()
+    }
+    fn default_jwt_audience() -> String {
+        "phi-open-platform-console".to_string()
+    }
+    fn default_jwt_secret() -> String {
+        std::env::var("APP_OPEN_PLATFORM_SESSION_JWT_SECRET").unwrap_or_default()
+    }
+    fn default_ttl_secs() -> u64 {
+        86_400
+    }
+    fn default_cookie_name() -> String {
+        "op_session".to_string()
+    }
+    fn default_cookie_secure() -> bool {
+        false
+    }
+}
+
+impl Default for OpenPlatformSessionConfig {
+    fn default() -> Self {
+        Self {
+            jwt_issuer: Self::default_jwt_issuer(),
+            jwt_audience: Self::default_jwt_audience(),
+            jwt_secret: Self::default_jwt_secret(),
+            ttl_secs: Self::default_ttl_secs(),
+            cookie_name: Self::default_cookie_name(),
+            cookie_secure: Self::default_cookie_secure(),
+        }
+    }
+}
+
+/// 开放平台 API Key 配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenPlatformApiKeyConfig {
+    /// live key 前缀
+    #[serde(default = "OpenPlatformApiKeyConfig::default_live_prefix")]
+    pub live_prefix: String,
+    /// test key 前缀
+    #[serde(default = "OpenPlatformApiKeyConfig::default_test_prefix")]
+    pub test_prefix: String,
+    /// key hash 使用的服务端密钥（建议通过环境变量注入）
+    #[serde(default = "OpenPlatformApiKeyConfig::default_hash_secret")]
+    pub hash_secret: String,
+    /// key 随机体字节数（越大越难猜）
+    #[serde(default = "OpenPlatformApiKeyConfig::default_random_bytes")]
+    pub random_bytes: usize,
+    /// 轮换默认过渡窗口（秒），0 表示立即失效旧 key
+    #[serde(default = "OpenPlatformApiKeyConfig::default_rotate_grace_secs")]
+    pub rotate_grace_secs: u64,
+    /// 默认 scopes
+    #[serde(default = "OpenPlatformApiKeyConfig::default_scopes")]
+    pub default_scopes: Vec<String>,
+    /// 每分钟限流阈值（按 key_id + client_ip）
+    #[serde(default = "OpenPlatformApiKeyConfig::default_rate_limit_per_minute")]
+    pub rate_limit_per_minute: u32,
+}
+
+impl OpenPlatformApiKeyConfig {
+    fn default_live_prefix() -> String {
+        "pgr_live_".to_string()
+    }
+    fn default_test_prefix() -> String {
+        "pgr_test_".to_string()
+    }
+    fn default_hash_secret() -> String {
+        std::env::var("APP_OPEN_PLATFORM_API_KEY_HASH_SECRET").unwrap_or_default()
+    }
+    fn default_random_bytes() -> usize {
+        24
+    }
+    fn default_rotate_grace_secs() -> u64 {
+        86_400
+    }
+    fn default_scopes() -> Vec<String> {
+        vec!["public.read".to_string()]
+    }
+    fn default_rate_limit_per_minute() -> u32 {
+        120
+    }
+}
+
+impl Default for OpenPlatformApiKeyConfig {
+    fn default() -> Self {
+        Self {
+            live_prefix: Self::default_live_prefix(),
+            test_prefix: Self::default_test_prefix(),
+            hash_secret: Self::default_hash_secret(),
+            random_bytes: Self::default_random_bytes(),
+            rotate_grace_secs: Self::default_rotate_grace_secs(),
+            default_scopes: Self::default_scopes(),
+            rate_limit_per_minute: Self::default_rate_limit_per_minute(),
+        }
+    }
+}
+
+/// 开放平台配置
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenPlatformConfig {
+    /// 是否启用开放平台
+    #[serde(default = "OpenPlatformConfig::default_enabled")]
+    pub enabled: bool,
+    /// 开放平台 SQLite 路径
+    #[serde(default = "OpenPlatformConfig::default_sqlite_path")]
+    pub sqlite_path: String,
+    /// 开放平台 SQLite 是否启用 WAL
+    #[serde(default = "OpenPlatformConfig::default_sqlite_wal")]
+    pub sqlite_wal: bool,
+    /// GitHub OAuth 配置
+    #[serde(default)]
+    pub github: OpenPlatformGithubConfig,
+    /// 开发者会话配置
+    #[serde(default)]
+    pub session: OpenPlatformSessionConfig,
+    /// API Key 配置
+    #[serde(default)]
+    pub api_key: OpenPlatformApiKeyConfig,
+}
+
+impl OpenPlatformConfig {
+    fn default_enabled() -> bool {
+        false
+    }
+    fn default_sqlite_path() -> String {
+        "./resources/open_platform.db".to_string()
+    }
+    fn default_sqlite_wal() -> bool {
+        true
+    }
+}
+
+impl Default for OpenPlatformConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            sqlite_path: Self::default_sqlite_path(),
+            sqlite_wal: Self::default_sqlite_wal(),
+            github: OpenPlatformGithubConfig::default(),
+            session: OpenPlatformSessionConfig::default(),
+            api_key: OpenPlatformApiKeyConfig::default(),
+        }
+    }
+}
 /// CORS 配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CorsConfig {
@@ -231,6 +492,9 @@ pub struct AppConfig {
     /// 会话令牌配置
     #[serde(default)]
     pub session: SessionConfig,
+    /// 开放平台配置
+    #[serde(default)]
+    pub open_platform: OpenPlatformConfig,
     /// 品牌/展示配置
     #[serde(default)]
     pub branding: BrandingConfig,
@@ -381,6 +645,7 @@ impl Default for AppConfig {
             taptap: TapTapMultiConfig::default(),
             stats: StatsConfig::default(),
             session: SessionConfig::default(),
+            open_platform: OpenPlatformConfig::default(),
             branding: BrandingConfig::default(),
             watermark: WatermarkConfig::default(),
             image: ImageRenderConfig::default(),

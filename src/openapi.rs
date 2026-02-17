@@ -2,7 +2,6 @@ use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::openapi::server::{ServerBuilder, ServerVariableBuilder};
 use utoipa::{Modify, OpenApi};
 
-/// 在 OpenAPI 中注入 `X-Admin-Token` 的安全定义，供管理端接口复用。
 struct AdminTokenSecurity;
 
 impl Modify for AdminTokenSecurity {
@@ -12,33 +11,31 @@ impl Modify for AdminTokenSecurity {
             "AdminToken",
             SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-Admin-Token"))),
         );
+        components.add_security_scheme(
+            "OpenApiToken",
+            SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-OpenApi-Token"))),
+        );
     }
 }
 
-/// 为 Swagger UI 提供正确的“业务接口前缀”Servers 配置。
-///
-/// - 业务接口默认前缀为 `/api/v2`（对应 `config.api.prefix` / `APP_API_PREFIX`）。
-/// - `/health` 不带前缀，因此额外提供 `/` 作为备用 server 以便在 Swagger UI 中切换测试。
 struct ApiServers;
 
 impl Modify for ApiServers {
     fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
         let api = ServerBuilder::new()
             .url("{api_prefix}")
-            .description(Some("业务接口（默认 /api/v2）"))
+            .description(Some("Business API endpoints"))
             .parameter(
                 "api_prefix",
                 ServerVariableBuilder::new()
                     .default_value("/api/v2")
-                    .description(Some(
-                        "业务接口前缀：对应 config.api.prefix（可通过 APP_API_PREFIX 覆盖）",
-                    )),
+                    .description(Some("API prefix (maps to config.api.prefix)")),
             )
             .build();
 
         let root = ServerBuilder::new()
             .url("/")
-            .description(Some("根路径（用于 /health 等不带前缀接口）"))
+            .description(Some("Root endpoints such as /health"))
             .build();
 
         openapi.servers = Some(vec![api, root]);
@@ -56,6 +53,20 @@ impl Modify for ApiServers {
         crate::features::auth::handler::post_session_exchange,
         crate::features::auth::handler::post_session_refresh,
         crate::features::auth::handler::post_session_logout,
+        crate::features::open_platform::auth::get_github_login,
+        crate::features::open_platform::auth::get_github_callback,
+        crate::features::open_platform::auth::get_me,
+        crate::features::open_platform::auth::post_logout,
+        crate::features::open_platform::keys::post_create_api_key,
+        crate::features::open_platform::keys::get_api_keys,
+        crate::features::open_platform::keys::post_rotate_api_key,
+        crate::features::open_platform::keys::post_revoke_api_key,
+        crate::features::open_platform::keys::get_api_key_events,
+        crate::features::open_platform::open_api::open_save_data,
+        crate::features::open_platform::open_api::open_search_songs,
+        crate::features::open_platform::open_api::open_get_leaderboard_top,
+        crate::features::open_platform::open_api::open_get_leaderboard_by_rank,
+        crate::features::open_platform::open_api::open_post_rks_history,
         crate::features::song::handler::search_songs,
         crate::features::image::handler::render_bn,
         crate::features::image::handler::render_song,
@@ -80,31 +91,31 @@ impl Modify for ApiServers {
     ),
     modifiers(&AdminTokenSecurity, &ApiServers),
     tags(
+        (name = "Save", description = "Save parsing APIs"),
+        (name = "Auth", description = "TapTap authentication APIs"),
         (
-            name = "Save",
-            description = "存档解析：通过官方 sessionToken 或外部凭证获取并解析存档。"
+            name = "OpenPlatformAuth",
+            description = "Open platform developer OAuth and session APIs"
         ),
         (
-            name = "Auth",
-            description = "鉴权相关：TapTap 扫码登录、以及从凭证派生稳定 user_id。"
+            name = "OpenPlatformKeys",
+            description = "Open platform API key lifecycle management"
         ),
-        (name = "Song", description = "曲目查询：按关键词/别名/ID 搜索曲目。"),
         (
-            name = "Image",
-            description = "图片渲染：BestN/单曲成绩图等（支持 png/jpeg/webp/svg 输出）。"
+            name = "OpenPlatformOpenApi",
+            description = "Open platform business APIs under /open/*, secured by X-OpenApi-Token"
         ),
-        (name = "Stats", description = "统计：调用量聚合、归档触发等。"),
-        (
-            name = "Leaderboard",
-            description = "排行榜：Top/区间查询、公开资料，以及管理端审核接口。"
-        ),
-        (name = "RKS", description = "RKS：历史记录查询。"),
-        (name = "Health", description = "健康检查：服务探活。"),
+        (name = "Song", description = "Song search APIs"),
+        (name = "Image", description = "Image rendering APIs"),
+        (name = "Stats", description = "Service statistics APIs"),
+        (name = "Leaderboard", description = "Leaderboard APIs"),
+        (name = "RKS", description = "RKS history APIs"),
+        (name = "Health", description = "Health check APIs"),
     ),
     info(
         title = "Phi Backend API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "后端服务 API（Axum + utoipa）。注意：除 /health 外，其余业务接口实际挂载在 `config.api.prefix`（默认 /api/v2）下，OpenAPI 的 paths 不包含该前缀。"
+        description = "Backend service API (Axum + utoipa). Business APIs are mounted under config.api.prefix (default /api/v2). Open platform APIs are exposed as /open/* and require X-OpenApi-Token."
     )
 )]
 pub struct ApiDoc;
