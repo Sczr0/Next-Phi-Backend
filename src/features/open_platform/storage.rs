@@ -77,6 +77,32 @@ pub struct ApiKeyEventRecord {
     pub metadata: Option<serde_json::Value>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CreateApiKeyParams {
+    pub developer_id: String,
+    pub name: String,
+    pub key_prefix: String,
+    pub key_last4: String,
+    pub key_hash: String,
+    pub scopes: Vec<String>,
+    pub expires_at: Option<i64>,
+    pub now_ts: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RotateApiKeyParams {
+    pub key_id: String,
+    pub new_name: String,
+    pub new_key_prefix: String,
+    pub new_key_last4: String,
+    pub new_key_hash: String,
+    pub new_scopes: Vec<String>,
+    pub grace_expires_at: Option<i64>,
+    pub now_ts: i64,
+    pub operator_id: Option<String>,
+    pub request_id: Option<String>,
+}
+
 #[derive(Clone)]
 pub struct OpenPlatformStorage {
     pub pool: SqlitePool,
@@ -307,17 +333,21 @@ impl OpenPlatformStorage {
 
     pub async fn create_api_key(
         &self,
-        developer_id: &str,
-        name: &str,
-        key_prefix: &str,
-        key_last4: &str,
-        key_hash: &str,
-        scopes: &[String],
-        expires_at: Option<i64>,
-        now_ts: i64,
+        params: CreateApiKeyParams,
     ) -> Result<ApiKeyRecord, AppError> {
+        let CreateApiKeyParams {
+            developer_id,
+            name,
+            key_prefix,
+            key_last4,
+            key_hash,
+            scopes,
+            expires_at,
+            now_ts,
+        } = params;
+
         let key_id = format!("key_{}", Uuid::new_v4().simple());
-        let scopes_json = serde_json::to_string(scopes)
+        let scopes_json = serde_json::to_string(&scopes)
             .map_err(|e| AppError::Internal(format!("serialize api key scopes: {e}")))?;
 
         sqlx::query(
@@ -326,11 +356,11 @@ impl OpenPlatformStorage {
              ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&key_id)
-        .bind(developer_id)
-        .bind(name)
-        .bind(key_prefix)
-        .bind(key_last4)
-        .bind(key_hash)
+        .bind(&developer_id)
+        .bind(&name)
+        .bind(&key_prefix)
+        .bind(&key_last4)
+        .bind(&key_hash)
         .bind(scopes_json)
         .bind(API_KEY_STATUS_ACTIVE)
         .bind(now_ts)
@@ -386,17 +416,21 @@ impl OpenPlatformStorage {
 
     pub async fn rotate_api_key(
         &self,
-        key_id: &str,
-        new_name: &str,
-        new_key_prefix: &str,
-        new_key_last4: &str,
-        new_key_hash: &str,
-        new_scopes: &[String],
-        grace_expires_at: Option<i64>,
-        now_ts: i64,
-        operator_id: Option<&str>,
-        request_id: Option<&str>,
+        params: RotateApiKeyParams,
     ) -> Result<ApiKeyRecord, AppError> {
+        let RotateApiKeyParams {
+            key_id,
+            new_name,
+            new_key_prefix,
+            new_key_last4,
+            new_key_hash,
+            new_scopes,
+            grace_expires_at,
+            now_ts,
+            operator_id,
+            request_id,
+        } = params;
+
         let mut tx = self
             .pool
             .begin()
@@ -404,7 +438,7 @@ impl OpenPlatformStorage {
             .map_err(|e| AppError::Internal(format!("begin rotate api key tx: {e}")))?;
 
         let old_row = sqlx::query("SELECT developer_id, status FROM api_keys WHERE id = ? LIMIT 1")
-            .bind(key_id)
+            .bind(&key_id)
             .fetch_optional(&mut *tx)
             .await
             .map_err(|e| AppError::Internal(format!("query old api key for rotate: {e}")))?;
@@ -421,7 +455,7 @@ impl OpenPlatformStorage {
         }
 
         let new_key_id = format!("key_{}", Uuid::new_v4().simple());
-        let scopes_json = serde_json::to_string(new_scopes)
+        let scopes_json = serde_json::to_string(&new_scopes)
             .map_err(|e| AppError::Internal(format!("serialize rotate scopes: {e}")))?;
 
         sqlx::query(
@@ -431,10 +465,10 @@ impl OpenPlatformStorage {
         )
         .bind(&new_key_id)
         .bind(&developer_id)
-        .bind(new_name)
-        .bind(new_key_prefix)
-        .bind(new_key_last4)
-        .bind(new_key_hash)
+        .bind(&new_name)
+        .bind(&new_key_prefix)
+        .bind(&new_key_last4)
+        .bind(&new_key_hash)
         .bind(scopes_json)
         .bind(API_KEY_STATUS_ACTIVE)
         .bind(now_ts)
@@ -458,7 +492,7 @@ impl OpenPlatformStorage {
         .bind(revoked_at)
         .bind(next_expires_at)
         .bind(&new_key_id)
-        .bind(key_id)
+        .bind(&key_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Internal(format!("update old api key on rotate: {e}")))?;
@@ -470,12 +504,12 @@ impl OpenPlatformStorage {
              ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(rotate_event_id)
-        .bind(key_id)
+        .bind(&key_id)
         .bind(&developer_id)
         .bind(API_KEY_EVENT_ROTATED)
         .bind("key rotated")
-        .bind(operator_id)
-        .bind(request_id)
+        .bind(operator_id.as_deref())
+        .bind(request_id.as_deref())
         .bind(now_ts)
         .bind(
             serde_json::to_string(&serde_json::json!({
@@ -499,8 +533,8 @@ impl OpenPlatformStorage {
         .bind(&developer_id)
         .bind(API_KEY_EVENT_ISSUED)
         .bind("rotated new key issued")
-        .bind(operator_id)
-        .bind(request_id)
+        .bind(operator_id.as_deref())
+        .bind(request_id.as_deref())
         .bind(now_ts)
         .execute(&mut *tx)
         .await
@@ -613,7 +647,7 @@ impl OpenPlatformStorage {
     ) -> Result<String, AppError> {
         let event_id = format!("evt_{}", Uuid::new_v4().simple());
         let metadata_json = metadata
-            .map(|v| serde_json::to_string(v))
+            .map(serde_json::to_string)
             .transpose()
             .map_err(|e| AppError::Internal(format!("serialize api key event metadata: {e}")))?;
 
@@ -709,16 +743,16 @@ mod tests {
             .expect("upsert developer");
 
         let key1 = storage
-            .create_api_key(
-                &developer.id,
-                "prod-key",
-                "pgr_live_",
-                "a1b2",
-                "hash_key_1",
-                &[String::from("public.read"), String::from("profile.read")],
-                None,
-                now,
-            )
+            .create_api_key(CreateApiKeyParams {
+                developer_id: developer.id.clone(),
+                name: "prod-key".to_string(),
+                key_prefix: "pgr_live_".to_string(),
+                key_last4: "a1b2".to_string(),
+                key_hash: "hash_key_1".to_string(),
+                scopes: vec![String::from("public.read"), String::from("profile.read")],
+                expires_at: None,
+                now_ts: now,
+            })
             .await
             .expect("create key1");
         assert_eq!(key1.status, API_KEY_STATUS_ACTIVE);
@@ -732,18 +766,18 @@ mod tests {
 
         let rotate_grace = now + 3600;
         let key2 = storage
-            .rotate_api_key(
-                &key1.id,
-                "prod-key-v2",
-                "pgr_live_",
-                "c3d4",
-                "hash_key_2",
-                &[String::from("public.read")],
-                Some(rotate_grace),
-                now + 5,
-                Some(&developer.id),
-                Some("req_rotate_001"),
-            )
+            .rotate_api_key(RotateApiKeyParams {
+                key_id: key1.id.clone(),
+                new_name: "prod-key-v2".to_string(),
+                new_key_prefix: "pgr_live_".to_string(),
+                new_key_last4: "c3d4".to_string(),
+                new_key_hash: "hash_key_2".to_string(),
+                new_scopes: vec![String::from("public.read")],
+                grace_expires_at: Some(rotate_grace),
+                now_ts: now + 5,
+                operator_id: Some(developer.id.clone()),
+                request_id: Some("req_rotate_001".to_string()),
+            })
             .await
             .expect("rotate key");
         assert_eq!(key2.status, API_KEY_STATUS_ACTIVE);

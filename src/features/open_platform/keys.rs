@@ -220,7 +220,7 @@ fn resolve_key_hash_secret(cfg: &crate::config::OpenPlatformConfig) -> Result<St
 }
 
 fn generate_api_key(prefix: &str, random_bytes: usize) -> String {
-    let byte_len = random_bytes.max(16).min(64);
+    let byte_len = random_bytes.clamp(16, 64);
     let mut bytes = vec![0u8; byte_len];
     rand::thread_rng().fill_bytes(&mut bytes);
     let suffix = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
@@ -274,7 +274,7 @@ async fn ensure_key_owned_by_developer(
     let key = st
         .get_api_key_by_id(key_id)
         .await?
-        .ok_or_else(|| AppError::Search(crate::error::SearchError::NotFound))?;
+        .ok_or(AppError::Search(crate::error::SearchError::NotFound))?;
     if key.developer_id != developer_id {
         return Err(AppError::Auth("无权操作该 API Key".into()));
     }
@@ -328,16 +328,16 @@ pub async fn post_create_api_key(
 
     let st = storage::global()?;
     let created = st
-        .create_api_key(
-            &developer.id,
-            &name,
-            &prefix,
-            &key_last4,
-            &key_hash,
-            &scopes,
-            req.expires_at,
-            now,
-        )
+        .create_api_key(storage::CreateApiKeyParams {
+            developer_id: developer.id.clone(),
+            name,
+            key_prefix: prefix,
+            key_last4,
+            key_hash,
+            scopes,
+            expires_at: req.expires_at,
+            now_ts: now,
+        })
         .await?;
     let _ = st
         .record_api_key_event(
@@ -451,19 +451,20 @@ pub async fn post_rotate_api_key(
     let key_hash = hash_api_key(&hash_secret, &token);
 
     let st = storage::global()?;
+    let request_id = crate::request_id::current_request_id();
     let created = st
-        .rotate_api_key(
-            &key_id,
-            &name,
-            &prefix,
-            &key_last4,
-            &key_hash,
-            &scopes,
+        .rotate_api_key(storage::RotateApiKeyParams {
+            key_id,
+            new_name: name,
+            new_key_prefix: prefix,
+            new_key_last4: key_last4,
+            new_key_hash: key_hash,
+            new_scopes: scopes,
             grace_expires_at,
-            now,
-            Some(&developer.id),
-            crate::request_id::current_request_id().as_deref(),
-        )
+            now_ts: now,
+            operator_id: Some(developer.id.clone()),
+            request_id,
+        })
         .await?;
 
     Ok((
