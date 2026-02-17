@@ -163,19 +163,10 @@ fn row_to_api_key(row: &sqlx::sqlite::SqliteRow) -> Result<ApiKeyRecord, AppErro
         scopes: parse_scopes_json(&scopes_raw)?,
         status: row.get("status"),
         created_at: row.get("created_at"),
-        expires_at: row
-            .try_get::<Option<i64>, _>("expires_at")
-            .ok()
-            .flatten(),
-        revoked_at: row
-            .try_get::<Option<i64>, _>("revoked_at")
-            .ok()
-            .flatten(),
+        expires_at: row.try_get::<Option<i64>, _>("expires_at").ok().flatten(),
+        revoked_at: row.try_get::<Option<i64>, _>("revoked_at").ok().flatten(),
         replaced_by_key_id: normalize_optional_text(row.try_get("replaced_by_key_id").ok()),
-        last_used_at: row
-            .try_get::<Option<i64>, _>("last_used_at")
-            .ok()
-            .flatten(),
+        last_used_at: row.try_get::<Option<i64>, _>("last_used_at").ok().flatten(),
         last_used_ip: normalize_optional_text(row.try_get("last_used_ip").ok()),
         usage_count: row.get("usage_count"),
     })
