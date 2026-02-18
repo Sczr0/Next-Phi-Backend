@@ -71,7 +71,11 @@ fn map_token_business_error(body: &Value) -> Option<AppError> {
     };
 
     let classifier = format!("{code} {message}").to_ascii_lowercase();
-    if classifier.contains("authorization_pending") || classifier.contains("slow_down") {
+    if classifier.contains("authorization_pending")
+        || classifier.contains("authorization_waiting")
+        || classifier.contains("slow_down")
+        || classifier.contains("end-user authorization is waiting")
+    {
         Some(AppError::AuthPending(msg))
     } else {
         Some(AppError::Auth(msg))
@@ -524,6 +528,22 @@ mod tests {
             "data": {
                 "error": "authorization_pending",
                 "error_description": "authorization pending"
+            }
+        });
+        let err = super::map_token_business_error(&body).expect("expected business error");
+        assert!(
+            matches!(err, AppError::AuthPending(_)),
+            "expected AppError::AuthPending, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn map_token_business_error_recognizes_authorization_waiting() {
+        let body = serde_json::json!({
+            "success": false,
+            "data": {
+                "error": "oauth2.tapapis.com.AUTHORIZATION_WAITING",
+                "error_description": "InvalidArgument: the end-user authorization is waiting"
             }
         });
         let err = super::map_token_business_error(&body).expect("expected business error");
