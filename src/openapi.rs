@@ -67,6 +67,8 @@ impl Modify for ApiServers {
         crate::features::open_platform::open_api::open_auth_qrcode,
         crate::features::open_platform::open_api::open_auth_qrcode_status,
         crate::features::open_platform::open_api::open_save_data,
+        crate::features::open_platform::open_api::open_image_bn,
+        crate::features::open_platform::open_api::open_image_song,
         crate::features::open_platform::open_api::open_search_songs,
         crate::features::open_platform::open_api::open_get_leaderboard_top,
         crate::features::open_platform::open_api::open_get_leaderboard_by_rank,

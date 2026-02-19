@@ -48,6 +48,20 @@ pub struct ImageQueryOpts {
     webp_lossless: Option<bool>,
 }
 
+impl ImageQueryOpts {
+    pub(crate) fn into_open_svg_only(mut self) -> Result<Self, AppError> {
+        if let Some(fmt) = self.format.as_deref()
+            && !fmt.eq_ignore_ascii_case("svg")
+        {
+            return Err(AppError::Validation(
+                "开放平台图片接口仅支持 format=svg".to_string(),
+            ));
+        }
+        self.format = Some("svg".to_string());
+        Ok(self)
+    }
+}
+
 /// SVG 返回时，曲绘资源的同源访问前缀（由 `src/main.rs` 提供静态目录服务）。
 const ILLUSTRATION_PUBLIC_BASE_URL: &str = "/_ill";
 
