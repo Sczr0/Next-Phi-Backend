@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
 use axum::{
+    extract::MatchedPath,
     extract::{Request, State},
     http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use once_cell::sync::Lazy;
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::{
@@ -42,7 +44,32 @@ struct RateWindow {
     count: u32,
 }
 
-static OPEN_API_RATE_LIMITER: Lazy<Mutex<HashMap<String, RateWindow>>> =
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct RateBucketKey {
+    key_id: String,
+    route: String,
+    client_ip: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenApiRateLimitBucketSnapshot {
+    pub route: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_ip: Option<String>,
+    pub request_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OpenApiRateLimitSnapshot {
+    pub minute_slot: i64,
+    pub bucket_count: usize,
+    pub total_request_count: u64,
+    pub buckets: Vec<OpenApiRateLimitBucketSnapshot>,
+}
+
+static OPEN_API_RATE_LIMITER: Lazy<Mutex<HashMap<RateBucketKey, RateWindow>>> =
     Lazy::new(|| Mutex::new(HashMap::new()));
 
 fn resolve_key_hash_secret(cfg: &OpenPlatformConfig) -> Result<String, AppError> {
@@ -111,12 +138,17 @@ fn client_ip_from_headers(headers: &HeaderMap) -> Option<String> {
 
 async fn ensure_rate_limit(
     key_id: &str,
+    route: &str,
     client_ip: Option<&str>,
     per_minute_limit: u32,
     now_ts: i64,
 ) -> bool {
     let minute_slot = now_ts / 60;
-    let bucket_key = format!("{key_id}:{}", client_ip.unwrap_or("-"));
+    let bucket_key = RateBucketKey {
+        key_id: key_id.to_string(),
+        route: route.to_string(),
+        client_ip: client_ip.unwrap_or("-").to_string(),
+    };
     let mut guard = OPEN_API_RATE_LIMITER.lock().await;
     let entry = guard.entry(bucket_key).or_insert(RateWindow {
         minute_slot,
@@ -137,6 +169,93 @@ async fn ensure_rate_limit(
         guard.retain(|_, v| v.minute_slot >= minute_slot - 1);
     }
     true
+}
+
+fn resolve_route_bucket(req: &Request) -> String {
+    let method = req.method().as_str();
+    let path = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or(req.uri().path());
+    format!("{method} {path}")
+}
+
+pub async fn snapshot_rate_limit_by_key(
+    key_id: &str,
+    include_client_ip: bool,
+    limit: usize,
+    now_ts: i64,
+) -> OpenApiRateLimitSnapshot {
+    let minute_slot = now_ts / 60;
+    let limit = limit.clamp(1, 500);
+    let guard = OPEN_API_RATE_LIMITER.lock().await;
+
+    if include_client_ip {
+        let mut buckets: Vec<OpenApiRateLimitBucketSnapshot> = guard
+            .iter()
+            .filter(|(bucket, window)| bucket.key_id == key_id && window.minute_slot == minute_slot)
+            .map(|(bucket, window)| OpenApiRateLimitBucketSnapshot {
+                route: bucket.route.clone(),
+                client_ip: if bucket.client_ip == "-" {
+                    None
+                } else {
+                    Some(bucket.client_ip.clone())
+                },
+                request_count: window.count,
+            })
+            .collect();
+        buckets.sort_by(|a, b| {
+            b.request_count
+                .cmp(&a.request_count)
+                .then_with(|| a.route.cmp(&b.route))
+                .then_with(|| a.client_ip.cmp(&b.client_ip))
+        });
+        let total_request_count = buckets
+            .iter()
+            .fold(0_u64, |acc, b| acc.saturating_add(b.request_count as u64));
+        let bucket_count = buckets.len();
+        buckets.truncate(limit);
+        return OpenApiRateLimitSnapshot {
+            minute_slot,
+            bucket_count,
+            total_request_count,
+            buckets,
+        };
+    }
+
+    let mut per_route: HashMap<String, u32> = HashMap::new();
+    let mut total_request_count = 0_u64;
+    for (bucket, window) in guard.iter() {
+        if bucket.key_id != key_id || window.minute_slot != minute_slot {
+            continue;
+        }
+        total_request_count = total_request_count.saturating_add(window.count as u64);
+        let route_counter = per_route.entry(bucket.route.clone()).or_insert(0);
+        *route_counter = route_counter.saturating_add(window.count);
+    }
+
+    let mut buckets: Vec<OpenApiRateLimitBucketSnapshot> = per_route
+        .into_iter()
+        .map(|(route, request_count)| OpenApiRateLimitBucketSnapshot {
+            route,
+            client_ip: None,
+            request_count,
+        })
+        .collect();
+    buckets.sort_by(|a, b| {
+        b.request_count
+            .cmp(&a.request_count)
+            .then_with(|| a.route.cmp(&b.route))
+    });
+    let bucket_count = buckets.len();
+    buckets.truncate(limit);
+    OpenApiRateLimitSnapshot {
+        minute_slot,
+        bucket_count,
+        total_request_count,
+        buckets,
+    }
 }
 
 fn forbidden_response(detail: impl Into<String>) -> Response {
@@ -203,6 +322,7 @@ pub async fn open_api_token_middleware(
     let now_ts = chrono::Utc::now().timestamp();
     let request_id = crate::request_id::current_request_id();
     let client_ip = client_ip_from_headers(req.headers());
+    let route_bucket = resolve_route_bucket(&req);
 
     let token = match extract_open_api_token(req.headers()) {
         Ok(token) => token,
@@ -270,6 +390,7 @@ pub async fn open_api_token_middleware(
 
     if !ensure_rate_limit(
         &key.id,
+        &route_bucket,
         client_ip.as_deref(),
         cfg.api_key.rate_limit_per_minute,
         now_ts,
@@ -314,7 +435,7 @@ pub async fn open_api_token_middleware(
 mod tests {
     use axum::http::{HeaderMap, HeaderValue};
 
-    use super::{client_ip_from_headers, ensure_rate_limit};
+    use super::{client_ip_from_headers, ensure_rate_limit, snapshot_rate_limit_by_key};
 
     #[test]
     fn client_ip_prefers_x_forwarded_for() {
@@ -333,11 +454,59 @@ mod tests {
     #[tokio::test]
     async fn rate_limit_blocks_when_exceeded() {
         let key = format!("key_test_{}", uuid::Uuid::new_v4().simple());
+        let route = "POST /open/save";
         let ip = Some("127.0.0.1");
         let now = 1_700_000_000_i64;
 
-        assert!(ensure_rate_limit(&key, ip, 2, now).await);
-        assert!(ensure_rate_limit(&key, ip, 2, now + 1).await);
-        assert!(!ensure_rate_limit(&key, ip, 2, now + 2).await);
+        assert!(ensure_rate_limit(&key, route, ip, 2, now).await);
+        assert!(ensure_rate_limit(&key, route, ip, 2, now + 1).await);
+        assert!(!ensure_rate_limit(&key, route, ip, 2, now + 2).await);
+    }
+
+    #[tokio::test]
+    async fn rate_limit_isolated_by_route() {
+        let key = format!("key_route_{}", uuid::Uuid::new_v4().simple());
+        let ip = Some("127.0.0.1");
+        let now = 1_710_000_000_i64;
+
+        assert!(ensure_rate_limit(&key, "GET /open/songs/search", ip, 1, now).await);
+        assert!(ensure_rate_limit(&key, "POST /open/save", ip, 1, now).await);
+        assert!(!ensure_rate_limit(&key, "GET /open/songs/search", ip, 1, now + 1).await);
+        assert!(!ensure_rate_limit(&key, "POST /open/save", ip, 1, now + 1).await);
+    }
+
+    #[tokio::test]
+    async fn snapshot_aggregates_by_route() {
+        let key = format!("key_snapshot_{}", uuid::Uuid::new_v4().simple());
+        let now = 1_720_000_000_i64;
+
+        assert!(ensure_rate_limit(&key, "GET /open/songs/search", Some("10.0.0.1"), 10, now).await);
+        assert!(
+            ensure_rate_limit(
+                &key,
+                "GET /open/songs/search",
+                Some("10.0.0.2"),
+                10,
+                now + 1
+            )
+            .await
+        );
+        assert!(ensure_rate_limit(&key, "POST /open/save", None, 10, now + 2).await);
+
+        let aggregated = snapshot_rate_limit_by_key(&key, false, 100, now + 2).await;
+        assert_eq!(aggregated.total_request_count, 3);
+        assert_eq!(aggregated.bucket_count, 2);
+        assert_eq!(aggregated.buckets.len(), 2);
+        assert!(
+            aggregated
+                .buckets
+                .iter()
+                .any(|b| b.route == "GET /open/songs/search" && b.request_count == 2)
+        );
+
+        let detailed = snapshot_rate_limit_by_key(&key, true, 100, now + 2).await;
+        assert_eq!(detailed.total_request_count, 3);
+        assert_eq!(detailed.bucket_count, 3);
+        assert_eq!(detailed.buckets.len(), 3);
     }
 }

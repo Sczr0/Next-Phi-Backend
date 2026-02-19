@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     config::AppConfig,
     error::AppError,
-    features::open_platform::{auth, storage},
+    features::open_platform::{auth, storage, token_auth},
     state::AppState,
 };
 
@@ -67,6 +67,15 @@ pub struct DeleteApiKeyRequest {
 pub struct EventsQuery {
     #[serde(default)]
     pub limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyRateLimitQuery {
+    #[serde(default)]
+    pub include_client_ip: bool,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -149,6 +158,30 @@ pub struct ApiKeyEventItem {
 #[serde(rename_all = "camelCase")]
 pub struct ApiKeyEventsResponse {
     pub items: Vec<ApiKeyEventItem>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyRateLimitBucketItem {
+    pub route: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_ip: Option<String>,
+    pub request_count: u32,
+    pub remaining: u32,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ApiKeyRateLimitResponse {
+    pub key_id: String,
+    pub strategy: String,
+    pub per_minute_limit: u32,
+    pub minute_slot: i64,
+    pub window_start_ts: i64,
+    pub window_end_ts: i64,
+    pub total_request_count: u64,
+    pub bucket_count: usize,
+    pub buckets: Vec<ApiKeyRateLimitBucketItem>,
 }
 
 fn ensure_open_platform_enabled() -> Result<&'static crate::config::OpenPlatformConfig, AppError> {
@@ -627,6 +660,68 @@ pub async fn get_api_key_events(
     ))
 }
 
+#[utoipa::path(
+    get,
+    path = "/developer/api-keys/{key_id}/rate-limit",
+    summary = "查询 API Key 限流窗口信息",
+    params(
+        ("key_id" = String, Path, description = "key_id"),
+        ("includeClientIp" = Option<bool>, Query, description = "是否按 client_ip 展开，默认 false"),
+        ("limit" = Option<usize>, Query, description = "最多返回桶数量，默认 100，最大 500")
+    ),
+    responses(
+        (status = 200, description = "查询成功", body = ApiKeyRateLimitResponse),
+        (
+            status = 401,
+            description = "开发者会话无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "OpenPlatformKeys"
+)]
+pub async fn get_api_key_rate_limit(
+    headers: HeaderMap,
+    Path(key_id): Path<String>,
+    Query(query): Query<ApiKeyRateLimitQuery>,
+) -> Result<(StatusCode, Json<ApiKeyRateLimitResponse>), AppError> {
+    let cfg = ensure_open_platform_enabled()?;
+    let developer = auth::require_developer(&headers).await?;
+    let _old_key = ensure_key_owned_by_developer(&key_id, &developer.id).await?;
+
+    let now_ts = chrono::Utc::now().timestamp();
+    let limit = query.limit.unwrap_or(100).clamp(1, 500);
+    let per_minute_limit = cfg.api_key.rate_limit_per_minute.max(1);
+    let snapshot =
+        token_auth::snapshot_rate_limit_by_key(&key_id, query.include_client_ip, limit, now_ts)
+            .await;
+    let buckets = snapshot
+        .buckets
+        .into_iter()
+        .map(|bucket| ApiKeyRateLimitBucketItem {
+            route: bucket.route,
+            client_ip: bucket.client_ip,
+            request_count: bucket.request_count,
+            remaining: per_minute_limit.saturating_sub(bucket.request_count),
+        })
+        .collect();
+
+    Ok((
+        StatusCode::OK,
+        Json(ApiKeyRateLimitResponse {
+            key_id,
+            strategy: "apiKey+route+clientIp".to_string(),
+            per_minute_limit,
+            minute_slot: snapshot.minute_slot,
+            window_start_ts: snapshot.minute_slot.saturating_mul(60),
+            window_end_ts: snapshot.minute_slot.saturating_mul(60).saturating_add(59),
+            total_request_count: snapshot.total_request_count,
+            bucket_count: snapshot.bucket_count,
+            buckets,
+        }),
+    ))
+}
+
 pub fn create_open_platform_keys_router() -> Router<AppState> {
     Router::<AppState>::new()
         .route("/developer/api-keys", post(post_create_api_key))
@@ -646,6 +741,10 @@ pub fn create_open_platform_keys_router() -> Router<AppState> {
         .route(
             "/developer/api-keys/:key_id/events",
             get(get_api_key_events),
+        )
+        .route(
+            "/developer/api-keys/:key_id/rate-limit",
+            get(get_api_key_rate_limit),
         )
 }
 
