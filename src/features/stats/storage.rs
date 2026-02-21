@@ -28,7 +28,7 @@ pub struct SubmissionRecord<'a> {
     pub now_rfc3339: &'a str,
 }
 
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone)]
 pub struct ArchiveEventRow {
     pub ts_utc: String,
     pub route: Option<String>,
@@ -531,14 +531,31 @@ impl StatsStorage {
         start_rfc3339: &str,
         end_rfc3339: &str,
     ) -> Result<Vec<ArchiveEventRow>, AppError> {
-        sqlx::query_as::<_, ArchiveEventRow>(
+        let rows = sqlx::query(
             r#"SELECT ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json FROM events WHERE ts_utc BETWEEN ? AND ? ORDER BY ts_utc ASC"#,
         )
         .bind(start_rfc3339)
         .bind(end_rfc3339)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AppError::Internal(format!("archive query: {e}")))
+        .map_err(|e| AppError::Internal(format!("archive query: {e}")))?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in rows {
+            out.push(ArchiveEventRow {
+                ts_utc: row.try_get::<String, _>("ts_utc").unwrap_or_default(),
+                route: row.try_get::<String, _>("route").ok(),
+                feature: row.try_get::<String, _>("feature").ok(),
+                action: row.try_get::<String, _>("action").ok(),
+                method: row.try_get::<String, _>("method").ok(),
+                status: row.try_get::<i64, _>("status").ok(),
+                duration_ms: row.try_get::<i64, _>("duration_ms").ok(),
+                user_hash: row.try_get::<String, _>("user_hash").ok(),
+                client_ip_hash: row.try_get::<String, _>("client_ip_hash").ok(),
+                instance: row.try_get::<String, _>("instance").ok(),
+                extra_json: row.try_get::<String, _>("extra_json").ok(),
+            });
+        }
+        Ok(out)
     }
 
     pub async fn query_daily_agg_with_offset(
