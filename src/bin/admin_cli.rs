@@ -578,7 +578,7 @@ fn parse_user_hash_reason_cmd(
 
 fn parse_user_hash_flag(rest: &[String], cmd_name: &str) -> Result<String, CliError> {
     let mut idx = 0usize;
-    while idx < rest.len() {
+    if idx < rest.len() {
         if rest[idx] == "--user-hash" {
             idx += 1;
             return Ok(rest
