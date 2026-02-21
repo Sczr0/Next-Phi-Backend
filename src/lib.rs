@@ -30,6 +30,10 @@ pub mod request_id;
 
 /// OpenAPI 文档（utoipa）
 pub mod openapi;
+pub mod auth_contract;
+pub mod session_auth;
+pub mod identity_hash;
+pub mod stats_contract;
 
 // 导出常用类型供外部使用
 pub use config::AppConfig;

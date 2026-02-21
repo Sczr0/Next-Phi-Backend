@@ -9,10 +9,8 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::{mpsc, watch};
 
 use crate::{config::AppConfig, error::AppError};
-use hmac::{Hmac, Mac};
 use models::EventInsert;
 use once_cell::sync::OnceCell;
-use sha2::Sha256;
 use storage::StatsStorage;
 
 /// 统计服务句柄：对外只暴露异步上报通道与优雅关闭
@@ -239,63 +237,21 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
 
 /// HMAC-SHA256(盐, 值) -> hex 前 32 位（16字节）
 pub fn hmac_hex16(salt: &str, value: &str) -> String {
-    let mut mac = Hmac::<Sha256>::new_from_slice(salt.as_bytes()).expect("HMAC key");
-    mac.update(value.as_bytes());
-    let bytes = mac.finalize().into_bytes();
-    hex::encode(&bytes[..16])
+    crate::identity_hash::hmac_hex16(salt, value)
 }
 
 /// 依据 `UnifiedSaveRequest` 推导用户哈希（优先稳定标识）
 pub fn derive_user_identity_from_auth(
     salt_opt: Option<&str>,
-    auth: &crate::features::save::models::UnifiedSaveRequest,
+    auth: &crate::auth_contract::UnifiedSaveRequest,
 ) -> (Option<String>, Option<String>) {
-    let Some(salt) = salt_opt else {
-        return (None, None);
-    };
-    if let Some(tok) = &auth.session_token
-        && !tok.is_empty()
-    {
-        return (
-            Some(hmac_hex16(salt, tok)),
-            Some("session_token".to_string()),
-        );
-    }
-    if let Some(ext) = &auth.external_credentials {
-        if let Some(id) = &ext.api_user_id
-            && !id.is_empty()
-        {
-            return (
-                Some(hmac_hex16(salt, id)),
-                Some("external_api_user_id".to_string()),
-            );
-        }
-        if let Some(st) = &ext.sessiontoken
-            && !st.is_empty()
-        {
-            return (
-                Some(hmac_hex16(salt, st)),
-                Some("external_sessiontoken".to_string()),
-            );
-        }
-        if let (Some(p), Some(pid)) = (&ext.platform, &ext.platform_id)
-            && !p.is_empty()
-            && !pid.is_empty()
-        {
-            let k = format!("{p}:{pid}");
-            return (
-                Some(hmac_hex16(salt, &k)),
-                Some("platform_pair".to_string()),
-            );
-        }
-    }
-    (None, None)
+    crate::identity_hash::derive_user_identity_from_auth(salt_opt, auth)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{derive_user_identity_from_auth, hmac_hex16};
-    use crate::features::save::{ExternalApiCredentials, UnifiedSaveRequest};
+    use crate::auth_contract::{ExternalApiCredentials, UnifiedSaveRequest};
 
     const SALT: &str = "test-salt";
 

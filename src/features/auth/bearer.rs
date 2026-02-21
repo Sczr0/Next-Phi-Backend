@@ -11,8 +11,8 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use crate::auth_contract::{ExternalApiCredentials, UnifiedSaveRequest};
 use crate::error::AppError;
-use crate::features::save::models::UnifiedSaveRequest;
 use crate::state::AppState;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,7 +177,7 @@ pub fn decode_access_token_allow_expired(
 }
 
 pub(crate) async fn validate_bearer_not_revoked(
-    storage: Option<&Arc<crate::features::stats::storage::StatsStorage>>,
+    storage: Option<&Arc<crate::stats_contract::StatsStorage>>,
     claims: &SessionClaims,
 ) -> Result<(), AppError> {
     let Some(storage) = storage else {
@@ -260,7 +260,7 @@ where
 }
 
 pub async fn merge_auth_from_bearer_if_missing(
-    _stats_storage: Option<&Arc<crate::features::stats::storage::StatsStorage>>,
+    _stats_storage: Option<&Arc<crate::stats_contract::StatsStorage>>,
     bearer: &BearerAuthState,
     auth: &mut UnifiedSaveRequest,
 ) -> Result<(), AppError> {
@@ -460,7 +460,7 @@ pub fn derive_user_identity_with_bearer(
     bearer: &BearerAuthState,
 ) -> Result<(Option<String>, Option<String>), AppError> {
     if has_auth_credentials(auth) {
-        let derived = crate::features::stats::derive_user_identity_from_auth(salt_opt, auth);
+        let derived = crate::identity_hash::derive_user_identity_from_auth(salt_opt, auth);
         if derived.0.is_some() {
             return Ok(derived);
         }
@@ -479,7 +479,7 @@ pub fn derive_user_identity_with_bearer(
             Ok((Some(ctx.claims.sub.clone()), Some("session_bearer".into())))
         }
         BearerAuthState::Invalid(msg) => Err(AppError::Auth(msg.clone())),
-        BearerAuthState::Absent => Ok(crate::features::stats::derive_user_identity_from_auth(
+        BearerAuthState::Absent => Ok(crate::identity_hash::derive_user_identity_from_auth(
             salt_opt, auth,
         )),
     }
@@ -491,7 +491,7 @@ mod tests {
         BearerAuthContext, BearerAuthState, SessionClaims, derive_user_identity_with_bearer,
         has_auth_credentials,
     };
-    use crate::features::save::{ExternalApiCredentials, UnifiedSaveRequest};
+    use crate::auth_contract::{ExternalApiCredentials, UnifiedSaveRequest};
 
     #[test]
     fn has_auth_credentials_checks_both_paths() {

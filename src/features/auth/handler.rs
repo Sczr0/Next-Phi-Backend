@@ -37,7 +37,7 @@ pub struct UserIdResponse {
     path = "/auth/user-id",
     summary = "根据凭证生成去敏用户ID",
     description = "使用服务端配置的 stats.user_hash_salt 对凭证做 HMAC-SHA256 去敏，生成稳定用户标识。",
-    request_body = crate::features::save::models::UnifiedSaveRequest,
+    request_body = crate::auth_contract::UnifiedSaveRequest,
     responses(
         (status = 200, description = "鐢熸垚鎴愬姛", body = UserIdResponse),
         (
@@ -56,7 +56,7 @@ pub struct UserIdResponse {
     tag = "Auth"
 )]
 pub async fn post_user_id(
-    Json(auth): Json<crate::features::save::models::UnifiedSaveRequest>,
+    Json(auth): Json<crate::auth_contract::UnifiedSaveRequest>,
 ) -> Result<(StatusCode, Json<UserIdResponse>), AppError> {
     // 与 /save 的凭证互斥规则保持一致，避免同一请求在不同接口出现身份不一致。
     if auth.session_token.is_some() && auth.external_credentials.is_some() {
@@ -96,8 +96,10 @@ pub async fn post_user_id(
             )
         })?;
 
-    let (user_id_opt, user_kind) =
-        crate::features::stats::derive_user_identity_from_auth(Some(salt), &auth);
+    let (user_id_opt, user_kind) = crate::identity_hash::derive_user_identity_from_auth(
+        Some(salt),
+        &auth,
+    );
     let user_id = user_id_opt.ok_or_else(|| AppError::Internal("生成 user_id 失败".into()))?;
     Ok((StatusCode::OK, Json(UserIdResponse { user_id, user_kind })))
 }
@@ -181,7 +183,7 @@ fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
 #[serde(rename_all = "camelCase")]
 pub struct SessionExchangeRequest {
     #[serde(flatten)]
-    pub auth: crate::features::save::models::UnifiedSaveRequest,
+    pub auth: crate::auth_contract::UnifiedSaveRequest,
 }
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -264,7 +266,7 @@ fn resolve_refresh_window_secs(cfg: &crate::config::SessionConfig) -> u64 {
 }
 
 fn issue_session_access_token(
-    auth: &crate::features::save::models::UnifiedSaveRequest,
+    auth: &crate::auth_contract::UnifiedSaveRequest,
     sub: &str,
     cfg: &crate::config::SessionConfig,
     jwt_secret: &str,
@@ -387,7 +389,7 @@ pub async fn post_session_exchange(
             )
         })?;
     let (user_hash_opt, _) =
-        crate::features::stats::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
+        crate::identity_hash::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
     let user_hash = user_hash_opt
         .ok_or_else(|| AppError::Auth("鏃犳硶璇嗗埆鐢ㄦ埛锛堢己灏戝彲鐢ㄥ嚟璇侊級".into()))?;
     if let Some(storage) = state.stats_storage.as_ref() {

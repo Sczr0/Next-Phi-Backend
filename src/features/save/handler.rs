@@ -146,7 +146,7 @@ pub async fn get_save_data(
 
     let t_auth_merge = Instant::now();
     let (mut payload, bearer_state) =
-        match crate::features::auth::bearer::parse_json_with_bearer_state::<UnifiedSaveRequest>(req)
+        match crate::session_auth::parse_json_with_bearer_state::<UnifiedSaveRequest>(req)
             .await
         {
             Ok(v) => v,
@@ -162,7 +162,7 @@ pub async fn get_save_data(
                 return Err(e);
             }
         };
-    if let Err(e) = crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+    if let Err(e) = crate::session_auth::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
         &mut payload,
@@ -194,7 +194,7 @@ pub async fn get_save_data(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash, user_kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+    let (user_hash, user_kind) = crate::session_auth::derive_user_identity_with_bearer(
         salt,
         &payload,
         &bearer_state,
