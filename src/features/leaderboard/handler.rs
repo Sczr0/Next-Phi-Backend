@@ -527,11 +527,8 @@ pub async fn post_me(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
-        salt,
-        &auth,
-        &bearer_state,
-    )?;
+    let (user_hash_opt, _kind) =
+        crate::session_auth::derive_user_identity_with_bearer(salt, &auth, &bearer_state)?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
     ensure_not_banned(storage, &user_hash).await?;
@@ -616,11 +613,8 @@ pub async fn put_alias(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
-        salt,
-        &req.auth,
-        &bearer_state,
-    )?;
+    let (user_hash_opt, _kind) =
+        crate::session_auth::derive_user_identity_with_bearer(salt, &req.auth, &bearer_state)?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
     ensure_not_banned(storage, &user_hash).await?;
@@ -691,10 +685,8 @@ pub async fn put_profile(
     State(state): State<AppState>,
     request: axum::extract::Request,
 ) -> Result<Json<OkResponse>, AppError> {
-    let (mut req, bearer_state) = crate::session_auth::parse_json_with_bearer_state::<
-        ProfileUpdateRequest,
-    >(request)
-    .await?;
+    let (mut req, bearer_state) =
+        crate::session_auth::parse_json_with_bearer_state::<ProfileUpdateRequest>(request).await?;
     crate::session_auth::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
@@ -710,11 +702,8 @@ pub async fn put_profile(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
-        salt,
-        &req.auth,
-        &bearer_state,
-    )?;
+    let (user_hash_opt, _kind) =
+        crate::session_auth::derive_user_identity_with_bearer(salt, &req.auth, &bearer_state)?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
     ensure_not_banned(storage, &user_hash).await?;

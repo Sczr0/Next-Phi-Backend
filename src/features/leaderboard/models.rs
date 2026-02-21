@@ -1,5 +1,5 @@
-use serde::{Deserialize, Serialize};
 use crate::auth_contract::UnifiedSaveRequest;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]

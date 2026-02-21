@@ -96,10 +96,8 @@ pub async fn post_user_id(
             )
         })?;
 
-    let (user_id_opt, user_kind) = crate::identity_hash::derive_user_identity_from_auth(
-        Some(salt),
-        &auth,
-    );
+    let (user_id_opt, user_kind) =
+        crate::identity_hash::derive_user_identity_from_auth(Some(salt), &auth);
     let user_id = user_id_opt.ok_or_else(|| AppError::Internal("生成 user_id 失败".into()))?;
     Ok((StatusCode::OK, Json(UserIdResponse { user_id, user_kind })))
 }

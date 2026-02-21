@@ -28,14 +28,14 @@ pub mod http;
 /// 请求 request_id 中间件与上下文工具
 pub mod request_id;
 
+pub mod auth_contract;
+pub mod auth_services;
+pub mod identity_hash;
+pub mod leaderboard_contract;
 /// OpenAPI 文档（utoipa）
 pub mod openapi;
-pub mod auth_contract;
 pub mod session_auth;
-pub mod identity_hash;
 pub mod stats_contract;
-pub mod auth_services;
-pub mod leaderboard_contract;
 
 // 导出常用类型供外部使用
 pub use config::AppConfig;

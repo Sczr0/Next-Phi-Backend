@@ -146,9 +146,7 @@ pub async fn get_save_data(
 
     let t_auth_merge = Instant::now();
     let (mut payload, bearer_state) =
-        match crate::session_auth::parse_json_with_bearer_state::<UnifiedSaveRequest>(req)
-            .await
-        {
+        match crate::session_auth::parse_json_with_bearer_state::<UnifiedSaveRequest>(req).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::info!(
@@ -194,11 +192,8 @@ pub async fn get_save_data(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash, user_kind) = crate::session_auth::derive_user_identity_with_bearer(
-        salt,
-        &payload,
-        &bearer_state,
-    )?;
+    let (user_hash, user_kind) =
+        crate::session_auth::derive_user_identity_with_bearer(salt, &payload, &bearer_state)?;
     if let (Some(storage), Some(user_hash_ref)) =
         (state.stats_storage.as_ref(), user_hash.as_deref())
     {
