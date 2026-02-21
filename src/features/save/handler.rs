@@ -917,11 +917,11 @@ fn build_textual_details_from_rks(
     rks_result: &PlayerRksResult,
     state: &AppState,
 ) -> (
-    Vec<crate::features::leaderboard::models::ChartTextItem>,
-    Vec<crate::features::leaderboard::models::ChartTextItem>,
-    crate::features::leaderboard::models::RksCompositionText,
+    Vec<crate::leaderboard_contract::ChartTextItem>,
+    Vec<crate::leaderboard_contract::ChartTextItem>,
+    crate::leaderboard_contract::RksCompositionText,
 ) {
-    use crate::features::leaderboard::models::{ChartTextItem, RksCompositionText};
+    use crate::leaderboard_contract::{ChartTextItem, RksCompositionText};
     let (acc_by_chart, valid_count, ap_count) = build_chart_acc_index(records);
     let total_charts = rks_result.b30_charts.len();
     let best27_len = valid_count.min(27).min(total_charts);

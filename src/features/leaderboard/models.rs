@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use crate::auth_contract::UnifiedSaveRequest;
 
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
@@ -113,7 +114,7 @@ pub struct MeResponse {
   "alias": "Alice"
 }))]
 pub struct AliasRequest {
-    pub auth: crate::features::save::models::UnifiedSaveRequest,
+    pub auth: UnifiedSaveRequest,
     pub alias: String,
 }
 
@@ -127,7 +128,7 @@ pub struct AliasRequest {
   "showApTop3": true
 }))]
 pub struct ProfileUpdateRequest {
-    pub auth: crate::features::save::models::UnifiedSaveRequest,
+    pub auth: UnifiedSaveRequest,
     pub is_public: Option<bool>,
     pub show_rks_composition: Option<bool>,
     pub show_best_top3: Option<bool>,

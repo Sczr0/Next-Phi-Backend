@@ -132,14 +132,14 @@ fn normalize_moderation_status(raw: &str) -> Result<(&'static str, i64), AppErro
 }
 
 async fn ensure_not_banned(
-    storage: &crate::features::stats::storage::StatsStorage,
+    storage: &crate::stats_contract::StatsStorage,
     user_hash: &str,
 ) -> Result<(), AppError> {
     storage.ensure_user_not_banned(user_hash).await
 }
 
 async fn apply_user_status(
-    storage: &crate::features::stats::storage::StatsStorage,
+    storage: &crate::stats_contract::StatsStorage,
     user_hash: &str,
     status_raw: &str,
     reason: Option<&str>,
@@ -171,7 +171,7 @@ fn mask_user_prefix(hash: &str) -> String {
 ///
 /// 行为保持：详情查询失败时，仍然返回排行榜主数据（详情字段为 None）。
 async fn fetch_top3_details_map(
-    storage: &crate::features::stats::storage::StatsStorage,
+    storage: &crate::stats_contract::StatsStorage,
     user_hashes: &[String],
 ) -> HashMap<String, (Option<String>, Option<String>)> {
     match storage.fetch_top3_details_for_users(user_hashes).await {
@@ -492,7 +492,7 @@ pub async fn get_by_rank(
     path = "/leaderboard/rks/me",
     summary = "我的名次（按RKS）",
     description = "通过认证信息推导用户身份，返回名次、分数、总量与百分位（竞争排名）",
-    request_body = crate::features::save::models::UnifiedSaveRequest,
+    request_body = crate::auth_contract::UnifiedSaveRequest,
     responses(
         (status = 200, description = "查询成功", body = MeResponse),
         (
@@ -508,11 +508,11 @@ pub async fn post_me(
     State(state): State<AppState>,
     request: axum::extract::Request,
 ) -> Result<Json<MeResponse>, AppError> {
-    let (mut auth, bearer_state) = crate::features::auth::bearer::parse_json_with_bearer_state::<
-        crate::features::save::models::UnifiedSaveRequest,
+    let (mut auth, bearer_state) = crate::session_auth::parse_json_with_bearer_state::<
+        crate::auth_contract::UnifiedSaveRequest,
     >(request)
     .await?;
-    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+    crate::session_auth::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
         &mut auth,
@@ -527,7 +527,7 @@ pub async fn post_me(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
         salt,
         &auth,
         &bearer_state,
@@ -600,9 +600,8 @@ pub async fn put_alias(
     request: axum::extract::Request,
 ) -> Result<Json<OkAliasResponse>, AppError> {
     let (mut req, bearer_state) =
-        crate::features::auth::bearer::parse_json_with_bearer_state::<AliasRequest>(request)
-            .await?;
-    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        crate::session_auth::parse_json_with_bearer_state::<AliasRequest>(request).await?;
+    crate::session_auth::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
         &mut req.auth,
@@ -617,7 +616,7 @@ pub async fn put_alias(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
         salt,
         &req.auth,
         &bearer_state,
@@ -651,7 +650,7 @@ pub async fn put_alias(
         .upsert_user_alias_with_defaults(
             &user_hash,
             alias,
-            crate::features::stats::storage::UserAliasDefaults {
+            crate::stats_contract::UserAliasDefaults {
                 is_public: false,
                 show_rks_composition: cfg.leaderboard.default_show_rks_composition,
                 show_best_top3: cfg.leaderboard.default_show_best_top3,
@@ -692,11 +691,11 @@ pub async fn put_profile(
     State(state): State<AppState>,
     request: axum::extract::Request,
 ) -> Result<Json<OkResponse>, AppError> {
-    let (mut req, bearer_state) = crate::features::auth::bearer::parse_json_with_bearer_state::<
+    let (mut req, bearer_state) = crate::session_auth::parse_json_with_bearer_state::<
         ProfileUpdateRequest,
     >(request)
     .await?;
-    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+    crate::session_auth::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
         &mut req.auth,
@@ -711,7 +710,7 @@ pub async fn put_profile(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
         salt,
         &req.auth,
         &bearer_state,

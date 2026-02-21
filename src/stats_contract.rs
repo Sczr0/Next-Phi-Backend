@@ -1,1 +1,1 @@
-pub use crate::features::stats::storage::StatsStorage;
+pub use crate::features::stats::storage::{StatsStorage, UserAliasDefaults};
