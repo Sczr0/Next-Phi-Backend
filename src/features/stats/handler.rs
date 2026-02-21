@@ -1610,6 +1610,7 @@ struct IncludeFlags {
 }
 
 impl IncludeFlags {
+    #[cfg(test)]
     fn any(self) -> bool {
         self.routes
             || self.methods
@@ -1621,6 +1622,7 @@ impl IncludeFlags {
             || self.user_kinds
     }
 
+    #[cfg(test)]
     fn any_http(self) -> bool {
         self.routes || self.methods || self.status_codes || self.latency || self.unique_ips
     }

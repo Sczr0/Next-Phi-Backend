@@ -651,11 +651,13 @@ pub async fn put_alias(
         .upsert_user_alias_with_defaults(
             &user_hash,
             alias,
-            false,
-            cfg.leaderboard.default_show_rks_composition,
-            cfg.leaderboard.default_show_best_top3,
-            cfg.leaderboard.default_show_ap_top3,
-            &now,
+            crate::features::stats::storage::UserAliasDefaults {
+                is_public: false,
+                show_rks_composition: cfg.leaderboard.default_show_rks_composition,
+                show_best_top3: cfg.leaderboard.default_show_best_top3,
+                show_ap_top3: cfg.leaderboard.default_show_ap_top3,
+                now_rfc3339: &now,
+            },
         )
         .await?;
     Ok(Json(OkAliasResponse {

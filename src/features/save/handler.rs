@@ -649,8 +649,8 @@ pub async fn get_save_data(
 
             // 默认在排行榜上展示：首次保存时创建公开资料（best-effort）
             let cfg = crate::config::AppConfig::global();
-            if cfg.leaderboard.allow_public {
-                if let Err(e) = storage
+            if cfg.leaderboard.allow_public
+                && let Err(e) = storage
                     .ensure_default_public_profile(
                         &user_hash_s,
                         user_kind_s.as_deref(),
@@ -660,13 +660,12 @@ pub async fn get_save_data(
                         &now,
                     )
                     .await
-                {
-                    tracing::warn!(
-                        target: "phi_backend::leaderboard",
-                        user_hash = %user_hash_s,
-                        "ensure_default_public_profile failed (ignored): {e}"
-                    );
-                }
+            {
+                tracing::warn!(
+                    target: "phi_backend::leaderboard",
+                    user_hash = %user_hash_s,
+                    "ensure_default_public_profile failed (ignored): {e}"
+                );
             }
         });
 
