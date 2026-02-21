@@ -135,7 +135,15 @@ pub async fn post_rks_history(
 
     // 查询历史记录
     let t_query = Instant::now();
-    let (items, total) = storage.query_rks_history(&user_hash, limit, offset).await?;
+    let (entries, total) = storage.query_rks_history(&user_hash, limit, offset).await?;
+    let items: Vec<RksHistoryItem> = entries
+        .into_iter()
+        .map(|entry| RksHistoryItem {
+            rks: entry.rks,
+            rks_jump: entry.rks_jump,
+            created_at: entry.created_at,
+        })
+        .collect();
 
     // 获取当前 RKS
     let current_rks = storage

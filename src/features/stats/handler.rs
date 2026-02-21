@@ -7,7 +7,6 @@ use axum::{
 use chrono::{Datelike, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset, TimeZone, Utc};
 use moka::future::Cache;
 use serde::{Deserialize, Serialize};
-use sqlx::{QueryBuilder, Row, Sqlite};
 use std::{
     sync::{Arc, OnceLock},
     time::Duration,
@@ -784,381 +783,116 @@ pub async fn get_stats_summary(
     let start_utc_ref = start_utc.as_deref();
     let end_utc_ref = end_utc.as_deref();
     let feature_ref = q.feature.as_deref();
-
-    // overall first/last event
-    let mut overall_qb = QueryBuilder::<Sqlite>::new(
-        "SELECT MIN(ts_utc) as min_ts, MAX(ts_utc) as max_ts FROM events WHERE 1=1",
-    );
-    push_ts_range_filters(&mut overall_qb, start_utc_ref, end_utc_ref);
-    let row = overall_qb
-        .build()
-        .fetch_one(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("summary overall: {e}")))?;
-    let first_event_at = row
-        .try_get::<String, _>("min_ts")
-        .ok()
-        .and_then(|s| convert_tz(&s, tz));
-    let last_event_at = row
-        .try_get::<String, _>("max_ts")
-        .ok()
-        .and_then(|s| convert_tz(&s, tz));
-
-    // features usage
-    let mut features_qb = QueryBuilder::<Sqlite>::new(
-        "SELECT feature, COUNT(1) as cnt, MAX(ts_utc) as last_ts FROM events WHERE feature IS NOT NULL",
-    );
-    push_ts_range_filters(&mut features_qb, start_utc_ref, end_utc_ref);
-    push_feature_filter(&mut features_qb, feature_ref);
-    features_qb.push(" GROUP BY feature");
-    let feat_rows = features_qb
-        .build()
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("summary features: {e}")))?;
-    let mut features = Vec::with_capacity(feat_rows.len());
-    for r in feat_rows {
-        let f: String = r.try_get("feature").unwrap_or_else(|_| "".into());
-        let c: i64 = r.try_get("cnt").unwrap_or(0);
-        let last: Option<String> = r.try_get("last_ts").ok();
-        let last = last.and_then(|s| convert_tz(&s, tz));
-        features.push(FeatureUsageSummary {
-            feature: f,
-            count: c,
-            last_at: last,
-        });
-    }
-
-    // unique users (total)
-    let mut users_qb = QueryBuilder::<Sqlite>::new(
-        "SELECT COUNT(DISTINCT user_hash) as total FROM events WHERE user_hash IS NOT NULL",
-    );
-    push_ts_range_filters(&mut users_qb, start_utc_ref, end_utc_ref);
-    push_feature_filter(&mut users_qb, feature_ref);
-    let row = users_qb
-        .build()
-        .fetch_one(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
-    let total: i64 = row.try_get("total").unwrap_or(0);
-
-    // by_kind 改为按需计算：仅在 include 包含 user_kinds/all 时才执行 JSON 解析
-    let by_kind = if include.user_kinds {
-        use std::collections::{HashMap, HashSet};
-
-        const BATCH: i64 = 5000;
-        let mut last_id: i64 = 0;
-        let mut uniq: HashSet<(String, String)> = HashSet::new();
-        loop {
-            let mut by_kind_qb = QueryBuilder::<Sqlite>::new(
-                "SELECT id, user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL",
-            );
-            by_kind_qb.push(" AND id > ").push_bind(last_id);
-            push_ts_range_filters(&mut by_kind_qb, start_utc_ref, end_utc_ref);
-            push_feature_filter(&mut by_kind_qb, feature_ref);
-            by_kind_qb.push(" ORDER BY id ASC LIMIT ").push_bind(BATCH);
-            let rows = by_kind_qb
-                .build()
-                .fetch_all(&storage.pool)
-                .await
-                .map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?;
-            if rows.is_empty() {
-                break;
-            }
-            let row_len = rows.len() as i64;
-            for r in rows {
-                let id: i64 = match r.try_get("id") {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                last_id = id.max(last_id);
-                let uh: String = match r.try_get("user_hash") {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let ej: String = match r.try_get("extra_json") {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej)
-                    && let Some(kind) = val.get("user_kind").and_then(|v| v.as_str())
-                {
-                    uniq.insert((uh, kind.to_string()));
-                }
-            }
-            if row_len < BATCH {
-                break;
-            }
-        }
-
-        let mut by_kind_map: HashMap<String, i64> = HashMap::new();
-        for (_, k) in uniq {
-            *by_kind_map.entry(k).or_insert(0) += 1;
-        }
-        let mut by_kind: Vec<(String, i64)> = by_kind_map.into_iter().collect();
-        by_kind.sort_by(|a, b| b.1.cmp(&a.1));
-        by_kind
-    } else {
-        Vec::new()
-    };
-
     let want_meta =
         q.start.is_some() || q.end.is_some() || q.feature.is_some() || q.include.is_some();
-
-    let events_total = if want_meta || include.any() {
-        let mut events_total_qb =
-            QueryBuilder::<Sqlite>::new("SELECT COUNT(1) as total FROM events WHERE 1=1");
-        push_ts_range_filters(&mut events_total_qb, start_utc_ref, end_utc_ref);
-        let row = events_total_qb
-            .build()
-            .fetch_one(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary events_total: {e}")))?;
-        Some(row.try_get::<i64, _>("total").unwrap_or(0))
-    } else {
-        None
-    };
-
-    let (http_total, http_errors) = if include.any_http() {
-        let mut http_total_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT COUNT(1) as total, COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as err FROM events WHERE route IS NOT NULL",
-        );
-        push_ts_range_filters(&mut http_total_qb, start_utc_ref, end_utc_ref);
-        let row = http_total_qb
-            .build()
-            .fetch_one(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary http_total: {e}")))?;
-        (
-            Some(row.try_get::<i64, _>("total").unwrap_or(0)),
-            Some(row.try_get::<i64, _>("err").unwrap_or(0)),
+    let summary = storage
+        .query_stats_summary_data(
+            start_utc_ref,
+            end_utc_ref,
+            feature_ref,
+            super::storage::SummaryIncludeFlags {
+                routes: include.routes,
+                methods: include.methods,
+                status_codes: include.status_codes,
+                instances: include.instances,
+                actions: include.actions,
+                latency: include.latency,
+                unique_ips: include.unique_ips,
+                user_kinds: include.user_kinds,
+            },
+            top,
+            want_meta,
         )
-    } else {
-        (None, None)
-    };
+        .await?;
 
-    let routes = if include.routes {
-        let mut routes_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT route, COUNT(1) as cnt, COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as err_cnt, MAX(ts_utc) as last_ts FROM events WHERE route IS NOT NULL",
-        );
-        push_ts_range_filters(&mut routes_qb, start_utc_ref, end_utc_ref);
-        routes_qb
-            .push(" GROUP BY route ORDER BY cnt DESC LIMIT ")
-            .push_bind(top);
-        let rows = routes_qb
-            .build()
-            .fetch_all(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary routes: {e}")))?;
+    let first_event_at = summary
+        .first_event_ts
+        .as_deref()
+        .and_then(|s| convert_tz(s, tz));
+    let last_event_at = summary
+        .last_event_ts
+        .as_deref()
+        .and_then(|s| convert_tz(s, tz));
 
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let route: String = r.try_get("route").unwrap_or_else(|_| "".into());
-            let count: i64 = r.try_get("cnt").unwrap_or(0);
-            let err_count: i64 = r.try_get("err_cnt").unwrap_or(0);
-            let last: Option<String> = r.try_get("last_ts").ok();
-            let last = last.and_then(|s| convert_tz(&s, tz));
-            out.push(RouteUsageSummary {
-                route,
-                count,
-                err_count,
-                last_at: last,
-            });
-        }
-        Some(out)
-    } else {
-        None
-    };
-
-    let methods = if include.methods {
-        let mut methods_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT method, COUNT(1) as cnt FROM events WHERE route IS NOT NULL AND method IS NOT NULL",
-        );
-        push_ts_range_filters(&mut methods_qb, start_utc_ref, end_utc_ref);
-        methods_qb
-            .push(" GROUP BY method ORDER BY cnt DESC LIMIT ")
-            .push_bind(top);
-        let rows = methods_qb
-            .build()
-            .fetch_all(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary methods: {e}")))?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let method: String = r.try_get("method").unwrap_or_else(|_| "".into());
-            let count: i64 = r.try_get("cnt").unwrap_or(0);
-            out.push(MethodUsageSummary { method, count });
-        }
-        Some(out)
-    } else {
-        None
-    };
-
-    let status_codes = if include.status_codes {
-        let mut status_codes_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT status, COUNT(1) as cnt FROM events WHERE route IS NOT NULL AND status IS NOT NULL",
-        );
-        push_ts_range_filters(&mut status_codes_qb, start_utc_ref, end_utc_ref);
-        status_codes_qb
-            .push(" GROUP BY status ORDER BY cnt DESC LIMIT ")
-            .push_bind(top);
-        let rows = status_codes_qb
-            .build()
-            .fetch_all(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary status: {e}")))?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let status: i64 = r.try_get("status").unwrap_or(0);
-            if status < 0 || status > u16::MAX as i64 {
-                continue;
-            }
-            let count: i64 = r.try_get("cnt").unwrap_or(0);
-            out.push(StatusCodeSummary {
-                status: status as u16,
-                count,
-            });
-        }
-        Some(out)
-    } else {
-        None
-    };
-
-    let instances = if include.instances {
-        let mut instances_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT instance, COUNT(1) as cnt, MAX(ts_utc) as last_ts FROM events WHERE instance IS NOT NULL",
-        );
-        push_ts_range_filters(&mut instances_qb, start_utc_ref, end_utc_ref);
-        instances_qb
-            .push(" GROUP BY instance ORDER BY cnt DESC LIMIT ")
-            .push_bind(top);
-        let rows = instances_qb
-            .build()
-            .fetch_all(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary instances: {e}")))?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let instance: String = r.try_get("instance").unwrap_or_else(|_| "".into());
-            let count: i64 = r.try_get("cnt").unwrap_or(0);
-            let last: Option<String> = r.try_get("last_ts").ok();
-            let last = last.and_then(|s| convert_tz(&s, tz));
-            out.push(InstanceUsageSummary {
-                instance,
-                count,
-                last_at: last,
-            });
-        }
-        Some(out)
-    } else {
-        None
-    };
-
-    let actions = if include.actions {
-        let mut actions_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT feature, action, COUNT(1) as cnt, MAX(ts_utc) as last_ts FROM events WHERE feature IS NOT NULL AND action IS NOT NULL",
-        );
-        push_ts_range_filters(&mut actions_qb, start_utc_ref, end_utc_ref);
-        push_feature_filter(&mut actions_qb, feature_ref);
-        actions_qb
-            .push(" GROUP BY feature, action ORDER BY cnt DESC LIMIT ")
-            .push_bind(top);
-        let rows = actions_qb
-            .build()
-            .fetch_all(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary actions: {e}")))?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            let feature: String = r.try_get("feature").unwrap_or_else(|_| "".into());
-            let action: String = r.try_get("action").unwrap_or_else(|_| "".into());
-            let count: i64 = r.try_get("cnt").unwrap_or(0);
-            let last: Option<String> = r.try_get("last_ts").ok();
-            let last = last.and_then(|s| convert_tz(&s, tz));
-            out.push(ActionUsageSummary {
-                feature,
-                action,
-                count,
-                last_at: last,
-            });
-        }
-        Some(out)
-    } else {
-        None
-    };
-
-    let latency = if include.latency {
-        let mut latency_base_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT COUNT(duration_ms) as n, AVG(duration_ms) as avg, MAX(duration_ms) as max FROM events WHERE route IS NOT NULL AND duration_ms IS NOT NULL",
-        );
-        push_ts_range_filters(&mut latency_base_qb, start_utc_ref, end_utc_ref);
-        let row = latency_base_qb
-            .build()
-            .fetch_one(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary latency base: {e}")))?;
-
-        let n: i64 = row.try_get("n").unwrap_or(0);
-        let avg_ms: Option<f64> = row.try_get("avg").ok();
-        let max_ms: Option<i64> = row.try_get("max").ok();
-
-        let (p50_ms, p95_ms) = if n > 0 {
-            let p50_idx = (((n - 1) as f64) * 0.50).round() as i64;
-            let p95_idx = (((n - 1) as f64) * 0.95).round() as i64;
-
-            let pool = &storage.pool;
-            let pick = |idx: i64| async move {
-                let mut latency_pick_qb = QueryBuilder::<Sqlite>::new(
-                    "SELECT duration_ms as v FROM events WHERE route IS NOT NULL AND duration_ms IS NOT NULL",
-                );
-                push_ts_range_filters(&mut latency_pick_qb, start_utc_ref, end_utc_ref);
-                latency_pick_qb
-                    .push(" ORDER BY duration_ms ASC LIMIT 1 OFFSET ")
-                    .push_bind(idx);
-                let r = latency_pick_qb
-                    .build()
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(|e| AppError::Internal(format!("summary latency pick: {e}")))?;
-                Ok::<Option<i64>, AppError>(r.and_then(|row| row.try_get::<i64, _>("v").ok()))
-            };
-
-            let p50 = pick(p50_idx).await?;
-            let p95 = pick(p95_idx).await?;
-            (p50, p95)
-        } else {
-            (None, None)
-        };
-
-        Some(LatencySummary {
-            sample_count: n,
-            avg_ms,
-            p50_ms,
-            p95_ms,
-            max_ms,
+    let features = summary
+        .features
+        .into_iter()
+        .map(|r| FeatureUsageSummary {
+            feature: r.feature,
+            count: r.count,
+            last_at: r.last_ts.as_deref().and_then(|s| convert_tz(s, tz)),
         })
-    } else {
-        None
-    };
+        .collect::<Vec<_>>();
 
-    let unique_ips = if include.unique_ips {
-        let mut unique_ips_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT COUNT(DISTINCT client_ip_hash) as cnt FROM events WHERE route IS NOT NULL AND client_ip_hash IS NOT NULL",
-        );
-        push_ts_range_filters(&mut unique_ips_qb, start_utc_ref, end_utc_ref);
-        let row = unique_ips_qb
-            .build()
-            .fetch_one(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary unique_ips: {e}")))?;
-        Some(row.try_get::<i64, _>("cnt").unwrap_or(0))
-    } else {
-        None
-    };
+    let total = summary.unique_users_total;
+    let by_kind = summary.by_kind;
+    let events_total = summary.events_total;
+    let http_total = summary.http_total;
+    let http_errors = summary.http_errors;
+
+    let routes = summary.routes.map(|rows| {
+        rows.into_iter()
+            .map(|r| RouteUsageSummary {
+                route: r.route,
+                count: r.count,
+                err_count: r.err_count,
+                last_at: r.last_ts.as_deref().and_then(|s| convert_tz(s, tz)),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let methods = summary.methods.map(|rows| {
+        rows.into_iter()
+            .map(|r| MethodUsageSummary {
+                method: r.method,
+                count: r.count,
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let status_codes = summary.status_codes.map(|rows| {
+        rows.into_iter()
+            .filter_map(|r| {
+                if !(0..=u16::MAX as i64).contains(&r.status) {
+                    return None;
+                }
+                Some(StatusCodeSummary {
+                    status: r.status as u16,
+                    count: r.count,
+                })
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let instances = summary.instances.map(|rows| {
+        rows.into_iter()
+            .map(|r| InstanceUsageSummary {
+                instance: r.instance,
+                count: r.count,
+                last_at: r.last_ts.as_deref().and_then(|s| convert_tz(s, tz)),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let actions = summary.actions.map(|rows| {
+        rows.into_iter()
+            .map(|r| ActionUsageSummary {
+                feature: r.feature,
+                action: r.action,
+                count: r.count,
+                last_at: r.last_ts.as_deref().and_then(|s| convert_tz(s, tz)),
+            })
+            .collect::<Vec<_>>()
+    });
+
+    let latency = summary.latency.map(|l| LatencySummary {
+        sample_count: l.sample_count,
+        avg_ms: l.avg_ms,
+        p50_ms: l.p50_ms,
+        p95_ms: l.p95_ms,
+        max_ms: l.max_ms,
+    });
+    let unique_ips = summary.unique_ips;
 
     let resp = StatsSummaryResponse {
         timezone: tz_name,
@@ -1375,48 +1109,9 @@ async fn query_daily_agg(
 
     if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
         let modifier = sqlite_minutes_modifier(off_min);
-        let rows = sqlx::query(
-            r#"
-            SELECT date(ts_utc, ?) as date,
-                   feature,
-                   route,
-                   method,
-                   COUNT(1) as count,
-                   COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as err_count
-            FROM events
-            WHERE ts_utc BETWEEN ? AND ?
-              AND (? IS NULL OR feature = ?)
-              AND (? IS NULL OR route = ?)
-              AND (? IS NULL OR method = ?)
-            GROUP BY date, feature, route, method
-            ORDER BY date ASC
-        "#,
-        )
-        .bind(modifier)
-        .bind(&start_utc)
-        .bind(&end_utc)
-        .bind(feature)
-        .bind(feature)
-        .bind(route)
-        .bind(route)
-        .bind(method)
-        .bind(method)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("query daily: {e}")))?;
-
-        let mut out = Vec::with_capacity(rows.len());
-        for r in rows {
-            out.push(DailyAggRow {
-                date: r.get::<String, _>("date"),
-                feature: r.try_get::<String, _>("feature").ok(),
-                route: r.try_get::<String, _>("route").ok(),
-                method: r.try_get::<String, _>("method").ok(),
-                count: r.get::<i64, _>("count"),
-                err_count: r.get::<i64, _>("err_count"),
-            });
-        }
-        return Ok(out);
+        return storage
+            .query_daily_agg_with_offset(&modifier, &start_utc, &end_utc, feature, route, method)
+            .await;
     }
 
     // DST（或 offset 不固定）fallback：按天窗口聚合，确保本地日期口径正确
@@ -1425,41 +1120,19 @@ async fn query_daily_agg(
     while cur <= end {
         let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
         let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-        let rows = sqlx::query(
-            r#"
-            SELECT feature,
-                   route,
-                   method,
-                   COUNT(1) as count,
-                   COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as err_count
-            FROM events
-            WHERE ts_utc BETWEEN ? AND ?
-              AND (? IS NULL OR feature = ?)
-              AND (? IS NULL OR route = ?)
-              AND (? IS NULL OR method = ?)
-            GROUP BY feature, route, method
-        "#,
-        )
-        .bind(&day_start)
-        .bind(&day_end)
-        .bind(feature)
-        .bind(feature)
-        .bind(route)
-        .bind(route)
-        .bind(method)
-        .bind(method)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("query daily (fallback): {e}")))?;
+        let rows = storage
+            .query_daily_agg_slice(&day_start, &day_end, feature, route, method)
+            .await
+            .map_err(|e| AppError::Internal(format!("query daily (fallback): {e}")))?;
 
         for r in rows {
             out.push(DailyAggRow {
                 date: cur.to_string(),
-                feature: r.try_get::<String, _>("feature").ok(),
-                route: r.try_get::<String, _>("route").ok(),
-                method: r.try_get::<String, _>("method").ok(),
-                count: r.get::<i64, _>("count"),
-                err_count: r.get::<i64, _>("err_count"),
+                feature: r.feature,
+                route: r.route,
+                method: r.method,
+                count: r.count,
+                err_count: r.err_count,
             });
         }
         cur += chrono::Duration::days(1);
@@ -1484,28 +1157,6 @@ async fn query_latency_agg(
         method,
     } = filters;
 
-    // 统计口径：只统计“请求返回耗时”事件
-    // - route IS NOT NULL：来自 HTTP stats_middleware 的 MatchedPath
-    // - duration_ms IS NOT NULL：有耗时样本
-    const SQL_BUCKET: &str = r#"
-        SELECT feature,
-               route,
-               method,
-               COUNT(1) as count,
-               MIN(duration_ms) as min_ms,
-               AVG(duration_ms) as avg_ms,
-               MAX(duration_ms) as max_ms
-        FROM events
-        WHERE route IS NOT NULL
-          AND duration_ms IS NOT NULL
-          AND ts_utc BETWEEN ? AND ?
-          AND (? IS NULL OR feature = ?)
-          AND (? IS NULL OR route = ?)
-          AND (? IS NULL OR method = ?)
-        GROUP BY feature, route, method
-        ORDER BY route ASC, method ASC
-    "#;
-
     match bucket {
         LatencyBucket::Day => {
             let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
@@ -1514,51 +1165,24 @@ async fn query_latency_agg(
             // fixed-offset（无 DST）优化：单 SQL 按天分组
             if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
                 let modifier = sqlite_minutes_modifier(off_min);
-                let rows = sqlx::query(
-                    r#"
-                    SELECT date(ts_utc, ?) as bucket,
-                           feature,
-                           route,
-                           method,
-                           COUNT(1) as count,
-                           MIN(duration_ms) as min_ms,
-                           AVG(duration_ms) as avg_ms,
-                           MAX(duration_ms) as max_ms
-                    FROM events
-                    WHERE route IS NOT NULL
-                      AND duration_ms IS NOT NULL
-                      AND ts_utc BETWEEN ? AND ?
-                      AND (? IS NULL OR feature = ?)
-                      AND (? IS NULL OR route = ?)
-                      AND (? IS NULL OR method = ?)
-                    GROUP BY bucket, feature, route, method
-                    ORDER BY bucket ASC, route ASC, method ASC
-                "#,
-                )
-                .bind(modifier)
-                .bind(&start_utc)
-                .bind(&end_utc)
-                .bind(feature)
-                .bind(feature)
-                .bind(route)
-                .bind(route)
-                .bind(method)
-                .bind(method)
-                .fetch_all(&storage.pool)
-                .await
-                .map_err(|e| AppError::Internal(format!("latency agg day: {e}")))?;
+                let rows = storage
+                    .query_latency_agg_with_offset(
+                        &modifier, &start_utc, &end_utc, feature, route, method,
+                    )
+                    .await
+                    .map_err(|e| AppError::Internal(format!("latency agg day: {e}")))?;
 
                 let mut out = Vec::with_capacity(rows.len());
                 for r in rows {
                     out.push(LatencyAggRow {
-                        bucket: r.get::<String, _>("bucket"),
-                        feature: r.try_get::<String, _>("feature").ok(),
-                        route: r.try_get::<String, _>("route").ok(),
-                        method: r.try_get::<String, _>("method").ok(),
-                        count: r.get::<i64, _>("count"),
-                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
-                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
-                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                        bucket: r.bucket,
+                        feature: r.feature,
+                        route: r.route,
+                        method: r.method,
+                        count: r.count,
+                        min_ms: r.min_ms,
+                        avg_ms: r.avg_ms,
+                        max_ms: r.max_ms,
                     });
                 }
                 return Ok(out);
@@ -1570,29 +1194,21 @@ async fn query_latency_agg(
             while cur <= end {
                 let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
                 let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-                let rows = sqlx::query(SQL_BUCKET)
-                    .bind(&day_start)
-                    .bind(&day_end)
-                    .bind(feature)
-                    .bind(feature)
-                    .bind(route)
-                    .bind(route)
-                    .bind(method)
-                    .bind(method)
-                    .fetch_all(&storage.pool)
+                let rows = storage
+                    .query_latency_agg_slice(&day_start, &day_end, feature, route, method)
                     .await
                     .map_err(|e| AppError::Internal(format!("latency agg day (fallback): {e}")))?;
 
                 for r in rows {
                     out.push(LatencyAggRow {
                         bucket: cur.to_string(),
-                        feature: r.try_get::<String, _>("feature").ok(),
-                        route: r.try_get::<String, _>("route").ok(),
-                        method: r.try_get::<String, _>("method").ok(),
-                        count: r.get::<i64, _>("count"),
-                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
-                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
-                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                        feature: r.feature,
+                        route: r.route,
+                        method: r.method,
+                        count: r.count,
+                        min_ms: r.min_ms,
+                        avg_ms: r.avg_ms,
+                        max_ms: r.max_ms,
                     });
                 }
                 cur += chrono::Duration::days(1);
@@ -1626,29 +1242,21 @@ async fn query_latency_agg(
             for b in buckets {
                 let start_utc = parse_date_bound_utc(&b.start.to_string(), tz, false)?;
                 let end_utc = parse_date_bound_utc(&b.end.to_string(), tz, true)?;
-                let rows = sqlx::query(SQL_BUCKET)
-                    .bind(&start_utc)
-                    .bind(&end_utc)
-                    .bind(feature)
-                    .bind(feature)
-                    .bind(route)
-                    .bind(route)
-                    .bind(method)
-                    .bind(method)
-                    .fetch_all(&storage.pool)
+                let rows = storage
+                    .query_latency_agg_slice(&start_utc, &end_utc, feature, route, method)
                     .await
                     .map_err(|e| AppError::Internal(format!("latency agg week: {e}")))?;
 
                 for r in rows {
                     out.push(LatencyAggRow {
                         bucket: b.label.clone(),
-                        feature: r.try_get::<String, _>("feature").ok(),
-                        route: r.try_get::<String, _>("route").ok(),
-                        method: r.try_get::<String, _>("method").ok(),
-                        count: r.get::<i64, _>("count"),
-                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
-                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
-                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                        feature: r.feature,
+                        route: r.route,
+                        method: r.method,
+                        count: r.count,
+                        min_ms: r.min_ms,
+                        avg_ms: r.avg_ms,
+                        max_ms: r.max_ms,
                     });
                 }
             }
@@ -1682,29 +1290,21 @@ async fn query_latency_agg(
             for b in buckets {
                 let start_utc = parse_date_bound_utc(&b.start.to_string(), tz, false)?;
                 let end_utc = parse_date_bound_utc(&b.end.to_string(), tz, true)?;
-                let rows = sqlx::query(SQL_BUCKET)
-                    .bind(&start_utc)
-                    .bind(&end_utc)
-                    .bind(feature)
-                    .bind(feature)
-                    .bind(route)
-                    .bind(route)
-                    .bind(method)
-                    .bind(method)
-                    .fetch_all(&storage.pool)
+                let rows = storage
+                    .query_latency_agg_slice(&start_utc, &end_utc, feature, route, method)
                     .await
                     .map_err(|e| AppError::Internal(format!("latency agg month: {e}")))?;
 
                 for r in rows {
                     out.push(LatencyAggRow {
                         bucket: b.label.clone(),
-                        feature: r.try_get::<String, _>("feature").ok(),
-                        route: r.try_get::<String, _>("route").ok(),
-                        method: r.try_get::<String, _>("method").ok(),
-                        count: r.get::<i64, _>("count"),
-                        min_ms: r.try_get::<i64, _>("min_ms").ok(),
-                        avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
-                        max_ms: r.try_get::<i64, _>("max_ms").ok(),
+                        feature: r.feature,
+                        route: r.route,
+                        method: r.method,
+                        count: r.count,
+                        min_ms: r.min_ms,
+                        avg_ms: r.avg_ms,
+                        max_ms: r.max_ms,
                     });
                 }
             }
@@ -1733,36 +1333,18 @@ async fn query_daily_feature_usage(
 
     if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
         let modifier = sqlite_minutes_modifier(off_min);
-        let rows = sqlx::query(
-            r#"
-            SELECT date(ts_utc, ?) as date,
-                   feature,
-                   COUNT(1) as count,
-                   COUNT(DISTINCT user_hash) as unique_users
-            FROM events
-            WHERE feature IS NOT NULL
-              AND ts_utc BETWEEN ? AND ?
-              AND (? IS NULL OR feature = ?)
-            GROUP BY date, feature
-            ORDER BY date ASC
-        "#,
-        )
-        .bind(modifier)
-        .bind(&start_utc)
-        .bind(&end_utc)
-        .bind(feature)
-        .bind(feature)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("daily features: {e}")))?;
+        let rows = storage
+            .query_daily_feature_usage_with_offset(&modifier, &start_utc, &end_utc, feature)
+            .await
+            .map_err(|e| AppError::Internal(format!("daily features: {e}")))?;
 
         let mut out = Vec::with_capacity(rows.len());
         for r in rows {
             out.push(DailyFeatureUsageRow {
-                date: r.get::<String, _>("date"),
-                feature: r.get::<String, _>("feature"),
-                count: r.get::<i64, _>("count"),
-                unique_users: r.get::<i64, _>("unique_users"),
+                date: r.date,
+                feature: r.feature,
+                count: r.count,
+                unique_users: r.unique_users,
             });
         }
         return Ok(out);
@@ -1773,32 +1355,17 @@ async fn query_daily_feature_usage(
     while cur <= end {
         let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
         let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-        let rows = sqlx::query(
-            r#"
-            SELECT feature,
-                   COUNT(1) as count,
-                   COUNT(DISTINCT user_hash) as unique_users
-            FROM events
-            WHERE feature IS NOT NULL
-              AND ts_utc BETWEEN ? AND ?
-              AND (? IS NULL OR feature = ?)
-            GROUP BY feature
-        "#,
-        )
-        .bind(&day_start)
-        .bind(&day_end)
-        .bind(feature)
-        .bind(feature)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("daily features (fallback): {e}")))?;
+        let rows = storage
+            .query_daily_feature_usage_slice(&day_start, &day_end, feature)
+            .await
+            .map_err(|e| AppError::Internal(format!("daily features (fallback): {e}")))?;
 
         for r in rows {
             out.push(DailyFeatureUsageRow {
                 date: cur.to_string(),
-                feature: r.get::<String, _>("feature"),
-                count: r.get::<i64, _>("count"),
-                unique_users: r.get::<i64, _>("unique_users"),
+                feature: r.feature,
+                count: r.count,
+                unique_users: r.unique_users,
             });
         }
         cur += chrono::Duration::days(1);
@@ -1823,27 +1390,13 @@ async fn query_daily_dau(
 
     if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
         let modifier = sqlite_minutes_modifier(off_min);
-        let mut qb = QueryBuilder::<Sqlite>::new("SELECT date(ts_utc, ");
-        qb.push_bind(modifier)
-            .push(
-                ") as date, COUNT(DISTINCT user_hash) as active_users, COUNT(DISTINCT client_ip_hash) as active_ips FROM events WHERE ts_utc BETWEEN ",
-            )
-            .push_bind(start_utc.clone())
-            .push(" AND ")
-            .push_bind(end_utc.clone())
-            .push(" GROUP BY date ORDER BY date ASC");
-
-        let rows = qb
-            .build()
-            .fetch_all(&storage.pool)
+        let rows = storage
+            .query_daily_dau_with_offset(&modifier, &start_utc, &end_utc)
             .await
             .map_err(|e| AppError::Internal(format!("daily dau: {e}")))?;
 
         for r in rows {
-            let date = r.get::<String, _>("date");
-            let u = r.get::<i64, _>("active_users");
-            let ip = r.get::<i64, _>("active_ips");
-            map.insert(date, (u, ip));
+            map.insert(r.date, (r.active_users, r.active_ips));
         }
     } else {
         // DST fallback: per-day query
@@ -1851,21 +1404,10 @@ async fn query_daily_dau(
         while cur <= end {
             let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
             let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-            let r = sqlx::query(
-                r#"
-                SELECT COUNT(DISTINCT user_hash) as active_users,
-                       COUNT(DISTINCT client_ip_hash) as active_ips
-                FROM events
-                WHERE ts_utc BETWEEN ? AND ?
-            "#,
-            )
-            .bind(&day_start)
-            .bind(&day_end)
-            .fetch_one(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("daily dau (fallback): {e}")))?;
-            let u = r.get::<i64, _>("active_users");
-            let ip = r.get::<i64, _>("active_ips");
+            let (u, ip) = storage
+                .query_daily_dau_slice(&day_start, &day_end)
+                .await
+                .map_err(|e| AppError::Internal(format!("daily dau (fallback): {e}")))?;
             map.insert(cur.to_string(), (u, ip));
             cur += chrono::Duration::days(1);
         }
@@ -1908,127 +1450,27 @@ async fn query_daily_http(
     if let Some(off_min) = fixed_offset {
         let modifier = sqlite_minutes_modifier(off_min);
         let modifier_ref = modifier.as_str();
-        let rows = if top_per_day > 0 {
-            let mut qb = QueryBuilder::<Sqlite>::new(
-                r#"
-                SELECT date, route, method, total, errors, client_errors, server_errors
-                FROM (
-                    SELECT date(ts_utc, 
-                "#,
-            );
-            qb.push_bind(modifier_ref)
-                .push(
-                    r#") as date,
-                           route,
-                           method,
-                           COUNT(1) as total,
-                           COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as errors,
-                           COALESCE(SUM(CASE WHEN status BETWEEN 400 AND 499 THEN 1 ELSE 0 END), 0) as client_errors,
-                           COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END), 0) as server_errors,
-                           ROW_NUMBER() OVER (
-                               PARTITION BY date(ts_utc, "#,
-                )
-                .push_bind(modifier_ref)
-                .push(
-                    r#")
-                               ORDER BY
-                                   COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) DESC,
-                                   COUNT(1) DESC,
-                                   route ASC,
-                                   method ASC
-                           ) as rn
-                    FROM events
-                    WHERE route IS NOT NULL
-                      AND status IS NOT NULL
-                      AND ts_utc BETWEEN
-                "#,
-                )
-                .push_bind(start_utc.clone())
-                .push(" AND ")
-                .push_bind(end_utc.clone());
-
-            if let Some(route) = route {
-                qb.push(" AND route = ").push_bind(route.to_string());
-            }
-            if let Some(method) = method {
-                qb.push(" AND method = ").push_bind(method.to_string());
-            }
-
-            qb.push(
-                r#"
-                    GROUP BY date(ts_utc, "#,
+        let rows = storage
+            .query_daily_http_routes_with_offset(
+                modifier_ref,
+                &start_utc,
+                &end_utc,
+                route,
+                method,
+                top_per_day,
             )
-            .push_bind(modifier_ref)
-            .push(
-                r#"), route, method
-                ) ranked
-                WHERE rn <=
-                "#,
-            )
-            .push_bind(top_per_day)
-            .push(" ORDER BY date ASC, errors DESC, total DESC, route ASC, method ASC");
-            qb.build()
-                .fetch_all(&storage.pool)
-                .await
-                .map_err(|e| AppError::Internal(format!("daily http: {e}")))?
-        } else {
-            let mut qb = QueryBuilder::<Sqlite>::new(
-                r#"
-                SELECT date(ts_utc, 
-                "#,
-            );
-            qb.push_bind(modifier_ref)
-                .push(
-                    r#") as date,
-                       route,
-                       method,
-                       COUNT(1) as total,
-                       COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as errors,
-                       COALESCE(SUM(CASE WHEN status BETWEEN 400 AND 499 THEN 1 ELSE 0 END), 0) as client_errors,
-                       COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END), 0) as server_errors
-                FROM events
-                WHERE route IS NOT NULL
-                  AND status IS NOT NULL
-                  AND ts_utc BETWEEN
-                "#,
-                )
-                .push_bind(start_utc.clone())
-                .push(" AND ")
-                .push_bind(end_utc.clone());
-
-            if let Some(route) = route {
-                qb.push(" AND route = ").push_bind(route.to_string());
-            }
-            if let Some(method) = method {
-                qb.push(" AND method = ").push_bind(method.to_string());
-            }
-
-            qb.push(
-                r#"
-                GROUP BY date(ts_utc, "#,
-            )
-            .push_bind(modifier_ref)
-            .push(
-                r#"), route, method
-                ORDER BY date ASC
-            "#,
-            );
-
-            qb.build()
-                .fetch_all(&storage.pool)
-                .await
-                .map_err(|e| AppError::Internal(format!("daily http: {e}")))?
-        };
+            .await
+            .map_err(|e| AppError::Internal(format!("daily http: {e}")))?;
 
         route_rows.reserve(rows.len());
         for r in rows {
-            let date = r.get::<String, _>("date");
-            let route = r.get::<String, _>("route");
-            let method = r.get::<String, _>("method");
-            let total = r.get::<i64, _>("total");
-            let errors = r.get::<i64, _>("errors");
-            let client_errors = r.get::<i64, _>("client_errors");
-            let server_errors = r.get::<i64, _>("server_errors");
+            let date = r.date;
+            let route = r.route;
+            let method = r.method;
+            let total = r.total;
+            let errors = r.errors;
+            let client_errors = r.client_errors;
+            let server_errors = r.server_errors;
             route_rows.push(DailyHttpRouteRow {
                 date,
                 route,
@@ -2043,42 +1485,17 @@ async fn query_daily_http(
             });
         }
 
-        let mut totals_qb = QueryBuilder::<Sqlite>::new("SELECT date(ts_utc, ");
-        totals_qb
-            .push_bind(modifier_ref)
-            .push(
-                ") as date, COUNT(1) as total, COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as errors, COALESCE(SUM(CASE WHEN status BETWEEN 400 AND 499 THEN 1 ELSE 0 END), 0) as client_errors, COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END), 0) as server_errors FROM events WHERE route IS NOT NULL AND status IS NOT NULL AND ts_utc BETWEEN ",
-            )
-            .push_bind(start_utc.clone())
-            .push(" AND ")
-            .push_bind(end_utc.clone());
-
-        if let Some(route) = route {
-            totals_qb.push(" AND route = ").push_bind(route.to_string());
-        }
-        if let Some(method) = method {
-            totals_qb
-                .push(" AND method = ")
-                .push_bind(method.to_string());
-        }
-
-        totals_qb
-            .push(" GROUP BY date(ts_utc, ")
-            .push_bind(modifier_ref)
-            .push(") ORDER BY date ASC");
-
-        let total_rows = totals_qb
-            .build()
-            .fetch_all(&storage.pool)
+        let total_rows = storage
+            .query_daily_http_totals_with_offset(modifier_ref, &start_utc, &end_utc, route, method)
             .await
             .map_err(|e| AppError::Internal(format!("daily http totals: {e}")))?;
 
         for r in total_rows {
-            let date = r.get::<String, _>("date");
-            let total = r.get::<i64, _>("total");
-            let errors = r.get::<i64, _>("errors");
-            let client_errors = r.get::<i64, _>("client_errors");
-            let server_errors = r.get::<i64, _>("server_errors");
+            let date = r.date;
+            let total = r.total;
+            let errors = r.errors;
+            let client_errors = r.client_errors;
+            let server_errors = r.server_errors;
             totals_map.insert(date, (total, errors, client_errors, server_errors));
         }
     } else {
@@ -2087,40 +1504,18 @@ async fn query_daily_http(
         while cur <= end {
             let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
             let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-            let rows = sqlx::query(
-                r#"
-                SELECT route,
-                       method,
-                       COUNT(1) as total,
-                       COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) as errors,
-                       COALESCE(SUM(CASE WHEN status BETWEEN 400 AND 499 THEN 1 ELSE 0 END), 0) as client_errors,
-                       COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END), 0) as server_errors
-                FROM events
-                WHERE route IS NOT NULL
-                  AND status IS NOT NULL
-                  AND ts_utc BETWEEN ? AND ?
-                  AND (? IS NULL OR route = ?)
-                  AND (? IS NULL OR method = ?)
-                GROUP BY route, method
-            "#,
-            )
-            .bind(&day_start)
-            .bind(&day_end)
-            .bind(route)
-            .bind(route)
-            .bind(method)
-            .bind(method)
-            .fetch_all(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("daily http (fallback): {e}")))?;
+            let rows = storage
+                .query_daily_http_route_slice(&day_start, &day_end, route, method)
+                .await
+                .map_err(|e| AppError::Internal(format!("daily http (fallback): {e}")))?;
 
             for r in rows {
-                let route = r.get::<String, _>("route");
-                let method = r.get::<String, _>("method");
-                let total = r.get::<i64, _>("total");
-                let errors = r.get::<i64, _>("errors");
-                let client_errors = r.get::<i64, _>("client_errors");
-                let server_errors = r.get::<i64, _>("server_errors");
+                let route = r.route;
+                let method = r.method;
+                let total = r.total;
+                let errors = r.errors;
+                let client_errors = r.client_errors;
+                let server_errors = r.server_errors;
                 route_rows.push(DailyHttpRouteRow {
                     date: cur.to_string(),
                     route,
@@ -2228,25 +1623,6 @@ impl IncludeFlags {
 
     fn any_http(self) -> bool {
         self.routes || self.methods || self.status_codes || self.latency || self.unique_ips
-    }
-}
-
-fn push_ts_range_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
-    start_utc: Option<&str>,
-    end_utc: Option<&str>,
-) {
-    if let Some(start) = start_utc {
-        qb.push(" AND ts_utc >= ").push_bind(start.to_string());
-    }
-    if let Some(end) = end_utc {
-        qb.push(" AND ts_utc <= ").push_bind(end.to_string());
-    }
-}
-
-fn push_feature_filter(qb: &mut QueryBuilder<'_, Sqlite>, feature: Option<&str>) {
-    if let Some(feature) = feature {
-        qb.push(" AND feature = ").push_bind(feature.to_string());
     }
 }
 

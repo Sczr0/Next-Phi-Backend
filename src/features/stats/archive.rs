@@ -13,7 +13,6 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
-use sqlx::Row;
 
 use crate::config::{StatsArchiveConfig, StatsConfig};
 use crate::error::AppError;
@@ -76,9 +75,7 @@ async fn run_maintenance_once(
         cleanup_archived_hot_events(storage, &cfg.archive, cfg.retention_hot_days).await?;
 
     if cleanup.deleted_rows > 0
-        && let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE);")
-            .execute(&storage.pool)
-            .await
+        && let Err(e) = storage.checkpoint_wal_truncate().await
     {
         tracing::warn!("统计维护：checkpoint 失败: {}", e);
     }
@@ -194,22 +191,8 @@ async fn cleanup_archived_hot_events(
 }
 
 async fn load_db_day_counts(storage: &StatsStorage) -> Result<BTreeMap<NaiveDate, i64>, AppError> {
-    let rows = sqlx::query(
-        "SELECT substr(ts_utc,1,10) as day, COUNT(1) as c \
-         FROM events GROUP BY day ORDER BY day ASC",
-    )
-    .fetch_all(&storage.pool)
-    .await
-    .map_err(|e| AppError::Internal(format!("load daily counts: {e}")))?;
-
     let mut out = BTreeMap::new();
-    for r in rows {
-        let day_s: String = r
-            .try_get("day")
-            .map_err(|e| AppError::Internal(format!("read day: {e}")))?;
-        let c: i64 = r
-            .try_get("c")
-            .map_err(|e| AppError::Internal(format!("read day count: {e}")))?;
+    for (day_s, c) in storage.list_event_day_counts().await? {
         let day = NaiveDate::parse_from_str(&day_s, "%Y-%m-%d")
             .map_err(|e| AppError::Internal(format!("parse day {day_s}: {e}")))?;
         out.insert(day, c);
@@ -282,21 +265,10 @@ async fn delete_one_day_in_batches(
     let mut total_deleted = 0i64;
 
     loop {
-        let res = sqlx::query(
-            "DELETE FROM events WHERE id IN (
-               SELECT id FROM events
-               WHERE ts_utc >= ? AND ts_utc < ?
-               ORDER BY id ASC
-               LIMIT ?
-             )",
-        )
-        .bind(&from)
-        .bind(&to)
-        .bind(batch_size)
-        .execute(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("delete events day {}: {e}", day)))?;
-        let affected = res.rows_affected() as i64;
+        let affected = storage
+            .delete_events_in_range_batch(&from, &to, batch_size)
+            .await
+            .map_err(|e| AppError::Internal(format!("delete events day {}: {e}", day)))?;
         if affected == 0 {
             break;
         }
@@ -311,14 +283,10 @@ async fn count_one_day_events(storage: &StatsStorage, day: NaiveDate) -> Result<
     let to = (day + chrono::Duration::days(1))
         .format("%Y-%m-%d")
         .to_string();
-    let row = sqlx::query("SELECT COUNT(1) as c FROM events WHERE ts_utc >= ? AND ts_utc < ?")
-        .bind(from)
-        .bind(to)
-        .fetch_one(&storage.pool)
+    storage
+        .count_events_in_range(&from, &to)
         .await
-        .map_err(|e| AppError::Internal(format!("count events day {}: {e}", day)))?;
-    row.try_get::<i64, _>("c")
-        .map_err(|e| AppError::Internal(format!("read events day count {}: {e}", day)))
+        .map_err(|e| AppError::Internal(format!("count events day {}: {e}", day)))
 }
 
 fn parse_today_time(s: &str) -> Option<(u32, u32)> {
@@ -359,12 +327,9 @@ pub async fn archive_one_day(
     }
     let start = Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).unwrap());
     let end = Utc.from_utc_datetime(&day.and_hms_opt(23, 59, 59).unwrap());
-    let rows = sqlx::query(r#"SELECT ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json FROM events WHERE ts_utc BETWEEN ? AND ? ORDER BY ts_utc ASC"#)
-        .bind(start.to_rfc3339())
-        .bind(end.to_rfc3339())
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("archive query: {e}")))?;
+    let rows = storage
+        .query_archive_events_between(&start.to_rfc3339(), &end.to_rfc3339())
+        .await?;
 
     if rows.is_empty() {
         tracing::info!("统计归档：{} 无数据，跳过", day);
@@ -385,8 +350,7 @@ pub async fn archive_one_day(
     let mut extra_b = StringBuilder::new();
 
     for r in rows {
-        let ts_s: String = r.try_get("ts_utc").unwrap_or_default();
-        let ts = chrono::DateTime::parse_from_rfc3339(&ts_s)
+        let ts = chrono::DateTime::parse_from_rfc3339(&r.ts_utc)
             .ok()
             .map(|dt| dt.with_timezone(&Utc));
         if let Some(t) = ts {
@@ -395,24 +359,24 @@ pub async fn archive_one_day(
             tsb.append_null();
         }
 
-        append_opt_string(&mut route_b, r.try_get("route").ok());
-        append_opt_string(&mut feature_b, r.try_get("feature").ok());
-        append_opt_string(&mut action_b, r.try_get("action").ok());
-        append_opt_string(&mut method_b, r.try_get("method").ok());
+        append_opt_string(&mut route_b, r.route);
+        append_opt_string(&mut feature_b, r.feature);
+        append_opt_string(&mut action_b, r.action);
+        append_opt_string(&mut method_b, r.method);
 
-        match r.try_get::<i64, _>("status").ok().map(|v| v as u16) {
+        match r.status.map(|v| v as u16) {
             Some(v) => status_b.append_value(v),
             None => status_b.append_null(),
         }
-        match r.try_get::<i64, _>("duration_ms").ok() {
+        match r.duration_ms {
             Some(v) => dur_b.append_value(v),
             None => dur_b.append_null(),
         }
 
-        append_opt_string(&mut user_b, r.try_get("user_hash").ok());
-        append_opt_string(&mut ip_b, r.try_get("client_ip_hash").ok());
-        append_opt_string(&mut inst_b, r.try_get("instance").ok());
-        append_opt_string(&mut extra_b, r.try_get("extra_json").ok());
+        append_opt_string(&mut user_b, r.user_hash);
+        append_opt_string(&mut ip_b, r.client_ip_hash);
+        append_opt_string(&mut inst_b, r.instance);
+        append_opt_string(&mut extra_b, r.extra_json);
     }
 
     let schema = std::sync::Arc::new(Schema::new(vec![

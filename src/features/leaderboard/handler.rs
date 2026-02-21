@@ -6,7 +6,7 @@ use axum::{
     routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
-use sqlx::{QueryBuilder, Row, Sqlite};
+use sqlx::Row;
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -171,38 +171,16 @@ fn mask_user_prefix(hash: &str) -> String {
 ///
 /// 行为保持：详情查询失败时，仍然返回排行榜主数据（详情字段为 None）。
 async fn fetch_top3_details_map(
-    pool: &sqlx::SqlitePool,
+    storage: &crate::features::stats::storage::StatsStorage,
     user_hashes: &[String],
 ) -> HashMap<String, (Option<String>, Option<String>)> {
-    if user_hashes.is_empty() {
-        return HashMap::new();
-    }
-
-    let mut qb = QueryBuilder::<Sqlite>::new(
-        "SELECT user_hash, best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash IN (",
-    );
-    let mut separated = qb.separated(", ");
-    for uh in user_hashes {
-        separated.push_bind(uh);
-    }
-    separated.push_unseparated(")");
-
-    let rows = match qb.build().fetch_all(pool).await {
+    match storage.fetch_top3_details_for_users(user_hashes).await {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!(target: "phi_backend::leaderboard", "batch query leaderboard_details failed (ignored): {e}");
-            return HashMap::new();
+            HashMap::new()
         }
-    };
-
-    let mut map = HashMap::with_capacity(user_hashes.len());
-    for r in rows {
-        let user_hash: String = r.try_get("user_hash").unwrap_or_default();
-        let best: Option<String> = r.try_get("best_top3_json").unwrap_or(None);
-        let ap: Option<String> = r.try_get("ap_top3_json").unwrap_or(None);
-        map.insert(user_hash, (best, ap));
     }
-    map
 }
 
 /// 检查字符是否为中日韩（CJK）字符
@@ -254,46 +232,16 @@ pub async fn get_top(
     let limit = q.limit.unwrap_or(50).clamp(1, max_limit);
     let offset = q.offset.unwrap_or(0).max(0);
 
-    let total_row = sqlx::query("SELECT COUNT(1) AS c FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0")
-        .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("count top: {e}")))?;
-    let total: i64 = total_row.try_get("c").unwrap_or(0);
+    let total = storage.count_public_leaderboard_total().await?;
 
     let rows = if let (Some(sc), Some(upd), Some(usr)) =
         (q.after_score, q.after_updated.clone(), q.after_user.clone())
     {
-        // seek 分页
-        sqlx::query(
-            "SELECT lr.user_hash, lr.total_rks, lr.updated_at, up.alias, COALESCE(up.show_best_top3,0) AS sbt, COALESCE(up.show_ap_top3,0) AS sat
-             FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
-             WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0 AND (
-               lr.total_rks < ? OR (lr.total_rks = ? AND (lr.updated_at > ? OR (lr.updated_at = ? AND lr.user_hash > ?)))
-             )
-             ORDER BY lr.total_rks DESC, lr.updated_at ASC, lr.user_hash ASC
-             LIMIT ?"
-        )
-        .bind(sc)
-        .bind(sc)
-        .bind(&upd)
-        .bind(&upd)
-        .bind(&usr)
-        .bind(limit)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("query top seek: {e}")))?
+        storage
+            .query_leaderboard_top_seek(sc, &upd, &usr, limit)
+            .await?
     } else {
-        // offset 分页
-        sqlx::query(
-            "SELECT lr.user_hash, lr.total_rks, lr.updated_at, up.alias, COALESCE(up.show_best_top3,0) AS sbt, COALESCE(up.show_ap_top3,0) AS sat
-             FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
-             WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0
-             ORDER BY lr.total_rks DESC, lr.updated_at ASC, lr.user_hash ASC
-             LIMIT ? OFFSET ?"
-        )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("query top: {e}")))?
+        storage.query_leaderboard_top_offset(limit, offset).await?
     };
 
     let mut items: Vec<LeaderboardTopItem> = Vec::with_capacity(rows.len());
@@ -323,7 +271,7 @@ pub async fn get_top(
                 detail_users.push(uh);
             }
         }
-        fetch_top3_details_map(&storage.pool, &detail_users).await
+        fetch_top3_details_map(storage, &detail_users).await
     } else {
         HashMap::new()
     };
@@ -449,22 +397,8 @@ pub async fn get_by_rank(
     let limit = count;
     let lite = q.lite.unwrap_or(false);
 
-    let total_row = sqlx::query("SELECT COUNT(1) AS c FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0")
-        .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("count rank: {e}")))?;
-    let total: i64 = total_row.try_get("c").unwrap_or(0);
-
-    let rows = sqlx::query(
-        "SELECT lr.user_hash, lr.total_rks, lr.updated_at, up.alias, COALESCE(up.show_best_top3,0) AS sbt, COALESCE(up.show_ap_top3,0) AS sat
-         FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
-         WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0
-         ORDER BY lr.total_rks DESC, lr.updated_at ASC, lr.user_hash ASC
-         LIMIT ? OFFSET ?"
-    )
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("query by rank: {e}")))?;
+    let total = storage.count_public_leaderboard_total().await?;
+    let rows = storage.query_leaderboard_by_rank(limit, offset).await?;
 
     let mut items: Vec<LeaderboardTopItem> = Vec::with_capacity(rows.len());
     let has_more = ((start_rank - 1) + rows.len() as i64) < total;
@@ -487,7 +421,7 @@ pub async fn get_by_rank(
                 detail_users.push(uh);
             }
         }
-        fetch_top3_details_map(&storage.pool, &detail_users).await
+        fetch_top3_details_map(storage, &detail_users).await
     } else {
         HashMap::new()
     };
@@ -602,24 +536,14 @@ pub async fn post_me(
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
     ensure_not_banned(storage, &user_hash).await?;
 
-    let row_opt =
-        sqlx::query("SELECT total_rks, updated_at FROM leaderboard_rks WHERE user_hash=?")
-            .bind(&user_hash)
-            .fetch_optional(&storage.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("me fetch: {e}")))?;
-    let (my_score, my_updated) = if let Some(r) = row_opt {
-        (
-            r.get::<f64, _>("total_rks"),
-            r.get::<String, _>("updated_at"),
-        )
-    } else {
-        (0.0, String::from(""))
-    };
+    let (my_score, my_updated) =
+        if let Some((score, updated)) = storage.get_prev_rks(&user_hash).await? {
+            (score, updated)
+        } else {
+            (0.0, String::from(""))
+        };
 
-    let total_row = sqlx::query("SELECT COUNT(1) as c FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0")
-        .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("me total: {e}")))?;
-    let total: i64 = total_row.try_get("c").unwrap_or(0);
+    let total = storage.count_public_leaderboard_total().await?;
 
     if total == 0 || my_score <= 0.0 {
         return Ok(Json(MeResponse {
@@ -630,16 +554,9 @@ pub async fn post_me(
         }));
     }
 
-    // 竞争排名：严格大于 + 稳定并列次序（updated_at 更早在前，user_hash 更小在前）
-    let row = sqlx::query(
-        "SELECT COUNT(1) as higher FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
-         WHERE COALESCE(up.is_public,0)=1 AND lr.is_hidden=0 AND (
-           lr.total_rks > ? OR (lr.total_rks = ? AND (lr.updated_at < ? OR (lr.updated_at = ? AND lr.user_hash < ?)))
-         )"
-    )
-    .bind(my_score).bind(my_score).bind(&my_updated).bind(&my_updated).bind(&user_hash)
-    .fetch_one(&storage.pool).await.map_err(|e| AppError::Internal(format!("me rank: {e}")))?;
-    let higher: i64 = row.try_get("higher").unwrap_or(0);
+    let higher = storage
+        .count_public_leaderboard_higher(my_score, &my_updated, &user_hash)
+        .await?;
     let rank = higher + 1;
     let percentile = 100.0 * (1.0 - ((rank - 1) as f64 / total as f64));
     Ok(Json(MeResponse {
@@ -831,40 +748,8 @@ pub async fn put_profile(
         );
     }
 
-    // Build dynamic update
-    let mut sets: Vec<&str> = Vec::new();
-    if is_public.is_some() {
-        sets.push("is_public=?");
-    }
-    if show_rc.is_some() {
-        sets.push("show_rks_composition=?");
-    }
-    if show_b3.is_some() {
-        sets.push("show_best_top3=?");
-    }
-    if show_ap3.is_some() {
-        sets.push("show_ap_top3=?");
-    }
-    sets.push("updated_at=?");
-    let sql = format!(
-        "UPDATE user_profile SET {} WHERE user_hash=?",
-        sets.join(",")
-    );
-    let mut q = sqlx::query(&sql);
-    if let Some(v) = is_public {
-        q = q.bind(v);
-    }
-    if let Some(v) = show_rc {
-        q = q.bind(v);
-    }
-    if let Some(v) = show_b3 {
-        q = q.bind(v);
-    }
-    if let Some(v) = show_ap3 {
-        q = q.bind(v);
-    }
-    q = q.bind(&now).bind(&user_hash);
-    q.execute(&storage.pool)
+    storage
+        .update_user_profile_visibility(&user_hash, &now, is_public, show_rc, show_b3, show_ap3)
         .await
         .map_err(|e| AppError::Internal(format!("更新资料失败: {e}")))?;
     Ok(Json(OkResponse { ok: true }))
@@ -900,13 +785,7 @@ pub async fn get_public_profile(
         .stats_storage
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
-    // join profile + rks
-    let row = sqlx::query(
-        "SELECT up.user_hash, up.is_public, up.show_rks_composition, up.show_best_top3, up.show_ap_top3, lr.total_rks, lr.updated_at
-         FROM user_profile up LEFT JOIN leaderboard_rks lr ON lr.user_hash=up.user_hash WHERE up.alias = ?"
-    )
-    .bind(&alias)
-    .fetch_optional(&storage.pool).await.map_err(|e| AppError::Internal(format!("profile query: {e}")))?;
+    let row = storage.query_public_profile_by_alias(&alias).await?;
     let Some(r) = row else {
         return Err(AppError::Search(crate::error::SearchError::NotFound));
     };
@@ -930,21 +809,20 @@ pub async fn get_public_profile(
         ap_top3: None,
     };
     if (show_rc != 0 || show_b3 != 0 || show_ap3 != 0)
-        && let Some(d) = sqlx::query("SELECT rks_composition_json, best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash = ?")
-            .bind(&user_hash)
-            .fetch_optional(&storage.pool).await.map_err(|e| AppError::Internal(format!("details: {e}")))? {
+        && let Some(d) = storage.query_leaderboard_details_row(&user_hash).await?
+    {
         if show_rc != 0
-            && let Ok(Some(j)) = d.try_get::<String,_>("rks_composition_json").map(Some)
+            && let Ok(Some(j)) = d.try_get::<String, _>("rks_composition_json").map(Some)
         {
             resp.rks_composition = serde_json::from_str::<RksCompositionText>(&j).ok();
         }
         if show_b3 != 0
-            && let Ok(Some(j)) = d.try_get::<String,_>("best_top3_json").map(Some)
+            && let Ok(Some(j)) = d.try_get::<String, _>("best_top3_json").map(Some)
         {
             resp.best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
         }
         if show_ap3 != 0
-            && let Ok(Some(j)) = d.try_get::<String,_>("ap_top3_json").map(Some)
+            && let Ok(Some(j)) = d.try_get::<String, _>("ap_top3_json").map(Some)
         {
             resp.ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
         }
@@ -1045,18 +923,7 @@ pub async fn get_suspicious(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(100)
         .clamp(1, 500);
-    let rows = sqlx::query(
-        "SELECT lr.user_hash, lr.total_rks, lr.suspicion_score, lr.updated_at, up.alias
-         FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
-         WHERE lr.suspicion_score >= ?
-         ORDER BY lr.suspicion_score DESC, lr.total_rks DESC
-         LIMIT ?",
-    )
-    .bind(min_score)
-    .bind(limit)
-    .fetch_all(&storage.pool)
-    .await
-    .map_err(|e| AppError::Internal(format!("suspicious: {e}")))?;
+    let rows = storage.query_suspicious_rows(min_score, limit).await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         out.push(SuspiciousItem {
@@ -1132,58 +999,17 @@ pub async fn get_admin_leaderboard_users(
         .filter(|v| !v.is_empty())
         .map(|v| format!("%{v}%"));
 
-    let mut count_qb = QueryBuilder::<Sqlite>::new(
-        "SELECT COUNT(1) AS c
-         FROM leaderboard_rks lr
-         LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
-         LEFT JOIN user_moderation_state ums ON ums.user_hash=lr.user_hash
-         WHERE 1=1",
-    );
-    if let Some(status) = status_filter.as_deref() {
-        count_qb
-            .push(" AND LOWER(COALESCE(ums.status,'active')) = ")
-            .push_bind(status);
-    }
-    if let Some(alias) = alias_like.as_deref() {
-        count_qb.push(" AND up.alias LIKE ").push_bind(alias);
-    }
-    let total_row = count_qb
-        .build()
-        .fetch_one(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("admin users count: {e}")))?;
-    let total: i64 = total_row.try_get("c").unwrap_or(0);
-
-    let mut qb = QueryBuilder::<Sqlite>::new(
-        "SELECT
-            lr.user_hash,
-            up.alias,
-            lr.total_rks,
-            lr.suspicion_score,
-            lr.is_hidden,
-            lr.updated_at,
-            COALESCE(ums.status, 'active') AS status
-         FROM leaderboard_rks lr
-         LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
-         LEFT JOIN user_moderation_state ums ON ums.user_hash=lr.user_hash
-         WHERE 1=1",
-    );
-    if let Some(status) = status_filter.as_deref() {
-        qb.push(" AND LOWER(COALESCE(ums.status,'active')) = ")
-            .push_bind(status);
-    }
-    if let Some(alias) = alias_like.as_deref() {
-        qb.push(" AND up.alias LIKE ").push_bind(alias);
-    }
-    qb.push(" ORDER BY lr.total_rks DESC, lr.updated_at ASC, lr.user_hash ASC");
-    qb.push(" LIMIT ").push_bind(page_size);
-    qb.push(" OFFSET ").push_bind(offset);
-
-    let rows = qb
-        .build()
-        .fetch_all(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("admin users list: {e}")))?;
+    let total = storage
+        .query_admin_leaderboard_users_count(status_filter.as_deref(), alias_like.as_deref())
+        .await?;
+    let rows = storage
+        .query_admin_leaderboard_users_rows(
+            status_filter.as_deref(),
+            alias_like.as_deref(),
+            page_size,
+            offset,
+        )
+        .await?;
 
     let mut items = Vec::with_capacity(rows.len());
     for r in rows {
@@ -1246,16 +1072,9 @@ pub async fn get_admin_user_status(
         .stats_storage
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
-    let row = sqlx::query(
-        "SELECT status, reason, updated_by, updated_at
-         FROM user_moderation_state
-         WHERE user_hash = ?
-         LIMIT 1",
-    )
-    .bind(&q.user_hash)
-    .fetch_optional(&storage.pool)
-    .await
-    .map_err(|e| AppError::Internal(format!("get user status: {e}")))?;
+    let row = storage
+        .query_user_moderation_state_full_row(&q.user_hash)
+        .await?;
     if let Some(r) = row {
         return Ok(Json(AdminUserStatusResponse {
             user_hash: q.user_hash,
