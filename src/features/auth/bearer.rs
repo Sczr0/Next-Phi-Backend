@@ -11,7 +11,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use crate::auth_contract::{ExternalApiCredentials, UnifiedSaveRequest};
+use crate::auth_contract::UnifiedSaveRequest;
 use crate::error::AppError;
 use crate::state::AppState;
 
