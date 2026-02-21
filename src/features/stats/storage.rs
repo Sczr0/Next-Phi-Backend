@@ -2044,8 +2044,16 @@ impl StatsStorage {
         defaults: UserAliasDefaults<'_>,
     ) -> Result<(), AppError> {
         let is_public_i = if defaults.is_public { 1_i64 } else { 0_i64 };
-        let show_rks_comp_i = if defaults.show_rks_composition { 1_i64 } else { 0_i64 };
-        let show_best_top3_i = if defaults.show_best_top3 { 1_i64 } else { 0_i64 };
+        let show_rks_comp_i = if defaults.show_rks_composition {
+            1_i64
+        } else {
+            0_i64
+        };
+        let show_best_top3_i = if defaults.show_best_top3 {
+            1_i64
+        } else {
+            0_i64
+        };
         let show_ap_top3_i = if defaults.show_ap_top3 { 1_i64 } else { 0_i64 };
         let res = sqlx::query(
             "INSERT INTO user_profile(user_hash,alias,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
