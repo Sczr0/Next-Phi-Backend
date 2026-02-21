@@ -729,51 +729,22 @@ pub async fn put_alias(
     }
 
     let now = chrono::Utc::now().to_rfc3339();
-    // 默认展示开关读取配置
     let cfg = crate::config::AppConfig::global();
-    let def_rc = if cfg.leaderboard.default_show_rks_composition {
-        1_i64
-    } else {
-        0_i64
-    };
-    let def_b3 = if cfg.leaderboard.default_show_best_top3 {
-        1_i64
-    } else {
-        0_i64
-    };
-    let def_ap3 = if cfg.leaderboard.default_show_ap_top3 {
-        1_i64
-    } else {
-        0_i64
-    };
-    // Upsert profile
-    let res = sqlx::query(
-        "INSERT INTO user_profile(user_hash,alias,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
-         ON CONFLICT(user_hash) DO UPDATE SET alias=excluded.alias, updated_at=excluded.updated_at"
-    )
-        .bind(&user_hash)
-        .bind(alias)
-        .bind(0_i64)
-        .bind(def_rc)
-        .bind(def_b3)
-        .bind(def_ap3)
-        .bind(Option::<String>::None)
-        .bind(&now)
-        .bind(&now)
-        .execute(&storage.pool)
-        .await;
-    match res {
-        Ok(_) => Ok(Json(OkAliasResponse {
-            ok: true,
-            alias: alias.to_string(),
-        })),
-        Err(e) => {
-            if format!("{e}").to_lowercase().contains("unique") {
-                return Err(AppError::Conflict("别名已被占用".into()));
-            }
-            Err(AppError::Internal(format!("设置别名失败: {e}")))
-        }
-    }
+    storage
+        .upsert_user_alias_with_defaults(
+            &user_hash,
+            alias,
+            false,
+            cfg.leaderboard.default_show_rks_composition,
+            cfg.leaderboard.default_show_best_top3,
+            cfg.leaderboard.default_show_ap_top3,
+            &now,
+        )
+        .await?;
+    Ok(Json(OkAliasResponse {
+        ok: true,
+        alias: alias.to_string(),
+    }))
 }
 
 #[utoipa::path(
@@ -1500,33 +1471,8 @@ pub async fn post_alias_force(
         ));
     }
     storage
-        .ensure_user_profile_exists(&req.user_hash, &now)
-        .await
-        .map_err(|e| AppError::Internal(format!("ensure profile: {e}")))?;
-    let mut tx = storage
-        .pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(format!("tx begin: {e}")))?;
-    // 清理原持有人
-    sqlx::query("UPDATE user_profile SET alias=NULL, updated_at=? WHERE alias=?")
-        .bind(&now)
-        .bind(alias)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Internal(format!("clear alias: {e}")))?;
-    // 确保目标行存在
-    // 赋予别名
-    sqlx::query("UPDATE user_profile SET alias=?, updated_at=? WHERE user_hash=?")
-        .bind(alias)
-        .bind(&now)
-        .bind(&req.user_hash)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Internal(format!("set alias: {e}")))?;
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(format!("tx commit: {e}")))?;
+        .force_set_user_alias(&req.user_hash, alias, &now)
+        .await?;
     Ok(Json(OkAliasResponse {
         ok: true,
         alias: alias.to_string(),

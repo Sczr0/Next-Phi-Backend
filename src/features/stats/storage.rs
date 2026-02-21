@@ -453,6 +453,85 @@ impl StatsStorage {
         Ok(())
     }
 
+    pub async fn upsert_user_alias_with_defaults(
+        &self,
+        user_hash: &str,
+        alias: &str,
+        is_public: bool,
+        show_rks_composition: bool,
+        show_best_top3: bool,
+        show_ap_top3: bool,
+        now_rfc3339: &str,
+    ) -> Result<(), AppError> {
+        let is_public_i = if is_public { 1_i64 } else { 0_i64 };
+        let show_rks_comp_i = if show_rks_composition { 1_i64 } else { 0_i64 };
+        let show_best_top3_i = if show_best_top3 { 1_i64 } else { 0_i64 };
+        let show_ap_top3_i = if show_ap_top3 { 1_i64 } else { 0_i64 };
+        let res = sqlx::query(
+            "INSERT INTO user_profile(user_hash,alias,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
+             ON CONFLICT(user_hash) DO UPDATE SET alias=excluded.alias, updated_at=excluded.updated_at",
+        )
+        .bind(user_hash)
+        .bind(alias)
+        .bind(is_public_i)
+        .bind(show_rks_comp_i)
+        .bind(show_best_top3_i)
+        .bind(show_ap_top3_i)
+        .bind(Option::<String>::None)
+        .bind(now_rfc3339)
+        .bind(now_rfc3339)
+        .execute(&self.pool)
+        .await;
+        match res {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                if e.to_string().to_lowercase().contains("unique") {
+                    return Err(AppError::Conflict("别名已被占用".into()));
+                }
+                Err(AppError::Internal(format!("set alias failed: {e}")))
+            }
+        }
+    }
+
+    pub async fn force_set_user_alias(
+        &self,
+        user_hash: &str,
+        alias: &str,
+        now_rfc3339: &str,
+    ) -> Result<(), AppError> {
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Internal(format!("tx begin: {e}")))?;
+        sqlx::query("UPDATE user_profile SET alias=NULL, updated_at=? WHERE alias=?")
+            .bind(now_rfc3339)
+            .bind(alias)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Internal(format!("clear alias: {e}")))?;
+        sqlx::query(
+            "INSERT INTO user_profile(user_hash,created_at,updated_at) VALUES(?,?,?) ON CONFLICT(user_hash) DO NOTHING",
+        )
+        .bind(user_hash)
+        .bind(now_rfc3339)
+        .bind(now_rfc3339)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("ensure profile: {e}")))?;
+        sqlx::query("UPDATE user_profile SET alias=?, updated_at=? WHERE user_hash=?")
+            .bind(alias)
+            .bind(now_rfc3339)
+            .bind(user_hash)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Internal(format!("set alias: {e}")))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Internal(format!("tx commit: {e}")))?;
+        Ok(())
+    }
+
     fn build_banned_detail(reason: Option<&str>) -> String {
         if let Some(r) = reason.map(str::trim).filter(|v| !v.is_empty()) {
             return format!("用户已被全局封禁，原因：{r}");
