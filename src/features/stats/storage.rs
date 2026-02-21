@@ -364,6 +364,21 @@ impl StatsStorage {
         Ok(())
     }
 
+    pub async fn set_leaderboard_hidden(
+        &self,
+        user_hash: &str,
+        hide: bool,
+    ) -> Result<(), AppError> {
+        let is_hidden_i = if hide { 1_i64 } else { 0_i64 };
+        sqlx::query("UPDATE leaderboard_rks SET is_hidden=? WHERE user_hash=?")
+            .bind(is_hidden_i)
+            .bind(user_hash)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("update leaderboard hidden: {e}")))?;
+        Ok(())
+    }
+
     pub async fn upsert_details(
         &self,
         user_hash: &str,
@@ -388,6 +403,53 @@ impl StatsStorage {
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Internal(format!("upsert details: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn ensure_default_public_profile(
+        &self,
+        user_hash: &str,
+        user_kind: Option<&str>,
+        show_rks_composition: bool,
+        show_best_top3: bool,
+        show_ap_top3: bool,
+        now_rfc3339: &str,
+    ) -> Result<(), AppError> {
+        let show_rks_comp_i = if show_rks_composition { 1_i64 } else { 0_i64 };
+        let show_best_top3_i = if show_best_top3 { 1_i64 } else { 0_i64 };
+        let show_ap_top3_i = if show_ap_top3 { 1_i64 } else { 0_i64 };
+        sqlx::query(
+            "INSERT INTO user_profile(user_hash,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
+             ON CONFLICT(user_hash) DO NOTHING",
+        )
+        .bind(user_hash)
+        .bind(1_i64)
+        .bind(show_rks_comp_i)
+        .bind(show_best_top3_i)
+        .bind(show_ap_top3_i)
+        .bind(user_kind)
+        .bind(now_rfc3339)
+        .bind(now_rfc3339)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("ensure default public profile: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn ensure_user_profile_exists(
+        &self,
+        user_hash: &str,
+        now_rfc3339: &str,
+    ) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO user_profile(user_hash,created_at,updated_at) VALUES(?,?,?) ON CONFLICT(user_hash) DO NOTHING",
+        )
+        .bind(user_hash)
+        .bind(now_rfc3339)
+        .bind(now_rfc3339)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("ensure user profile exists: {e}")))?;
         Ok(())
     }
 

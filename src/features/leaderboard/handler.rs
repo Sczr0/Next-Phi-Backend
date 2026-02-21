@@ -147,12 +147,7 @@ async fn apply_user_status(
     now: &str,
 ) -> Result<String, AppError> {
     let (status, hide) = normalize_moderation_status(status_raw)?;
-    sqlx::query("UPDATE leaderboard_rks SET is_hidden=? WHERE user_hash=?")
-        .bind(hide)
-        .bind(user_hash)
-        .execute(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("update leaderboard hidden: {e}")))?;
+    storage.set_leaderboard_hidden(user_hash, hide != 0).await?;
     storage
         .set_user_moderation_status(user_hash, status, reason, admin, now)
         .await?;
@@ -857,8 +852,13 @@ pub async fn put_profile(
     }
 
     // Ensure row exists
-    sqlx::query("INSERT INTO user_profile(user_hash,created_at,updated_at) VALUES(?,?,?) ON CONFLICT(user_hash) DO NOTHING")
-        .bind(&user_hash).bind(&now).bind(&now).execute(&storage.pool).await.ok();
+    if let Err(e) = storage.ensure_user_profile_exists(&user_hash, &now).await {
+        tracing::warn!(
+            target: "phi_backend::leaderboard",
+            user_hash = %user_hash,
+            "ensure_user_profile_exists failed (ignored): {e}"
+        );
+    }
 
     // Build dynamic update
     let mut sets: Vec<&str> = Vec::new();
@@ -1499,6 +1499,10 @@ pub async fn post_alias_force(
             "别名仅允许字母、数字、中日韩文字和 . _ -".into(),
         ));
     }
+    storage
+        .ensure_user_profile_exists(&req.user_hash, &now)
+        .await
+        .map_err(|e| AppError::Internal(format!("ensure profile: {e}")))?;
     let mut tx = storage
         .pool
         .begin()
@@ -1512,9 +1516,6 @@ pub async fn post_alias_force(
         .await
         .map_err(|e| AppError::Internal(format!("clear alias: {e}")))?;
     // 确保目标行存在
-    sqlx::query("INSERT INTO user_profile(user_hash,created_at,updated_at) VALUES(?,?,?) ON CONFLICT(user_hash) DO NOTHING")
-        .bind(&req.user_hash).bind(&now).bind(&now)
-        .execute(&mut *tx).await.map_err(|e| AppError::Internal(format!("ensure profile: {e}")))?;
     // 赋予别名
     sqlx::query("UPDATE user_profile SET alias=?, updated_at=? WHERE user_hash=?")
         .bind(alias)

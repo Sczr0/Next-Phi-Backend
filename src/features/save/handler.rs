@@ -650,35 +650,23 @@ pub async fn get_save_data(
             // 默认在排行榜上展示：首次保存时创建公开资料（best-effort）
             let cfg = crate::config::AppConfig::global();
             if cfg.leaderboard.allow_public {
-                let def_rc = if cfg.leaderboard.default_show_rks_composition {
-                    1_i64
-                } else {
-                    0_i64
-                };
-                let def_b3 = if cfg.leaderboard.default_show_best_top3 {
-                    1_i64
-                } else {
-                    0_i64
-                };
-                let def_ap3 = if cfg.leaderboard.default_show_ap_top3 {
-                    1_i64
-                } else {
-                    0_i64
-                };
-                let _ = sqlx::query(
-                        "INSERT INTO user_profile(user_hash,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
-                         ON CONFLICT(user_hash) DO NOTHING"
+                if let Err(e) = storage
+                    .ensure_default_public_profile(
+                        &user_hash_s,
+                        user_kind_s.as_deref(),
+                        cfg.leaderboard.default_show_rks_composition,
+                        cfg.leaderboard.default_show_best_top3,
+                        cfg.leaderboard.default_show_ap_top3,
+                        &now,
                     )
-                    .bind(&user_hash_s)
-                    .bind(1_i64)
-                    .bind(def_rc)
-                    .bind(def_b3)
-                    .bind(def_ap3)
-                    .bind(user_kind_s.as_deref())
-                    .bind(&now)
-                    .bind(&now)
-                    .execute(&storage.pool)
-                    .await;
+                    .await
+                {
+                    tracing::warn!(
+                        target: "phi_backend::leaderboard",
+                        user_hash = %user_hash_s,
+                        "ensure_default_public_profile failed (ignored): {e}"
+                    );
+                }
             }
         });
 
