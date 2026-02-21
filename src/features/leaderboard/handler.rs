@@ -57,6 +57,113 @@ pub struct OkAliasResponse {
     pub alias: String,
 }
 
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUsersQuery {
+    /// 页码（从 1 开始）
+    pub page: Option<i64>,
+    /// 每页条数（1-200）
+    pub page_size: Option<i64>,
+    /// 可选状态筛选：active|approved|shadow|banned|rejected
+    pub status: Option<String>,
+    /// 可选别名模糊搜索
+    pub alias: Option<String>,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminLeaderboardUserItem {
+    pub user_hash: String,
+    pub alias: Option<String>,
+    pub score: f64,
+    pub suspicion: f64,
+    pub is_hidden: bool,
+    pub status: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminLeaderboardUsersResponse {
+    pub items: Vec<AdminLeaderboardUserItem>,
+    pub total: i64,
+    pub page: i64,
+    pub page_size: i64,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserStatusQuery {
+    pub user_hash: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminUserStatusResponse {
+    pub user_hash: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub updated_by: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct AdminSetUserStatusRequest {
+    pub user_hash: String,
+    pub status: String,
+    pub reason: Option<String>,
+}
+
+fn normalize_moderation_status(raw: &str) -> Result<(&'static str, i64), AppError> {
+    let st = raw.trim().to_lowercase();
+    let mapped = match st.as_str() {
+        "active" | "approved" => ("active", 0_i64),
+        "shadow" => ("shadow", 1_i64),
+        "banned" => ("banned", 1_i64),
+        "rejected" => ("rejected", 1_i64),
+        _ => {
+            return Err(AppError::Validation(
+                "status 必须为 active|approved|shadow|banned|rejected".into(),
+            ));
+        }
+    };
+    Ok(mapped)
+}
+
+async fn ensure_not_banned(
+    storage: &crate::features::stats::storage::StatsStorage,
+    user_hash: &str,
+) -> Result<(), AppError> {
+    if let Some(status) = storage.get_user_moderation_status(user_hash).await?
+        && status.eq_ignore_ascii_case("banned")
+    {
+        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+    }
+    Ok(())
+}
+
+async fn apply_user_status(
+    storage: &crate::features::stats::storage::StatsStorage,
+    user_hash: &str,
+    status_raw: &str,
+    reason: Option<&str>,
+    admin: &str,
+    now: &str,
+) -> Result<String, AppError> {
+    let (status, hide) = normalize_moderation_status(status_raw)?;
+    sqlx::query("UPDATE leaderboard_rks SET is_hidden=? WHERE user_hash=?")
+        .bind(hide)
+        .bind(user_hash)
+        .execute(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("update leaderboard hidden: {e}")))?;
+    storage
+        .set_user_moderation_status(user_hash, status, reason, admin, now)
+        .await?;
+    Ok(status.to_string())
+}
+
 fn mask_user_prefix(hash: &str) -> String {
     let prefix_end = hash
         .char_indices()
@@ -503,6 +610,7 @@ pub async fn post_me(
     )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
+    ensure_not_banned(storage, &user_hash).await?;
 
     let row_opt =
         sqlx::query("SELECT total_rks, updated_at FROM leaderboard_rks WHERE user_hash=?")
@@ -609,6 +717,7 @@ pub async fn put_alias(
     )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
+    ensure_not_banned(storage, &user_hash).await?;
 
     // 校验别名
     let alias = req.alias.trim();
@@ -729,6 +838,7 @@ pub async fn put_profile(
     )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Internal("无法识别用户（缺少可用凭证）".into()))?;
+    ensure_not_banned(storage, &user_hash).await?;
     let now = chrono::Utc::now().to_rfc3339();
 
     let mut is_public = None::<i64>;
@@ -994,6 +1104,270 @@ pub async fn get_suspicious(
     Ok(Json(out))
 }
 
+#[utoipa::path(
+    get,
+    path = "/admin/leaderboard/users",
+    summary = "分页查询排行榜用户（含完整 user_hash）",
+    description = "需要在 Header 中提供 X-Admin-Token，返回排行榜用户完整 user_hash，支持按状态与别名筛选。",
+    params(
+        ("X-Admin-Token" = String, Header, description = "管理员令牌（config.leaderboard.admin_tokens）"),
+        ("page" = Option<i64>, Query, description = "页码（从 1 开始，默认 1）"),
+        ("pageSize" = Option<i64>, Query, description = "每页条数（1-200，默认 50）"),
+        ("status" = Option<String>, Query, description = "状态筛选：active|approved|shadow|banned|rejected"),
+        ("alias" = Option<String>, Query, description = "别名模糊筛选")
+    ),
+    security(("AdminToken" = [])),
+    responses(
+        (status = 200, description = "分页结果", body = AdminLeaderboardUsersResponse),
+        (
+            status = 401,
+            description = "管理员令牌缺失或无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败（status 非法等）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Leaderboard"
+)]
+pub async fn get_admin_leaderboard_users(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<AdminUsersQuery>,
+) -> Result<Json<AdminLeaderboardUsersResponse>, AppError> {
+    require_admin(&headers)?;
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+
+    let page = q.page.unwrap_or(1).max(1);
+    let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
+    let offset = (page - 1) * page_size;
+    let status_filter = q
+        .status
+        .as_deref()
+        .map(|s| normalize_moderation_status(s).map(|(st, _)| st.to_string()))
+        .transpose()?;
+    let alias_like = q
+        .alias
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(|v| format!("%{v}%"));
+
+    let mut count_qb = QueryBuilder::<Sqlite>::new(
+        "SELECT COUNT(1) AS c
+         FROM leaderboard_rks lr
+         LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
+         LEFT JOIN user_moderation_state ums ON ums.user_hash=lr.user_hash
+         WHERE 1=1",
+    );
+    if let Some(status) = status_filter.as_deref() {
+        count_qb
+            .push(" AND LOWER(COALESCE(ums.status,'active')) = ")
+            .push_bind(status);
+    }
+    if let Some(alias) = alias_like.as_deref() {
+        count_qb.push(" AND up.alias LIKE ").push_bind(alias);
+    }
+    let total_row = count_qb
+        .build()
+        .fetch_one(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("admin users count: {e}")))?;
+    let total: i64 = total_row.try_get("c").unwrap_or(0);
+
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        "SELECT
+            lr.user_hash,
+            up.alias,
+            lr.total_rks,
+            lr.suspicion_score,
+            lr.is_hidden,
+            lr.updated_at,
+            COALESCE(ums.status, 'active') AS status
+         FROM leaderboard_rks lr
+         LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
+         LEFT JOIN user_moderation_state ums ON ums.user_hash=lr.user_hash
+         WHERE 1=1",
+    );
+    if let Some(status) = status_filter.as_deref() {
+        qb.push(" AND LOWER(COALESCE(ums.status,'active')) = ")
+            .push_bind(status);
+    }
+    if let Some(alias) = alias_like.as_deref() {
+        qb.push(" AND up.alias LIKE ").push_bind(alias);
+    }
+    qb.push(" ORDER BY lr.total_rks DESC, lr.updated_at ASC, lr.user_hash ASC");
+    qb.push(" LIMIT ").push_bind(page_size);
+    qb.push(" OFFSET ").push_bind(offset);
+
+    let rows = qb
+        .build()
+        .fetch_all(&storage.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("admin users list: {e}")))?;
+
+    let mut items = Vec::with_capacity(rows.len());
+    for r in rows {
+        let is_hidden_i: i64 = r.try_get("is_hidden").unwrap_or(0);
+        items.push(AdminLeaderboardUserItem {
+            user_hash: r.try_get("user_hash").unwrap_or_default(),
+            alias: r.try_get("alias").ok(),
+            score: r.try_get("total_rks").unwrap_or(0.0),
+            suspicion: r.try_get("suspicion_score").unwrap_or(0.0),
+            is_hidden: is_hidden_i != 0,
+            status: r
+                .try_get::<String, _>("status")
+                .unwrap_or_else(|_| "active".to_string()),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+        });
+    }
+
+    Ok(Json(AdminLeaderboardUsersResponse {
+        items,
+        total,
+        page,
+        page_size,
+    }))
+}
+
+#[utoipa::path(
+    get,
+    path = "/admin/users/status",
+    summary = "查询用户全局状态",
+    description = "需要在 Header 中提供 X-Admin-Token。",
+    params(
+        ("X-Admin-Token" = String, Header, description = "管理员令牌（config.leaderboard.admin_tokens）"),
+        ("userHash" = String, Query, description = "完整 user_hash")
+    ),
+    security(("AdminToken" = [])),
+    responses(
+        (status = 200, description = "查询成功", body = AdminUserStatusResponse),
+        (
+            status = 401,
+            description = "管理员令牌缺失或无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/查询失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Leaderboard"
+)]
+pub async fn get_admin_user_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<AdminUserStatusQuery>,
+) -> Result<Json<AdminUserStatusResponse>, AppError> {
+    require_admin(&headers)?;
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+    let row = sqlx::query(
+        "SELECT status, reason, updated_by, updated_at
+         FROM user_moderation_state
+         WHERE user_hash = ?
+         LIMIT 1",
+    )
+    .bind(&q.user_hash)
+    .fetch_optional(&storage.pool)
+    .await
+    .map_err(|e| AppError::Internal(format!("get user status: {e}")))?;
+    if let Some(r) = row {
+        return Ok(Json(AdminUserStatusResponse {
+            user_hash: q.user_hash,
+            status: r
+                .try_get::<String, _>("status")
+                .unwrap_or_else(|_| "active".to_string()),
+            reason: r.try_get("reason").unwrap_or(None),
+            updated_by: r.try_get("updated_by").unwrap_or(None),
+            updated_at: r.try_get("updated_at").unwrap_or(None),
+        }));
+    }
+    Ok(Json(AdminUserStatusResponse {
+        user_hash: q.user_hash,
+        status: "active".to_string(),
+        reason: None,
+        updated_by: None,
+        updated_at: None,
+    }))
+}
+
+#[utoipa::path(
+    post,
+    path = "/admin/users/status",
+    summary = "设置用户全局状态",
+    description = "需要在 Header 中提供 X-Admin-Token。状态支持 active|approved|shadow|banned|rejected。",
+    params(("X-Admin-Token" = String, Header, description = "管理员令牌（config.leaderboard.admin_tokens）")),
+    security(("AdminToken" = [])),
+    request_body = AdminSetUserStatusRequest,
+    responses(
+        (status = 200, description = "更新成功", body = AdminUserStatusResponse),
+        (
+            status = 401,
+            description = "管理员令牌缺失或无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败（status 非法等）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "统计存储未初始化/写入失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        )
+    ),
+    tag = "Leaderboard"
+)]
+pub async fn post_admin_user_status(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AdminSetUserStatusRequest>,
+) -> Result<Json<AdminUserStatusResponse>, AppError> {
+    let admin = require_admin(&headers)?;
+    let storage = state
+        .stats_storage
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
+    let user_hash = req.user_hash.trim();
+    if user_hash.is_empty() {
+        return Err(AppError::Validation("userHash 不能为空".into()));
+    }
+    let now = chrono::Utc::now().to_rfc3339();
+    let reason_clean = req.reason.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let status = apply_user_status(storage, user_hash, &req.status, reason_clean, &admin, &now)
+        .await?;
+    Ok(Json(AdminUserStatusResponse {
+        user_hash: user_hash.to_string(),
+        status,
+        reason: reason_clean.map(|v| v.to_string()),
+        updated_by: Some(admin),
+        updated_at: Some(now),
+    }))
+}
+
 #[derive(serde::Deserialize, utoipa::ToSchema)]
 #[schema(example = json!({"userHash":"abcde12345","status":"shadow","reason":"suspicious jump"}))]
 #[serde(rename_all = "camelCase")]
@@ -1045,26 +1419,21 @@ pub async fn post_resolve(
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
     let now = chrono::Utc::now().to_rfc3339();
-    let st = req.status.to_lowercase();
-    let hide = match st.as_str() {
-        "approved" => 0_i64,
-        "shadow" | "banned" => 1_i64,
-        "rejected" => 1_i64,
-        _ => {
-            return Err(AppError::Validation(
-                "status 必须为 approved|shadow|banned|rejected".into(),
-            ));
-        }
-    };
-    sqlx::query("UPDATE leaderboard_rks SET is_hidden=? WHERE user_hash=?")
-        .bind(hide)
-        .bind(&req.user_hash)
-        .execute(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("resolve upd: {e}")))?;
-    sqlx::query("INSERT INTO moderation_flags(user_hash,status,reason,severity,created_by,created_at) VALUES(?,?,?,?,?,?)")
-        .bind(&req.user_hash).bind(st).bind(req.reason.unwrap_or_default()).bind(0_i64).bind(admin).bind(now)
-        .execute(&storage.pool).await.map_err(|e| AppError::Internal(format!("resolve flag: {e}")))?;
+    let st = req.status.trim().to_lowercase();
+    if !matches!(st.as_str(), "approved" | "shadow" | "banned" | "rejected") {
+        return Err(AppError::Validation(
+            "status 必须为 approved|shadow|banned|rejected".into(),
+        ));
+    }
+    apply_user_status(
+        storage,
+        &req.user_hash,
+        &st,
+        req.reason.as_deref(),
+        &admin,
+        &now,
+    )
+    .await?;
     Ok(Json(OkResponse { ok: true }))
 }
 
@@ -1173,7 +1542,10 @@ pub fn create_leaderboard_router() -> Router<AppState> {
         .route("/leaderboard/profile", put(put_profile))
         .route("/public/profile/:alias", get(get_public_profile))
         .route("/admin/leaderboard/suspicious", get(get_suspicious))
+        .route("/admin/leaderboard/users", get(get_admin_leaderboard_users))
         .route("/admin/leaderboard/resolve", post(post_resolve))
+        .route("/admin/users/status", get(get_admin_user_status))
+        .route("/admin/users/status", post(post_admin_user_status))
         .route("/admin/leaderboard/alias/force", post(post_alias_force))
 }
 
@@ -1256,6 +1628,15 @@ mod tests {
                 });
             assert!(!is_valid, "别名 '{alias}' 应该无效");
         }
+    }
+
+    #[test]
+    fn test_normalize_moderation_status() {
+        assert_eq!(normalize_moderation_status("active").unwrap().0, "active");
+        assert_eq!(normalize_moderation_status("approved").unwrap().0, "active");
+        assert_eq!(normalize_moderation_status("shadow").unwrap().0, "shadow");
+        assert_eq!(normalize_moderation_status("banned").unwrap().0, "banned");
+        assert!(normalize_moderation_status("unknown").is_err());
     }
 
     #[test]

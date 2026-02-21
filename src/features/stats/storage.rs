@@ -154,6 +154,27 @@ impl StatsStorage {
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_session_logout_gate_expires_at ON session_logout_gate(expires_at);
+
+        CREATE TABLE IF NOT EXISTS user_moderation_state (
+            user_hash TEXT PRIMARY KEY,
+            status TEXT NOT NULL DEFAULT 'active',
+            reason TEXT,
+            updated_by TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            expires_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_moderation_status ON user_moderation_state(status, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS moderation_flags (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            reason TEXT,
+            severity INTEGER NOT NULL DEFAULT 0,
+            created_by TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_moderation_flags_user_created ON moderation_flags(user_hash, created_at DESC);
         "#;
         sqlx::query(ddl)
             .execute(&self.pool)
@@ -367,6 +388,73 @@ impl StatsStorage {
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Internal(format!("upsert details: {e}")))?;
+        Ok(())
+    }
+
+    pub async fn get_user_moderation_status(
+        &self,
+        user_hash: &str,
+    ) -> Result<Option<String>, AppError> {
+        let row = sqlx::query(
+            "SELECT status FROM user_moderation_state WHERE user_hash = ? LIMIT 1",
+        )
+        .bind(user_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("query moderation status: {e}")))?;
+        Ok(row.and_then(|r| r.try_get::<String, _>("status").ok()))
+    }
+
+    pub async fn set_user_moderation_status(
+        &self,
+        user_hash: &str,
+        status: &str,
+        reason: Option<&str>,
+        updated_by: &str,
+        updated_at: &str,
+    ) -> Result<(), AppError> {
+        let reason_clean = reason.map(str::trim).filter(|v| !v.is_empty());
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Internal(format!("moderation tx begin: {e}")))?;
+        sqlx::query(
+            "INSERT INTO user_moderation_state(user_hash,status,reason,updated_by,updated_at,expires_at)
+             VALUES(?,?,?,?,?,NULL)
+             ON CONFLICT(user_hash) DO UPDATE SET
+               status = excluded.status,
+               reason = excluded.reason,
+               updated_by = excluded.updated_by,
+               updated_at = excluded.updated_at,
+               expires_at = NULL",
+        )
+        .bind(user_hash)
+        .bind(status)
+        .bind(reason_clean)
+        .bind(updated_by)
+        .bind(updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("upsert moderation status: {e}")))?;
+
+        sqlx::query(
+            "INSERT INTO moderation_flags(user_hash,status,reason,severity,created_by,created_at)
+             VALUES(?,?,?,?,?,?)",
+        )
+        .bind(user_hash)
+        .bind(status)
+        .bind(reason_clean.unwrap_or(""))
+        .bind(0_i64)
+        .bind(updated_by)
+        .bind(updated_at)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("insert moderation flag: {e}")))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Internal(format!("moderation tx commit: {e}")))?;
         Ok(())
     }
 

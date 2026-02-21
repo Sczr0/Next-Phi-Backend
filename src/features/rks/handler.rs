@@ -127,6 +127,11 @@ pub async fn post_rks_history(
     )?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
+    if let Some(status) = storage.get_user_moderation_status(&user_hash).await?
+        && status.eq_ignore_ascii_case("banned")
+    {
+        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+    }
 
     // 分页参数
     let limit = req.limit.unwrap_or(50).clamp(1, 200);

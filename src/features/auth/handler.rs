@@ -390,6 +390,12 @@ pub async fn post_session_exchange(
         crate::features::stats::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
     let user_hash = user_hash_opt
         .ok_or_else(|| AppError::Auth("鏃犳硶璇嗗埆鐢ㄦ埛锛堢己灏戝彲鐢ㄥ嚟璇侊級".into()))?;
+    if let Some(storage) = state.stats_storage.as_ref()
+        && let Some(status) = storage.get_user_moderation_status(&user_hash).await?
+        && status.eq_ignore_ascii_case("banned")
+    {
+        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+    }
     let token =
         issue_session_access_token(&auth, &user_hash, cfg, &jwt_secret, chrono::Utc::now())?;
     tracing::info!(
@@ -995,6 +1001,7 @@ pub async fn get_qrcode_status(
                     );
                     let (error_code, message) = match &e {
                         AppError::Auth(_) => ("UNAUTHORIZED", "认证失败"),
+                        AppError::Forbidden(_) => ("FORBIDDEN", "访问被禁止"),
                         AppError::Network(_) => ("UPSTREAM_ERROR", "上游网络错误"),
                         AppError::Timeout(_) => ("UPSTREAM_TIMEOUT", "上游超时"),
                         AppError::Json(_) => ("UPSTREAM_ERROR", "上游响应解析失败"),

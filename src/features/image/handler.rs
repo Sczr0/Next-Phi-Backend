@@ -414,6 +414,13 @@ pub async fn render_bn(
             &req.auth,
             &bearer_state,
         )?;
+    if let (Some(storage), Some(user_hash_ref)) =
+        (state.stats_storage.as_ref(), user_hash_for_cache.as_deref())
+        && let Some(status) = storage.get_user_moderation_status(user_hash_ref).await?
+        && status.eq_ignore_ascii_case("banned")
+    {
+        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+    }
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
         let updated = updated_for_cache.clone();
         let theme_code = match req.theme {
@@ -1072,6 +1079,13 @@ pub async fn render_song(
             &req.auth,
             &bearer_state,
         )?;
+    if let (Some(storage), Some(user_hash_ref)) =
+        (state.stats_storage.as_ref(), user_hash_for_cache.as_deref())
+        && let Some(status) = storage.get_user_moderation_status(user_hash_ref).await?
+        && status.eq_ignore_ascii_case("banned")
+    {
+        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+    }
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
         let updated = updated_for_cache.clone();
         let width_code = if fmt_code == "svg" {

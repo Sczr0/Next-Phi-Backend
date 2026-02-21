@@ -28,6 +28,9 @@ pub enum AppError {
     /// 认证失败 / 业务错误
     #[error("认证失败: {0}")]
     Auth(String),
+    /// 禁止访问
+    #[error("禁止访问: {0}")]
+    Forbidden(String),
     /// 保存处理错误
     #[error("保存处理错误: {0}")]
     SaveHandlerError(String),
@@ -205,6 +208,7 @@ impl AppError {
             AppError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
             AppError::Json(_) => StatusCode::BAD_REQUEST,
             AppError::Auth(_) => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::SaveHandlerError(_) => StatusCode::BAD_REQUEST,
             AppError::ImageRendererError(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
@@ -231,6 +235,7 @@ impl AppError {
             AppError::Timeout(_) => "UPSTREAM_TIMEOUT",
             AppError::Json(_) => "BAD_REQUEST",
             AppError::Auth(_) => "UNAUTHORIZED",
+            AppError::Forbidden(_) => "FORBIDDEN",
             AppError::SaveHandlerError(_) => "SAVE_BAD_REQUEST",
             AppError::ImageRendererError(_) => "IMAGE_RENDER_FAILED",
             AppError::Validation(_) => "VALIDATION_FAILED",
