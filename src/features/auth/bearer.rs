@@ -198,11 +198,7 @@ pub(crate) async fn validate_bearer_not_revoked(
             return Err(AppError::Auth("会话令牌已被用户作废".into()));
         }
     }
-    if let Some(status) = storage.get_user_moderation_status(&claims.sub).await?
-        && status.eq_ignore_ascii_case("banned")
-    {
-        return Err(AppError::Forbidden("用户已被全局封禁".into()));
-    }
+    storage.ensure_user_not_banned(&claims.sub).await?;
     Ok(())
 }
 

@@ -135,12 +135,7 @@ async fn ensure_not_banned(
     storage: &crate::features::stats::storage::StatsStorage,
     user_hash: &str,
 ) -> Result<(), AppError> {
-    if let Some(status) = storage.get_user_moderation_status(user_hash).await?
-        && status.eq_ignore_ascii_case("banned")
-    {
-        return Err(AppError::Forbidden("用户已被全局封禁".into()));
-    }
-    Ok(())
+    storage.ensure_user_not_banned(user_hash).await
 }
 
 async fn apply_user_status(

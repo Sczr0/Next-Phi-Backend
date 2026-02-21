@@ -416,10 +416,8 @@ pub async fn render_bn(
         )?;
     if let (Some(storage), Some(user_hash_ref)) =
         (state.stats_storage.as_ref(), user_hash_for_cache.as_deref())
-        && let Some(status) = storage.get_user_moderation_status(user_hash_ref).await?
-        && status.eq_ignore_ascii_case("banned")
     {
-        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+        storage.ensure_user_not_banned(user_hash_ref).await?;
     }
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
         let updated = updated_for_cache.clone();
@@ -1081,10 +1079,8 @@ pub async fn render_song(
         )?;
     if let (Some(storage), Some(user_hash_ref)) =
         (state.stats_storage.as_ref(), user_hash_for_cache.as_deref())
-        && let Some(status) = storage.get_user_moderation_status(user_hash_ref).await?
-        && status.eq_ignore_ascii_case("banned")
     {
-        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+        storage.ensure_user_not_banned(user_hash_ref).await?;
     }
     if cache_enabled && let Some(user_hash) = user_hash_for_cache.as_ref() {
         let updated = updated_for_cache.clone();

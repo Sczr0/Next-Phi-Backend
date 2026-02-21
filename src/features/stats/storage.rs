@@ -391,17 +391,58 @@ impl StatsStorage {
         Ok(())
     }
 
+    fn build_banned_detail(reason: Option<&str>) -> String {
+        if let Some(r) = reason.map(str::trim).filter(|v| !v.is_empty()) {
+            return format!("用户已被全局封禁，原因：{r}");
+        }
+        "用户已被全局封禁".to_string()
+    }
+
+    pub async fn get_user_moderation_state(
+        &self,
+        user_hash: &str,
+    ) -> Result<Option<(String, Option<String>)>, AppError> {
+        let row = sqlx::query(
+            "SELECT status, reason FROM user_moderation_state WHERE user_hash = ? LIMIT 1",
+        )
+        .bind(user_hash)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("query moderation state: {e}")))?;
+
+        let Some(r) = row else {
+            return Ok(None);
+        };
+        let status = r
+            .try_get::<String, _>("status")
+            .unwrap_or_else(|_| "active".to_string());
+        let reason = r
+            .try_get::<Option<String>, _>("reason")
+            .unwrap_or(None)
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty());
+        Ok(Some((status, reason)))
+    }
+
     pub async fn get_user_moderation_status(
         &self,
         user_hash: &str,
     ) -> Result<Option<String>, AppError> {
-        let row =
-            sqlx::query("SELECT status FROM user_moderation_state WHERE user_hash = ? LIMIT 1")
-                .bind(user_hash)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| AppError::Internal(format!("query moderation status: {e}")))?;
-        Ok(row.and_then(|r| r.try_get::<String, _>("status").ok()))
+        Ok(self
+            .get_user_moderation_state(user_hash)
+            .await?
+            .map(|(status, _)| status))
+    }
+
+    pub async fn ensure_user_not_banned(&self, user_hash: &str) -> Result<(), AppError> {
+        if let Some((status, reason)) = self.get_user_moderation_state(user_hash).await?
+            && status.eq_ignore_ascii_case("banned")
+        {
+            return Err(AppError::Forbidden(Self::build_banned_detail(
+                reason.as_deref(),
+            )));
+        }
+        Ok(())
     }
 
     pub async fn set_user_moderation_status(

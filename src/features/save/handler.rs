@@ -201,10 +201,8 @@ pub async fn get_save_data(
     )?;
     if let (Some(storage), Some(user_hash_ref)) =
         (state.stats_storage.as_ref(), user_hash.as_deref())
-        && let Some(status) = storage.get_user_moderation_status(user_hash_ref).await?
-        && status.eq_ignore_ascii_case("banned")
     {
-        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+        storage.ensure_user_not_banned(user_hash_ref).await?;
     }
 
     let calc_rks = params

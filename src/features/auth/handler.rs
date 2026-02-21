@@ -390,11 +390,8 @@ pub async fn post_session_exchange(
         crate::features::stats::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
     let user_hash = user_hash_opt
         .ok_or_else(|| AppError::Auth("鏃犳硶璇嗗埆鐢ㄦ埛锛堢己灏戝彲鐢ㄥ嚟璇侊級".into()))?;
-    if let Some(storage) = state.stats_storage.as_ref()
-        && let Some(status) = storage.get_user_moderation_status(&user_hash).await?
-        && status.eq_ignore_ascii_case("banned")
-    {
-        return Err(AppError::Forbidden("用户已被全局封禁".into()));
+    if let Some(storage) = state.stats_storage.as_ref() {
+        storage.ensure_user_not_banned(&user_hash).await?;
     }
     let token =
         issue_session_access_token(&auth, &user_hash, cfg, &jwt_secret, chrono::Utc::now())?;
