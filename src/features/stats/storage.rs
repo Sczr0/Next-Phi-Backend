@@ -395,13 +395,12 @@ impl StatsStorage {
         &self,
         user_hash: &str,
     ) -> Result<Option<String>, AppError> {
-        let row = sqlx::query(
-            "SELECT status FROM user_moderation_state WHERE user_hash = ? LIMIT 1",
-        )
-        .bind(user_hash)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("query moderation status: {e}")))?;
+        let row =
+            sqlx::query("SELECT status FROM user_moderation_state WHERE user_hash = ? LIMIT 1")
+                .bind(user_hash)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("query moderation status: {e}")))?;
         Ok(row.and_then(|r| r.try_get::<String, _>("status").ok()))
     }
 

@@ -1356,9 +1356,13 @@ pub async fn post_admin_user_status(
         return Err(AppError::Validation("userHash 不能为空".into()));
     }
     let now = chrono::Utc::now().to_rfc3339();
-    let reason_clean = req.reason.as_deref().map(str::trim).filter(|v| !v.is_empty());
-    let status = apply_user_status(storage, user_hash, &req.status, reason_clean, &admin, &now)
-        .await?;
+    let reason_clean = req
+        .reason
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let status =
+        apply_user_status(storage, user_hash, &req.status, reason_clean, &admin, &now).await?;
     Ok(Json(AdminUserStatusResponse {
         user_hash: user_hash.to_string(),
         status,

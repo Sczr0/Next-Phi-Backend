@@ -172,7 +172,10 @@ impl Display for CliError {
                 request_id,
             } => {
                 if let Some(rid) = request_id {
-                    write!(f, "接口错误: status={status} code={code} detail={detail} requestId={rid}")
+                    write!(
+                        f,
+                        "接口错误: status={status} code={code} detail={detail} requestId={rid}"
+                    )
                 } else {
                     write!(f, "接口错误: status={status} code={code} detail={detail}")
                 }
@@ -520,9 +523,7 @@ fn parse_set_status_cmd(rest: &[String]) -> Result<SetStatusCmd, CliError> {
                 idx += 1;
             }
             unknown => {
-                return Err(CliError::Args(format!(
-                    "set-status 不支持参数: {unknown}"
-                )));
+                return Err(CliError::Args(format!("set-status 不支持参数: {unknown}")));
             }
         }
     }
@@ -537,7 +538,10 @@ fn parse_set_status_cmd(rest: &[String]) -> Result<SetStatusCmd, CliError> {
     })
 }
 
-fn parse_user_hash_reason_cmd(rest: &[String], cmd_name: &str) -> Result<UserHashReasonCmd, CliError> {
+fn parse_user_hash_reason_cmd(
+    rest: &[String],
+    cmd_name: &str,
+) -> Result<UserHashReasonCmd, CliError> {
     let mut user_hash = None;
     let mut reason = None;
 
@@ -627,7 +631,10 @@ impl AdminApi {
         format!("{}{}", self.base_url.trim_end_matches('/'), path)
     }
 
-    async fn get_users(&self, query: &UsersQuery) -> Result<AdminLeaderboardUsersResponse, CliError> {
+    async fn get_users(
+        &self,
+        query: &UsersQuery,
+    ) -> Result<AdminLeaderboardUsersResponse, CliError> {
         let mut params: Vec<(&str, String)> = Vec::new();
         if let Some(v) = query.page {
             params.push(("page", v.to_string()));
