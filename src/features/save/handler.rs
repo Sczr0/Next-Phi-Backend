@@ -15,8 +15,8 @@ use std::time::{Duration, Instant};
 
 use crate::error::AppError;
 use crate::rks_contract::engine::{ChartRankingScore, PlayerRksResult, calculate_player_rks};
-use crate::stats_contract::SubmissionRecord;
 use crate::state::AppState;
+use crate::stats_contract::SubmissionRecord;
 
 use super::{
     models::{SaveAndRksResponseDoc, SaveResponseDoc, UnifiedSaveRequest},

@@ -119,11 +119,8 @@ pub async fn post_rks_history(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
-        salt,
-        &req.auth,
-        &bearer_state,
-    )?;
+    let (user_hash_opt, _kind) =
+        crate::session_auth::derive_user_identity_with_bearer(salt, &req.auth, &bearer_state)?;
     let user_hash =
         user_hash_opt.ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
     storage.ensure_user_not_banned(&user_hash).await?;

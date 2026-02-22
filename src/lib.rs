@@ -42,8 +42,8 @@ pub mod rks_contract;
 pub mod save_api;
 pub mod save_contract;
 pub mod session_auth;
-pub mod song_contract;
 pub mod song_api;
+pub mod song_contract;
 pub mod stats_contract;
 
 // 导出常用类型供外部使用
