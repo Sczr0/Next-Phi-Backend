@@ -153,7 +153,7 @@ pub struct DifficultyRecord {
     /// - Unreachable：即使 100% 也无法推分
     /// - AlreadyPhi：已满 ACC，无需推分
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub push_acc_hint: Option<crate::features::rks::engine::PushAccHint>,
+    pub push_acc_hint: Option<crate::rks_contract::engine::PushAccHint>,
 }
 
 /// C/FC/P 成绩数量（累计口径）
@@ -221,7 +221,7 @@ pub struct SaveAndRksResponseDoc {
     /// 解析后的存档对象
     pub save: ParsedSaveDoc,
     /// 玩家 RKS 概览
-    pub rks: crate::features::rks::engine::PlayerRksResult,
+    pub rks: crate::rks_contract::engine::PlayerRksResult,
     /// 按难度统计的 C/FC/P 成绩数量（仅 calculate_rks=true 时返回）
     #[serde(rename = "gradeCounts")]
     pub grade_counts: CfcPCountsByDifficulty,

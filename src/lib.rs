@@ -42,6 +42,7 @@ pub mod rks_contract;
 pub mod save_api;
 pub mod save_contract;
 pub mod session_auth;
+pub mod song_contract;
 pub mod song_api;
 pub mod stats_contract;
 

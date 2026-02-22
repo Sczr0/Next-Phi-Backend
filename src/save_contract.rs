@@ -1,1 +1,1 @@
-pub use crate::features::save::models::Difficulty;
+pub use crate::features::save::models::{Difficulty, DifficultyRecord};

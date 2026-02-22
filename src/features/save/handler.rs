@@ -14,8 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::error::AppError;
-use crate::features::rks::engine::{ChartRankingScore, PlayerRksResult, calculate_player_rks};
-use crate::features::stats::storage::SubmissionRecord;
+use crate::rks_contract::engine::{ChartRankingScore, PlayerRksResult, calculate_player_rks};
+use crate::stats_contract::SubmissionRecord;
 use crate::state::AppState;
 
 use super::{
@@ -465,7 +465,7 @@ pub async fn get_save_data(
         let _permit = permit;
         if calc_rks {
             let mut game_record = parsed_for_calc.game_record.clone();
-            crate::features::rks::engine::fill_push_acc_for_game_record(&mut game_record);
+            crate::rks_contract::engine::fill_push_acc_for_game_record(&mut game_record);
             let rks_res = calculate_player_rks(&game_record, &state_for_calc.chart_constants);
             let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
                 let (best_top3, ap_top3, rks_comp) =

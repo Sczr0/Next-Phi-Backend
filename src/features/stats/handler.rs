@@ -1727,7 +1727,7 @@ fn parse_date_bound_utc(
 mod tests {
     use super::*;
     use crate::auth_services::{QrCodeService, TapTapClient};
-    use crate::features::song::models::SongCatalog;
+    use crate::song_contract::SongCatalog;
     use crate::features::stats::models::EventInsert;
     use crate::startup::chart_loader::ChartConstantsMap;
     use axum::body::Bytes;

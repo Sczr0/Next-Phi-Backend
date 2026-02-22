@@ -234,7 +234,7 @@ mod tests {
         use moka::future::Cache;
 
         let chart_constants = Arc::new(crate::startup::chart_loader::ChartConstantsMap::new());
-        let song_catalog = Arc::new(crate::features::song::models::SongCatalog::default());
+        let song_catalog = Arc::new(crate::song_contract::SongCatalog::default());
 
         let taptap_client = Arc::new(
             crate::auth_services::TapTapClient::new(&crate::config::TapTapMultiConfig::default())

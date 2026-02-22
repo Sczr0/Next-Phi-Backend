@@ -16,7 +16,7 @@ use crate::{error::AppError, state::AppState};
 }))]
 pub struct RksHistoryRequest {
     /// 认证信息
-    pub auth: crate::features::save::models::UnifiedSaveRequest,
+    pub auth: crate::auth_contract::UnifiedSaveRequest,
     /// 返回数量（默认 50，最大 200）
     #[serde(default)]
     pub limit: Option<i64>,
@@ -95,9 +95,8 @@ pub async fn post_rks_history(
 ) -> Result<Json<RksHistoryResponse>, AppError> {
     let t_total = Instant::now();
     let (mut req, bearer_state) =
-        crate::features::auth::bearer::parse_json_with_bearer_state::<RksHistoryRequest>(request)
-            .await?;
-    crate::features::auth::bearer::merge_auth_from_bearer_if_missing(
+        crate::session_auth::parse_json_with_bearer_state::<RksHistoryRequest>(request).await?;
+    crate::session_auth::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
         &mut req.auth,
@@ -120,7 +119,7 @@ pub async fn post_rks_history(
         .stats
         .user_hash_salt
         .as_deref();
-    let (user_hash_opt, _kind) = crate::features::auth::bearer::derive_user_identity_with_bearer(
+    let (user_hash_opt, _kind) = crate::session_auth::derive_user_identity_with_bearer(
         salt,
         &req.auth,
         &bearer_state,

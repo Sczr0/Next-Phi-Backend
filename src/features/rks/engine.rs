@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::features::save::models::{Difficulty, DifficultyRecord};
+use crate::save_contract::{Difficulty, DifficultyRecord};
 use crate::startup::chart_loader::{ChartConstants, ChartConstantsMap};
 use serde::{Deserialize, Serialize};
 
