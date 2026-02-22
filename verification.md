@@ -674,3 +674,24 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 ## 原始输出（完整）
 
 - 见 `.codex/logs/cargo-test-20260112-save-docs-lib.log`
+
+---
+
+# 验证记录：2026-02-22（模块归档：api/contracts 聚合），Codex
+
+## 任务
+
+- 将新增 *_api/*_contract 模块在 src 下按目录聚合，不改行为。
+
+## 变更
+
+- 新目录：src/api、src/contracts。
+- *_api 文件归档到 src/api。
+- *_contract 文件归档到 src/contracts。
+- src/lib.rs 通过 #[path] 保持原模块名导出（调用路径不变）。
+
+## 结果摘要
+
+- 模块物理结构已聚合，crate::auth_contract 等现有调用路径无需改动。
+- 两个 Stage2 门禁脚本均 PASS。
+- 按项目约束未执行本地 Cargo 编译/测试，请以 GitHub Actions 为准。

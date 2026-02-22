@@ -13,6 +13,14 @@ jobs:
     - name: 检出代码
       uses: actions/checkout@v4
 
+    - name: handler 边界检查
+      shell: pwsh
+      run: ./scripts/check-stage2-feature-boundary.ps1
+
+    - name: 跨 feature 检查
+      shell: pwsh
+      run: ./scripts/check-stage2-no-cross-feature.ps1
+
     - name: 恢复Cargo缓存
       uses: Swatinem/rust-cache@v2
 
