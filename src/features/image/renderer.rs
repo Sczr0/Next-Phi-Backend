@@ -2,8 +2,8 @@ use super::cover_loader;
 use crate::config::AppConfig;
 use crate::error::AppError;
 use crate::features::image::Theme;
-use crate::save_contract::Difficulty;
 use crate::rks_contract::engine;
+use crate::save_contract::Difficulty;
 use base64::{Engine as _, engine::general_purpose::STANDARD as base64_engine}; // Added
 use chrono::{DateTime, FixedOffset, Utc};
 use image::ColorType;

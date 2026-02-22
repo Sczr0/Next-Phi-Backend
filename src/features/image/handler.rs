@@ -1418,9 +1418,7 @@ fn to_engine_record(r: &RenderRecord) -> Option<crate::rks_contract::engine::Rks
     })
 }
 
-fn to_save_source(
-    req: &crate::auth_contract::UnifiedSaveRequest,
-) -> Result<SaveSource, AppError> {
+fn to_save_source(req: &crate::auth_contract::UnifiedSaveRequest) -> Result<SaveSource, AppError> {
     match (&req.session_token, &req.external_credentials) {
         (Some(token), None) => Ok(SaveSource::official(token.clone())),
         (None, Some(creds)) => Ok(SaveSource::external(creds.clone())),

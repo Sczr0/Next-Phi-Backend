@@ -29,16 +29,16 @@ pub mod http;
 pub mod request_id;
 
 pub mod auth_contract;
-pub mod auth_services;
 pub mod auth_qrcode_api;
+pub mod auth_services;
 pub mod identity_hash;
 pub mod image_api;
 pub mod leaderboard_api;
 pub mod leaderboard_contract;
 /// OpenAPI 文档（utoipa）
 pub mod openapi;
-pub mod rks_contract;
 pub mod rks_api;
+pub mod rks_contract;
 pub mod save_api;
 pub mod save_contract;
 pub mod session_auth;

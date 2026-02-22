@@ -5,8 +5,8 @@ use axum::{
 
 use crate::{error::AppError, state::AppState};
 
-pub use crate::features::auth::handler::{QrCodeCreateResponse, QrCodeStatusResponse};
 pub(crate) use crate::features::auth::handler::QrCodeQuery;
+pub use crate::features::auth::handler::{QrCodeCreateResponse, QrCodeStatusResponse};
 
 pub async fn post_qrcode(
     state: State<AppState>,
