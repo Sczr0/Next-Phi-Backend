@@ -30,12 +30,19 @@ pub mod request_id;
 
 pub mod auth_contract;
 pub mod auth_services;
+pub mod auth_qrcode_api;
 pub mod identity_hash;
+pub mod image_api;
+pub mod leaderboard_api;
 pub mod leaderboard_contract;
 /// OpenAPI 文档（utoipa）
 pub mod openapi;
 pub mod rks_contract;
+pub mod rks_api;
+pub mod save_api;
+pub mod save_contract;
 pub mod session_auth;
+pub mod song_api;
 pub mod stats_contract;
 
 // 导出常用类型供外部使用

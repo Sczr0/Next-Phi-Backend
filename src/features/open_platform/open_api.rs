@@ -23,7 +23,7 @@ use super::token_auth::{OpenApiRoutePolicy, open_api_token_middleware};
         ("taptapVersion" = Option<String>, Query, description = "TapTap 版本：cn（大陆版）或 global（国际版）")
     ),
     responses(
-        (status = 200, description = "生成二维码成功", body = crate::features::auth::handler::QrCodeCreateResponse),
+        (status = 200, description = "生成二维码成功", body = crate::auth_qrcode_api::QrCodeCreateResponse),
         (
             status = 401,
             description = "Token 缺失、无效、被吊销或已过期",
@@ -41,9 +41,9 @@ use super::token_auth::{OpenApiRoutePolicy, open_api_token_middleware};
 )]
 pub(crate) async fn open_auth_qrcode(
     State(state): State<AppState>,
-    Query(params): Query<crate::features::auth::handler::QrCodeQuery>,
+    Query(params): Query<crate::auth_qrcode_api::QrCodeQuery>,
 ) -> Result<Response, AppError> {
-    crate::features::auth::handler::post_qrcode(State(state), Query(params)).await
+    crate::auth_qrcode_api::post_qrcode(State(state), Query(params)).await
 }
 
 #[utoipa::path(
@@ -58,7 +58,7 @@ pub(crate) async fn open_auth_qrcode(
         ("qr_id" = String, Path, description = "二维码 ID")
     ),
     responses(
-        (status = 200, description = "状态返回", body = crate::features::auth::handler::QrCodeStatusResponse),
+        (status = 200, description = "状态返回", body = crate::auth_qrcode_api::QrCodeStatusResponse),
         (
             status = 401,
             description = "Token 缺失、无效、被吊销或已过期",
@@ -78,7 +78,7 @@ pub(crate) async fn open_auth_qrcode_status(
     State(state): State<AppState>,
     Path(qr_id): Path<String>,
 ) -> Result<Response, AppError> {
-    crate::features::auth::handler::get_qrcode_status(State(state), Path(qr_id)).await
+    crate::auth_qrcode_api::get_qrcode_status(State(state), Path(qr_id)).await
 }
 
 #[utoipa::path(
@@ -92,7 +92,7 @@ pub(crate) async fn open_auth_qrcode_status(
     params(
         ("calculate_rks" = Option<bool>, Query, description = "Set true to include RKS calculation result.")
     ),
-    request_body = crate::features::save::models::UnifiedSaveRequest,
+    request_body = crate::auth_contract::UnifiedSaveRequest,
     responses(
         (status = 200, description = "Request succeeded."),
         (
@@ -115,7 +115,7 @@ pub async fn open_save_data(
     Query(params): Query<HashMap<String, String>>,
     req: Request,
 ) -> Result<Response, AppError> {
-    crate::features::save::handler::get_save_data(State(state), Query(params), req).await
+    crate::save_api::get_save_data(State(state), Query(params), req).await
 }
 
 #[utoipa::path(
@@ -129,7 +129,7 @@ pub async fn open_save_data(
     params(
         ("format" = Option<String>, Query, description = "Only supports svg. Omit or pass svg.")
     ),
-    request_body = crate::features::image::RenderBnRequest,
+    request_body = crate::image_api::RenderBnRequest,
     responses(
         (
             status = 200,
@@ -159,12 +159,11 @@ pub async fn open_save_data(
 )]
 pub async fn open_image_bn(
     State(state): State<AppState>,
-    Query(query): Query<crate::features::image::handler::ImageQueryOpts>,
+    Query(query): Query<crate::image_api::ImageQueryOpts>,
     req: Request,
 ) -> Result<Response, AppError> {
     let svg_only_query = query.into_open_svg_only()?;
-    let resp = crate::features::image::handler::render_bn(State(state), Query(svg_only_query), req)
-        .await?;
+    let resp = crate::image_api::render_bn(State(state), Query(svg_only_query), req).await?;
     Ok(resp.into_response())
 }
 
@@ -179,7 +178,7 @@ pub async fn open_image_bn(
     params(
         ("format" = Option<String>, Query, description = "Only supports svg. Omit or pass svg.")
     ),
-    request_body = crate::features::image::RenderSongRequest,
+    request_body = crate::image_api::RenderSongRequest,
     responses(
         (
             status = 200,
@@ -209,13 +208,11 @@ pub async fn open_image_bn(
 )]
 pub async fn open_image_song(
     State(state): State<AppState>,
-    Query(query): Query<crate::features::image::handler::ImageQueryOpts>,
+    Query(query): Query<crate::image_api::ImageQueryOpts>,
     req: Request,
 ) -> Result<Response, AppError> {
     let svg_only_query = query.into_open_svg_only()?;
-    let resp =
-        crate::features::image::handler::render_song(State(state), Query(svg_only_query), req)
-            .await?;
+    let resp = crate::image_api::render_song(State(state), Query(svg_only_query), req).await?;
     Ok(resp.into_response())
 }
 
@@ -246,9 +243,9 @@ pub async fn open_image_song(
 )]
 pub async fn open_search_songs(
     State(state): State<AppState>,
-    Query(query): Query<crate::features::song::handler::SongSearchQuery>,
+    Query(query): Query<crate::song_api::SongSearchQuery>,
 ) -> Result<Response, AppError> {
-    crate::features::song::handler::search_songs(State(state), Query(query)).await
+    crate::song_api::search_songs(State(state), Query(query)).await
 }
 
 #[utoipa::path(
@@ -260,7 +257,7 @@ pub async fn open_search_songs(
         ("OpenApiToken" = [])
     ),
     responses(
-        (status = 200, description = "Request succeeded.", body = crate::features::leaderboard::models::LeaderboardTopResponse),
+        (status = 200, description = "Request succeeded.", body = crate::leaderboard_api::LeaderboardTopResponse),
         (
             status = 401,
             description = "Token is missing, invalid, revoked or expired.",
@@ -278,9 +275,9 @@ pub async fn open_search_songs(
 )]
 pub async fn open_get_leaderboard_top(
     State(state): State<AppState>,
-    Query(query): Query<crate::features::leaderboard::handler::TopQuery>,
-) -> Result<Json<crate::features::leaderboard::models::LeaderboardTopResponse>, AppError> {
-    crate::features::leaderboard::handler::get_top(State(state), Query(query)).await
+    Query(query): Query<crate::leaderboard_api::TopQuery>,
+) -> Result<Json<crate::leaderboard_api::LeaderboardTopResponse>, AppError> {
+    crate::leaderboard_api::get_top(State(state), Query(query)).await
 }
 
 #[utoipa::path(
@@ -292,7 +289,7 @@ pub async fn open_get_leaderboard_top(
         ("OpenApiToken" = [])
     ),
     responses(
-        (status = 200, description = "Request succeeded.", body = crate::features::leaderboard::models::LeaderboardTopResponse),
+        (status = 200, description = "Request succeeded.", body = crate::leaderboard_api::LeaderboardTopResponse),
         (
             status = 401,
             description = "Token is missing, invalid, revoked or expired.",
@@ -310,9 +307,9 @@ pub async fn open_get_leaderboard_top(
 )]
 pub async fn open_get_leaderboard_by_rank(
     State(state): State<AppState>,
-    Query(query): Query<crate::features::leaderboard::handler::RankQuery>,
-) -> Result<Json<crate::features::leaderboard::models::LeaderboardTopResponse>, AppError> {
-    crate::features::leaderboard::handler::get_by_rank(State(state), Query(query)).await
+    Query(query): Query<crate::leaderboard_api::RankQuery>,
+) -> Result<Json<crate::leaderboard_api::LeaderboardTopResponse>, AppError> {
+    crate::leaderboard_api::get_by_rank(State(state), Query(query)).await
 }
 
 #[utoipa::path(
@@ -323,9 +320,9 @@ pub async fn open_get_leaderboard_by_rank(
     security(
         ("OpenApiToken" = [])
     ),
-    request_body = crate::features::rks::handler::RksHistoryRequest,
+    request_body = crate::rks_api::RksHistoryRequest,
     responses(
-        (status = 200, description = "Request succeeded.", body = crate::features::rks::handler::RksHistoryResponse),
+        (status = 200, description = "Request succeeded.", body = crate::rks_api::RksHistoryResponse),
         (
             status = 401,
             description = "Token is missing, invalid, revoked or expired.",
@@ -344,8 +341,8 @@ pub async fn open_get_leaderboard_by_rank(
 pub async fn open_post_rks_history(
     State(state): State<AppState>,
     req: Request,
-) -> Result<Json<crate::features::rks::handler::RksHistoryResponse>, AppError> {
-    crate::features::rks::handler::post_rks_history(State(state), req).await
+) -> Result<Json<crate::rks_api::RksHistoryResponse>, AppError> {
+    crate::rks_api::post_rks_history(State(state), req).await
 }
 
 pub fn create_open_platform_open_api_router() -> Router<AppState> {

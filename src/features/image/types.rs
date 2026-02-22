@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::features::save::models::UnifiedSaveRequest;
+use crate::auth_contract::UnifiedSaveRequest;
 
 /// 渲染主题
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq)]
