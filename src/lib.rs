@@ -34,6 +34,7 @@ pub mod identity_hash;
 pub mod leaderboard_contract;
 /// OpenAPI 文档（utoipa）
 pub mod openapi;
+pub mod rks_contract;
 pub mod session_auth;
 pub mod stats_contract;
 

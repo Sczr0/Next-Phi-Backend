@@ -444,7 +444,7 @@ pub async fn render_bn(
 
             if let Some(h) = state.stats.as_ref() {
                 let total_ms = t_total.elapsed().as_millis() as i64;
-                let evt = crate::features::stats::models::EventInsert {
+                let evt = crate::stats_contract::EventInsert {
                     ts_utc: chrono::Utc::now(),
                     route: Some("/image/bn".into()),
                     feature: Some("image_cache".into()),
@@ -487,7 +487,7 @@ pub async fn render_bn(
             tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
         }
         if let Some(h) = state.stats.as_ref() {
-            let evt = crate::features::stats::models::EventInsert {
+            let evt = crate::stats_contract::EventInsert {
                 ts_utc: chrono::Utc::now(),
                 route: Some("/image/bn".into()),
                 feature: Some("image_cache".into()),
@@ -554,7 +554,7 @@ pub async fn render_bn(
             if acc_percent <= 1.5 {
                 acc_percent *= 100.0;
             }
-            let rks = crate::features::rks::engine::calculate_chart_rks(acc_percent, dv);
+            let rks = crate::rks_contract::engine::calculate_chart_rks(acc_percent, dv);
 
             all.push(RenderRecord {
                 song_id: song_id.clone(),
@@ -587,11 +587,11 @@ pub async fn render_bn(
 
     let t_push_start = Instant::now();
     // 预计算推分 ACC（批量求解：避免每谱面重复扫描全量 records）
-    let mut push_acc_map: HashMap<String, crate::features::rks::engine::PushAccHint> =
+    let mut push_acc_map: HashMap<String, crate::rks_contract::engine::PushAccHint> =
         HashMap::new();
-    let engine_all: Vec<crate::features::rks::engine::RksRecord> =
+    let engine_all: Vec<crate::rks_contract::engine::RksRecord> =
         all.iter().filter_map(to_engine_record).collect();
-    let solver = crate::features::rks::engine::PushAccBatchSolver::new(&engine_all);
+    let solver = crate::rks_contract::engine::PushAccBatchSolver::new(&engine_all);
     for (idx, s) in all.iter().take(top_len).enumerate() {
         if s.acc >= 100.0 || s.difficulty_value <= 0.0 {
             continue;
@@ -609,7 +609,7 @@ pub async fn render_bn(
 
     // 统计计算：RKS 详情与平均值
     let (exact_rks, _rounded) =
-        crate::features::rks::engine::calculate_player_rks_details(&engine_all);
+        crate::rks_contract::engine::calculate_player_rks_details(&engine_all);
     let ap_scores: Vec<_> = all.iter().filter(|r| r.acc >= 100.0).take(3).collect();
     let ap_top_3_avg = if ap_scores.len() == 3 {
         Some(ap_scores.iter().map(|r| r.rks).sum::<f64>() / 3.0)
@@ -894,7 +894,7 @@ pub async fn render_bn(
             Some("webp") => "webp",
             _ => "png",
         };
-        let evt = crate::features::stats::models::EventInsert {
+        let evt = crate::stats_contract::EventInsert {
             ts_utc: chrono::Utc::now(),
             route: Some("/image/bn".into()),
             feature: Some("image_render".into()),
@@ -1087,7 +1087,7 @@ pub async fn render_song(
         );
         if let Some(p) = state.song_image_cache.get(&key).await {
             if let Some(h) = state.stats.as_ref() {
-                let evt = crate::features::stats::models::EventInsert {
+                let evt = crate::stats_contract::EventInsert {
                     ts_utc: chrono::Utc::now(),
                     route: Some("/image/song".into()),
                     feature: Some("image_cache".into()),
@@ -1109,7 +1109,7 @@ pub async fn render_song(
             headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(content_type));
             return Ok((StatusCode::OK, headers, p));
         } else if let Some(h) = state.stats.as_ref() {
-            let evt = crate::features::stats::models::EventInsert {
+            let evt = crate::stats_contract::EventInsert {
                 ts_utc: chrono::Utc::now(),
                 route: Some("/image/song".into()),
                 feature: Some("image_cache".into()),
@@ -1129,7 +1129,7 @@ pub async fn render_song(
     }
 
     // 构建所有引擎记录用于推分
-    let mut engine_all: Vec<crate::features::rks::engine::RksRecord> = Vec::new();
+    let mut engine_all: Vec<crate::rks_contract::engine::RksRecord> = Vec::new();
     // cache miss：下载/解密/解析存档本体
     let parsed = provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone())
         .await
@@ -1148,12 +1148,12 @@ pub async fn render_song(
             if acc_percent <= 1.5 {
                 acc_percent *= 100.0;
             }
-            engine_all.push(crate::features::rks::engine::RksRecord {
+            engine_all.push(crate::rks_contract::engine::RksRecord {
                 song_id: sid.clone(),
                 difficulty: rec.difficulty.clone(),
                 score: rec.score,
                 acc: acc_percent,
-                rks: crate::features::rks::engine::calculate_chart_rks(acc_percent, cc as f64),
+                rks: crate::rks_contract::engine::calculate_chart_rks(acc_percent, cc as f64),
                 chart_constant: cc as f64,
             });
         }
@@ -1163,7 +1163,7 @@ pub async fn render_song(
             .partial_cmp(&a.rks)
             .unwrap_or(core::cmp::Ordering::Equal)
     });
-    let push_solver = crate::features::rks::engine::PushAccBatchSolver::new(&engine_all);
+    let push_solver = crate::rks_contract::engine::PushAccBatchSolver::new(&engine_all);
 
     // 单曲四难度数据
     let mut difficulty_scores: HashMap<String, Option<SongDifficultyScore>> = HashMap::new();
@@ -1200,7 +1200,7 @@ pub async fn render_song(
             if ap <= 1.5 {
                 ap *= 100.0;
             }
-            let rks = dv.map(|v| crate::features::rks::engine::calculate_chart_rks(ap, v));
+            let rks = dv.map(|v| crate::rks_contract::engine::calculate_chart_rks(ap, v));
             (Some(r.score as f64), Some(ap), rks, Some(r.is_full_combo))
         } else {
             (None, None, None, None)
@@ -1380,7 +1380,7 @@ pub async fn render_song(
             Some("webp") => "webp",
             _ => "png",
         };
-        let evt = crate::features::stats::models::EventInsert {
+        let evt = crate::stats_contract::EventInsert {
             ts_utc: chrono::Utc::now(),
             route: Some("/image/song".into()),
             feature: Some("image_render".into()),
@@ -1400,7 +1400,7 @@ pub async fn render_song(
     Ok((StatusCode::OK, headers, bytes))
 }
 
-fn to_engine_record(r: &RenderRecord) -> Option<crate::features::rks::engine::RksRecord> {
+fn to_engine_record(r: &RenderRecord) -> Option<crate::rks_contract::engine::RksRecord> {
     let diff = match r.difficulty.as_str() {
         "EZ" => Difficulty::EZ,
         "HD" => Difficulty::HD,
@@ -1408,7 +1408,7 @@ fn to_engine_record(r: &RenderRecord) -> Option<crate::features::rks::engine::Rk
         "AT" => Difficulty::AT,
         _ => return None,
     };
-    Some(crate::features::rks::engine::RksRecord {
+    Some(crate::rks_contract::engine::RksRecord {
         song_id: r.song_id.clone(),
         difficulty: diff,
         score: r.score.unwrap_or(0.0) as u32,
@@ -1589,7 +1589,7 @@ pub async fn render_bn_user(
                 // ACC 统一百分比
                 let acc = item.acc;
                 // RKS
-                let rks = crate::features::rks::engine::calculate_chart_rks(acc, dv);
+                let rks = crate::rks_contract::engine::calculate_chart_rks(acc, dv);
                 records.push(RenderRecord {
                     song_id: info.id.clone(),
                     song_name: info.name.clone(),
@@ -1610,9 +1610,9 @@ pub async fn render_bn_user(
             });
 
             // 推分 ACC
-            let mut push_acc_map: HashMap<String, crate::features::rks::engine::PushAccHint> =
+            let mut push_acc_map: HashMap<String, crate::rks_contract::engine::PushAccHint> =
                 HashMap::new();
-            let engine_all: Vec<crate::features::rks::engine::RksRecord> = records
+            let engine_all: Vec<crate::rks_contract::engine::RksRecord> = records
                 .iter()
                 .filter_map(|r| {
                     let diff = match r.difficulty.as_str() {
@@ -1622,7 +1622,7 @@ pub async fn render_bn_user(
                         "AT" => Difficulty::AT,
                         _ => return None,
                     };
-                    Some(crate::features::rks::engine::RksRecord {
+                    Some(crate::rks_contract::engine::RksRecord {
                         song_id: r.song_id.clone(),
                         difficulty: diff,
                         score: r.score.unwrap_or(0.0) as u32,
@@ -1632,7 +1632,7 @@ pub async fn render_bn_user(
                     })
                 })
                 .collect();
-            let solver = crate::features::rks::engine::PushAccBatchSolver::new(&engine_all);
+            let solver = crate::rks_contract::engine::PushAccBatchSolver::new(&engine_all);
             for (idx, r) in records.iter().enumerate() {
                 if r.acc >= 100.0 || r.difficulty_value <= 0.0 {
                     continue;
@@ -1645,7 +1645,7 @@ pub async fn render_bn_user(
 
             // 统计项
             let (exact_rks, _rounded) =
-                crate::features::rks::engine::calculate_player_rks_details(&engine_all);
+                crate::rks_contract::engine::calculate_player_rks_details(&engine_all);
             let ap_scores: Vec<_> = records.iter().filter(|r| r.acc >= 100.0).take(3).collect();
             let ap_top_3_avg = if ap_scores.len() == 3 {
                 Some(ap_scores.iter().map(|r| r.rks).sum::<f64>() / 3.0)
