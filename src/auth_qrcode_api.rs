@@ -8,14 +8,14 @@ use crate::{error::AppError, state::AppState};
 pub(crate) use crate::features::auth::handler::QrCodeQuery;
 pub use crate::features::auth::handler::{QrCodeCreateResponse, QrCodeStatusResponse};
 
-pub async fn post_qrcode(
+pub(crate) async fn post_qrcode(
     state: State<AppState>,
     query: Query<QrCodeQuery>,
 ) -> Result<Response, AppError> {
     crate::features::auth::handler::post_qrcode(state, query).await
 }
 
-pub async fn get_qrcode_status(
+pub(crate) async fn get_qrcode_status(
     state: State<AppState>,
     path: Path<String>,
 ) -> Result<Response, AppError> {
