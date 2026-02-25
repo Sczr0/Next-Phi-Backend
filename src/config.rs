@@ -28,6 +28,12 @@ pub struct ResourcesConfig {
     /// 曲绘外部资源基地址（HTTP），用于不依赖 Git/本地仓库时按需回源（例如 https://somnia.xtower.site）
     #[serde(default)]
     pub illustration_external_base_url: Option<String>,
+    /// 曲绘外链目录模式：`legacy`（illustration/illustrationLowRes）或 `lilith`（ill/illLow）
+    #[serde(default = "ResourcesConfig::default_external_illustration_dir_mode")]
+    pub external_illustration_dir_mode: String,
+    /// 曲绘外链文件后缀：`png` / `webp` / `avif` / `jpg` / `jpeg`
+    #[serde(default = "ResourcesConfig::default_external_illustration_ext")]
+    pub external_illustration_ext: String,
     /// 启动时是否自动同步曲绘仓库（默认关闭，避免启动强依赖外部网络/Git）
     #[serde(default = "ResourcesConfig::default_illustration_repo_auto_sync")]
     pub illustration_repo_auto_sync: bool,
@@ -38,6 +44,14 @@ pub struct ResourcesConfig {
 impl ResourcesConfig {
     fn default_illustration_repo_auto_sync() -> bool {
         false
+    }
+
+    fn default_external_illustration_dir_mode() -> String {
+        "legacy".to_string()
+    }
+
+    fn default_external_illustration_ext() -> String {
+        "png".to_string()
     }
 }
 
@@ -631,6 +645,9 @@ impl Default for AppConfig {
                 illustration_repo: "https://github.com/Catrong/phi-plugin-ill".to_string(),
                 illustration_folder: "phi-plugin-ill".to_string(),
                 illustration_external_base_url: None,
+                external_illustration_dir_mode:
+                    ResourcesConfig::default_external_illustration_dir_mode(),
+                external_illustration_ext: ResourcesConfig::default_external_illustration_ext(),
                 illustration_repo_auto_sync: ResourcesConfig::default_illustration_repo_auto_sync(),
                 info_path: "./info".to_string(),
             },

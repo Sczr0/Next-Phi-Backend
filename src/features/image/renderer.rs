@@ -451,11 +451,83 @@ fn is_http_url(input: &str) -> bool {
     input.starts_with("http://") || input.starts_with("https://")
 }
 
-fn build_remote_illustration_url(public_illustration_base_url: &str, song_id: &str) -> String {
+#[derive(Debug, Clone, Copy)]
+enum ExternalIllustrationDirMode {
+    Legacy,
+    Lilith,
+}
+
+fn normalize_external_illustration_dir_mode(input: &str) -> ExternalIllustrationDirMode {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "lilith" => ExternalIllustrationDirMode::Lilith,
+        _ => ExternalIllustrationDirMode::Legacy,
+    }
+}
+
+fn normalize_external_illustration_ext(input: &str) -> &'static str {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "png" => "png",
+        "webp" => "webp",
+        "avif" => "avif",
+        "jpg" | "jpeg" => "jpg",
+        _ => "png",
+    }
+}
+
+fn remote_illustration_dir_for_category(
+    category: &str,
+    mode: ExternalIllustrationDirMode,
+) -> Option<&'static str> {
+    match mode {
+        ExternalIllustrationDirMode::Legacy => match category {
+            "ill" => Some("illustration"),
+            "illLow" => Some("illustrationLowRes"),
+            "illBlur" => Some("illustrationBlur"),
+            _ => None,
+        },
+        ExternalIllustrationDirMode::Lilith => match category {
+            "ill" => Some("ill"),
+            "illLow" => Some("illLow"),
+            "illBlur" => Some("illBlur"),
+            _ => None,
+        },
+    }
+}
+
+fn external_illustration_mode_and_ext() -> (ExternalIllustrationDirMode, &'static str) {
+    let resources = &AppConfig::global().resources;
+    (
+        normalize_external_illustration_dir_mode(&resources.external_illustration_dir_mode),
+        normalize_external_illustration_ext(&resources.external_illustration_ext),
+    )
+}
+
+fn build_remote_illustration_url_with_options(
+    public_illustration_base_url: &str,
+    song_id: &str,
+    mode: ExternalIllustrationDirMode,
+    ext: &str,
+    low_res: bool,
+) -> String {
+    let category = if low_res { "illLow" } else { "ill" };
+    let remote_dir = remote_illustration_dir_for_category(category, mode).unwrap_or("illustration");
     format!(
-        "{}/illustration/{}.png",
+        "{}/{}/{}.{}",
         public_illustration_base_url.trim_end_matches('/'),
-        url_encode_path_segment(song_id)
+        remote_dir,
+        url_encode_path_segment(song_id),
+        ext
+    )
+}
+
+fn build_remote_illustration_url(public_illustration_base_url: &str, song_id: &str) -> String {
+    let (mode, ext) = external_illustration_mode_and_ext();
+    build_remote_illustration_url_with_options(
+        public_illustration_base_url,
+        song_id,
+        mode,
+        ext,
+        false,
     )
 }
 
@@ -463,10 +535,13 @@ fn build_remote_illustration_low_res_url(
     public_illustration_base_url: &str,
     song_id: &str,
 ) -> String {
-    format!(
-        "{}/illustrationLowRes/{}.png",
-        public_illustration_base_url.trim_end_matches('/'),
-        url_encode_path_segment(song_id)
+    let (mode, ext) = external_illustration_mode_and_ext();
+    build_remote_illustration_url_with_options(
+        public_illustration_base_url,
+        song_id,
+        mode,
+        ext,
+        true,
     )
 }
 
@@ -487,19 +562,15 @@ fn to_somnia_public_url_for_base(
     let category = rel.components().next()?.as_os_str().to_string_lossy();
     let song_id = rel.file_stem()?.to_string_lossy();
     let encoded_song_id = url_encode_path_segment(&song_id);
-
-    let remote_dir = match category.as_ref() {
-        "ill" => "illustration",
-        "illLow" => "illustrationLowRes",
-        "illBlur" => "illustrationBlur",
-        _ => return None,
-    };
+    let (mode, ext) = external_illustration_mode_and_ext();
+    let remote_dir = remote_illustration_dir_for_category(category.as_ref(), mode)?;
 
     Some(format!(
-        "{}/{}/{}.png",
+        "{}/{}/{}.{}",
         base_url.trim_end_matches('/'),
         remote_dir,
-        encoded_song_id
+        encoded_song_id,
+        ext
     ))
 }
 
@@ -2532,8 +2603,9 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
 #[cfg(test)]
 mod tests {
     use super::{
-        PlayerStats, RenderRecord, SongRenderData, Theme, generate_song_svg_string,
-        generate_svg_string, render_svg_unified, to_public_url_for_base,
+        ExternalIllustrationDirMode, PlayerStats, RenderRecord, SongRenderData, Theme,
+        build_remote_illustration_url_with_options, generate_song_svg_string, generate_svg_string,
+        remote_illustration_dir_for_category, render_svg_unified, to_public_url_for_base,
         to_somnia_public_url_for_base,
     };
     use chrono::Utc;
@@ -2588,6 +2660,7 @@ mod tests {
 
     #[test]
     fn maps_local_path_to_somnia_url_for_external_base() {
+        ensure_config_inited();
         let base_dir =
             std::env::temp_dir().join(format!("phi-backend-test-{}", uuid::Uuid::new_v4()));
         let ill_low_dir = base_dir.join("illLow");
@@ -2600,6 +2673,43 @@ mod tests {
         assert_eq!(url, "https://example.com/illustrationLowRes/A%20B.png");
 
         let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn maps_category_to_lilith_remote_dir() {
+        assert_eq!(
+            remote_illustration_dir_for_category("ill", ExternalIllustrationDirMode::Lilith),
+            Some("ill")
+        );
+        assert_eq!(
+            remote_illustration_dir_for_category("illLow", ExternalIllustrationDirMode::Lilith),
+            Some("illLow")
+        );
+        assert_eq!(
+            remote_illustration_dir_for_category("illBlur", ExternalIllustrationDirMode::Lilith),
+            Some("illBlur")
+        );
+    }
+
+    #[test]
+    fn builds_remote_url_with_lilith_webp() {
+        let url = build_remote_illustration_url_with_options(
+            "https://example.com/lilith",
+            "A B",
+            ExternalIllustrationDirMode::Lilith,
+            "webp",
+            false,
+        );
+        assert_eq!(url, "https://example.com/lilith/ill/A%20B.webp");
+
+        let low_url = build_remote_illustration_url_with_options(
+            "https://example.com/lilith",
+            "A B",
+            ExternalIllustrationDirMode::Lilith,
+            "avif",
+            true,
+        );
+        assert_eq!(low_url, "https://example.com/lilith/illLow/A%20B.avif");
     }
 
     #[test]
