@@ -63,7 +63,7 @@ impl StatsHandle {
     }
 
     /// 检查统计服务是否仍在运行
-    #[must_use] 
+    #[must_use]
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
@@ -234,13 +234,13 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
 }
 
 /// HMAC-SHA256(盐, 值) -> hex 前 32 位（16字节）
-#[must_use] 
+#[must_use]
 pub fn hmac_hex16(salt: &str, value: &str) -> String {
     crate::identity_hash::hmac_hex16(salt, value)
 }
 
 /// 依据 `UnifiedSaveRequest` 推导用户哈希（优先稳定标识）
-#[must_use] 
+#[must_use]
 pub fn derive_user_identity_from_auth(
     salt_opt: Option<&str>,
     auth: &crate::auth_contract::UnifiedSaveRequest,

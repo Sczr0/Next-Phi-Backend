@@ -6,7 +6,7 @@ use uuid::Uuid;
 pub struct RequestId(pub String);
 
 impl RequestId {
-    #[must_use] 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -18,7 +18,7 @@ tokio::task_local! {
 }
 
 /// 获取当前请求上下文中的 request_id。
-#[must_use] 
+#[must_use]
 pub fn current_request_id() -> Option<String> {
     TASK_REQUEST_ID.try_with(std::clone::Clone::clone).ok()
 }

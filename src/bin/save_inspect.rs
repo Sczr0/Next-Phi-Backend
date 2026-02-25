@@ -15,8 +15,8 @@
 //! - 不建议在命令行参数里传 stoken（容易被 shell history 记录），默认从环境变量读取；
 //! - 默认输出为“脱敏模式”，需要显式 flag 才会输出完整 URL / 原始 summary / 明文预览。
 
-use std::fs;
 use std::fmt::Write as _;
+use std::fs;
 use std::path::PathBuf;
 
 use phi_backend::AppConfig;
@@ -41,9 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let stoken_env = args.stoken_env.as_deref().unwrap_or(DEFAULT_STOKEN_ENV);
     let stoken = std::env::var(stoken_env).map_err(|_| {
-        format!(
-            "未找到环境变量 `{stoken_env}`（建议 PowerShell: `$env:{stoken_env}='...'`）"
-        )
+        format!("未找到环境变量 `{stoken_env}`（建议 PowerShell: `$env:{stoken_env}='...'`）")
     })?;
 
     let opts = InspectOptions {
@@ -129,8 +127,11 @@ fn render_text(report: &phi_backend::features::save::inspector::InspectReport) -
                 .expect("write inspect text");
         }
         phi_backend::features::save::inspector::CipherReport::Aes128Gcm { nonce_hex, tag_len } => {
-            writeln!(out, "  cipher: aes-128-gcm nonce_hex={nonce_hex} tag_len={tag_len}")
-                .expect("write inspect text");
+            writeln!(
+                out,
+                "  cipher: aes-128-gcm nonce_hex={nonce_hex} tag_len={tag_len}"
+            )
+            .expect("write inspect text");
         }
     }
     match &report.decrypt_meta.kdf {
@@ -153,8 +154,13 @@ fn render_text(report: &phi_backend::features::save::inspector::InspectReport) -
     writeln!(out, "  integrity: {}", report.decrypt_meta.integrity).expect("write inspect text");
 
     if let Some(z) = report.zip.as_ref() {
-        writeln!(out, "zip: files={} names={}", z.file_count, z.names.join(","))
-            .expect("write inspect text");
+        writeln!(
+            out,
+            "zip: files={} names={}",
+            z.file_count,
+            z.names.join(",")
+        )
+        .expect("write inspect text");
     }
 
     out.push_str("entries:\n");
@@ -162,25 +168,21 @@ fn render_text(report: &phi_backend::features::save::inspector::InspectReport) -
         writeln!(
             out,
             "- {} present={} parser_handling=\"{}\"",
-            ent.name,
-            ent.present,
-            ent.parser_handling
+            ent.name, ent.present, ent.parser_handling
         )
         .expect("write inspect text");
         if let Some(len) = ent.encrypted_len {
             writeln!(
                 out,
                 "  encrypted_len={} encrypted_prefix={:?}",
-                len,
-                ent.encrypted_prefix_u8
+                len, ent.encrypted_prefix_u8
             )
             .expect("write inspect text");
         }
         writeln!(
             out,
             "  decrypted_ok={} error={:?}",
-            ent.decrypted.ok,
-            ent.decrypted.error
+            ent.decrypted.ok, ent.decrypted.error
         )
         .expect("write inspect text");
         if ent.decrypted.ok {

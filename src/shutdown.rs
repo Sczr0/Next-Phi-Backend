@@ -43,7 +43,7 @@ pub enum ShutdownReason {
 
 impl ShutdownManager {
     /// 创建新的优雅退出管理器
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         let (reason_tx, _) = broadcast::channel(16);
 
@@ -94,7 +94,9 @@ impl ShutdownManager {
         &self,
         duration: Duration,
     ) -> Result<ShutdownReason, ShutdownError> {
-        if let Ok(reason) = timeout(duration, self.wait_for_shutdown()).await { Ok(reason) } else {
+        if let Ok(reason) = timeout(duration, self.wait_for_shutdown()).await {
+            Ok(reason)
+        } else {
             warn!("优雅退出超时，准备强制退出");
             Err(ShutdownError::Timeout)
         }
@@ -139,7 +141,7 @@ impl ShutdownManager {
     }
 
     /// 检查是否正在关闭
-    #[must_use] 
+    #[must_use]
     pub fn is_shutting_down(&self) -> bool {
         self.inner
             .shutting_down
@@ -149,7 +151,7 @@ impl ShutdownManager {
     /// 创建退出原因接收器
     ///
     /// 用于其他组件监听退出事件
-    #[must_use] 
+    #[must_use]
     pub fn subscribe(&self) -> broadcast::Receiver<ShutdownReason> {
         self.inner.reason_tx.subscribe()
     }
@@ -223,7 +225,6 @@ impl ShutdownManager {
             info!("接收到Ctrl+C信号");
             manager.trigger_shutdown(ShutdownReason::Interrupt);
         });
-
     }
 }
 
@@ -259,7 +260,7 @@ pub struct ShutdownHandle {
 
 impl ShutdownHandle {
     /// 创建新的退出句柄
-    #[must_use] 
+    #[must_use]
     pub fn new(manager: &ShutdownManager) -> Self {
         Self {
             reason_rx: manager.subscribe(),
@@ -277,7 +278,7 @@ impl ShutdownHandle {
     }
 
     /// 检查是否正在关闭
-    #[must_use] 
+    #[must_use]
     pub fn is_shutting_down(&self) -> bool {
         self.manager.is_shutting_down()
     }
@@ -300,7 +301,9 @@ impl ShutdownHandle {
     where
         F: std::future::Future<Output = T>,
     {
-        if let Ok(result) = timeout(timeout_duration, cleanup_fn).await { Ok(result) } else {
+        if let Ok(result) = timeout(timeout_duration, cleanup_fn).await {
+            Ok(result)
+        } else {
             error!("清理操作超时");
             Err(ShutdownError::Timeout)
         }

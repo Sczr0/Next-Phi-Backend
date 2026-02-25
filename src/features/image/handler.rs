@@ -1224,7 +1224,12 @@ pub async fn render_song(
                 ap *= 100.0;
             }
             let rks = dv.map(|v| crate::rks_contract::engine::calculate_chart_rks(ap, v));
-            (Some(f64::from(r.score)), Some(ap), rks, Some(r.is_full_combo))
+            (
+                Some(f64::from(r.score)),
+                Some(ap),
+                rks,
+                Some(r.is_full_combo),
+            )
         } else {
             (None, None, None, None)
         };
@@ -1282,7 +1287,8 @@ pub async fn render_song(
     let update_time: DateTime<Utc> = parsed
         .updated_at
         .as_deref()
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map_or_else(Utc::now, |dt| dt.with_timezone(&Utc));
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+        .map_or_else(Utc::now, |dt| dt.with_timezone(&Utc));
 
     // 优先级：请求体昵称 > users/me 昵称 > 默认
     let display_name = if let Some(n) = req.nickname.clone() {

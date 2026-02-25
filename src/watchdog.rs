@@ -99,7 +99,7 @@ mod systemd_impl {
 
 impl SystemdWatchdog {
     /// 创建新的看门狗管理器
-    #[must_use] 
+    #[must_use]
     pub fn new(config: WatchdogConfig, shutdown_manager: &ShutdownManager) -> Self {
         let shutdown_handle = ShutdownHandle::new(shutdown_manager);
 

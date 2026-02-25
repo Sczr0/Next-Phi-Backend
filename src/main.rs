@@ -383,7 +383,8 @@ async fn main() {
             // 等待一小段时间确保其他资源清理完成
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         })
-        .await {
+        .await
+        {
             tracing::info!("优雅退出完成");
         } else {
             tracing::warn!("优雅退出超时，强制退出");

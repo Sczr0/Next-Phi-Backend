@@ -496,8 +496,10 @@ where
             super::calculate_push_acc(&chart_id, score.difficulty_value, ctx.engine_records)
         });
 
-    let score_text = score
-        .score.map_or_else(|| "N/A".to_string(), |s| format!("{:.0}", s.max(0.0).round()));
+    let score_text = score.score.map_or_else(
+        || "N/A".to_string(),
+        |s| format!("{:.0}", s.max(0.0).round()),
+    );
 
     let mut acc_text = format!("Acc: {:.2}%", score.acc);
     if let Some(hint) = push_hint {
@@ -625,7 +627,9 @@ where
     T: DeserializeOwned + Clone,
 {
     let Ok(meta) = std::fs::metadata(cfg_path) else {
-        let mut map = cache.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.remove(cfg_path);
         return None;
     };
@@ -634,7 +638,9 @@ where
     let mtime = meta.modified().ok();
 
     {
-        let map = cache.read().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let map = cache
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(entry) = map.get(cfg_path)
             && entry.len == len
             && entry.mtime == mtime
@@ -648,7 +654,9 @@ where
     }
 
     let Ok(s) = std::fs::read_to_string(cfg_path) else {
-        let mut map = cache.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut map = cache
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         map.insert(
             cfg_path.to_path_buf(),
             JsonOverrideCacheEntry {
@@ -668,7 +676,9 @@ where
         JsonOverrideStatus::ParseError
     };
 
-    let mut map = cache.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut map = cache
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     map.insert(
         cfg_path.to_path_buf(),
         JsonOverrideCacheEntry {
@@ -1128,7 +1138,8 @@ pub(super) fn generate_song_svg_with_template(
             match data.difficulty_scores.get(key).and_then(|o| o.as_ref()) {
                 Some(score_data) if score_data.acc.is_some() => {
                     let score_text = score_data
-                        .score.map_or_else(|| "N/A".to_string(), |s| format!("{s:.0}"));
+                        .score
+                        .map_or_else(|| "N/A".to_string(), |s| format!("{s:.0}"));
                     let acc_value = score_data.acc.unwrap_or(0.0);
                     let rks_value = score_data.rks.unwrap_or(0.0);
                     let dv_value = score_data.difficulty_value.unwrap_or(0.0);
@@ -1139,8 +1150,9 @@ pub(super) fn generate_song_svg_with_template(
                     } else if let Some(hint) = score_data.player_push_acc {
                         let suffix = match hint {
                             engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
-                            engine::PushAccHint::PhiOnly
-                            | engine::PushAccHint::AlreadyPhi => " -> 100.00%".to_string(),
+                            engine::PushAccHint::PhiOnly | engine::PushAccHint::AlreadyPhi => {
+                                " -> 100.00%".to_string()
+                            }
                             engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
                         };
                         acc_text.push_str(&suffix);
@@ -1266,11 +1278,15 @@ mod json_override_cache_tests {
 
     fn clear_layout_override_caches() {
         if let Some(lock) = BN_TEMPLATE_LAYOUT_JSON_CACHE.get() {
-            let mut map = lock.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut map = lock
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             map.clear();
         }
         if let Some(lock) = SONG_TEMPLATE_LAYOUT_JSON_CACHE.get() {
-            let mut map = lock.write().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut map = lock
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             map.clear();
         }
     }

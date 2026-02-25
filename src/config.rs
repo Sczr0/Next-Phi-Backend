@@ -582,26 +582,26 @@ impl AppConfig {
     }
 
     /// 获取服务器监听地址
-    #[must_use] 
+    #[must_use]
     pub fn server_addr(&self) -> String {
         format!("{}:{}", self.server.host, self.server.port)
     }
 
     /// 获取资源文件夹路径
-    #[must_use] 
+    #[must_use]
     pub fn resources_path(&self) -> PathBuf {
         PathBuf::from(&self.resources.base_path)
     }
 
     /// 获取曲绘文件夹完整路径
-    #[must_use] 
+    #[must_use]
     pub fn illustration_path(&self) -> PathBuf {
         self.resources_path()
             .join(&self.resources.illustration_folder)
     }
 
     /// 获取 info 数据目录
-    #[must_use] 
+    #[must_use]
     pub fn info_path(&self) -> PathBuf {
         PathBuf::from(&self.resources.info_path)
     }
@@ -1000,7 +1000,7 @@ impl WatermarkConfig {
     }
 
     /// 校验解除口令（静态或动态）
-    #[must_use] 
+    #[must_use]
     pub fn is_unlock_valid(&self, input: Option<&str>) -> bool {
         let Some(pwd) = input else {
             return false;
@@ -1021,7 +1021,7 @@ impl WatermarkConfig {
     }
 
     /// 计算当前窗口的动态口令
-    #[must_use] 
+    #[must_use]
     pub fn current_dynamic_code(&self) -> Option<String> {
         if !self.unlock_dynamic {
             return None;
@@ -1089,13 +1089,13 @@ impl ShutdownConfig {
     }
 
     /// 获取优雅退出超时时间
-    #[must_use] 
+    #[must_use]
     pub fn timeout_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.timeout_secs)
     }
 
     /// 获取强制退出等待时间
-    #[must_use] 
+    #[must_use]
     pub fn force_delay_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.force_delay_secs)
     }
@@ -1138,19 +1138,19 @@ impl WatchdogConfig {
     }
 
     /// 获取看门狗超时时间
-    #[must_use] 
+    #[must_use]
     pub fn timeout_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.timeout_secs)
     }
 
     /// 获取心跳间隔时间
-    #[must_use] 
+    #[must_use]
     pub fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs)
     }
 
     /// 获取心跳间隔（纳秒，用于sd_notify）
-    #[must_use] 
+    #[must_use]
     pub fn interval_nanos(&self) -> u64 {
         self.interval_secs * 1_000_000_000
     }

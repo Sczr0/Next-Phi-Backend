@@ -144,7 +144,8 @@ async fn test_b27_generation_with_flamegraph() {
         let chart = chart_map.get(song_id);
         let name = song_catalog
             .by_id
-            .get(song_id).map_or_else(|| song_id.clone(), |s| s.name.clone());
+            .get(song_id)
+            .map_or_else(|| song_id.clone(), |s| s.name.clone());
 
         for rec in diffs {
             let (dv_opt, diff_str) = match rec.difficulty {
@@ -330,8 +331,7 @@ async fn test_b27_generation_with_flamegraph() {
     let phase8_start = std::time::Instant::now();
 
     // 渲染为 PNG
-    let png =
-        phi_backend::features::image::render_svg_to_png(&svg, false).expect("渲染 PNG 失败");
+    let png = phi_backend::features::image::render_svg_to_png(&svg, false).expect("渲染 PNG 失败");
 
     let phase8_elapsed = phase8_start.elapsed();
     println!("  PNG 大小: {} bytes", png.len());

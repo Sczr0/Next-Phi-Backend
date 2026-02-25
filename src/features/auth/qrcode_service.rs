@@ -35,7 +35,7 @@ impl Default for QrCodeService {
 }
 
 impl QrCodeService {
-    #[must_use] 
+    #[must_use]
     pub fn new() -> Self {
         let cache = Cache::builder()
             .max_capacity(10_000)

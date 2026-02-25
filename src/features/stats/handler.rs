@@ -856,10 +856,12 @@ pub async fn get_stats_summary(
                 if !(0..=i64::from(u16::MAX)).contains(&r.status) {
                     return None;
                 }
-                u16::try_from(r.status).ok().map(|status| StatusCodeSummary {
-                    status,
-                    count: r.count,
-                })
+                u16::try_from(r.status)
+                    .ok()
+                    .map(|status| StatusCodeSummary {
+                        status,
+                        count: r.count,
+                    })
             })
             .collect::<Vec<_>>()
     });

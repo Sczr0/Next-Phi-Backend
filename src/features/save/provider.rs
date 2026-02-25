@@ -81,7 +81,7 @@ impl SaveSource {
             session_token: session_token.into(),
         }
     }
-    #[must_use] 
+    #[must_use]
     pub fn external(credentials: ExternalApiCredentials) -> Self {
         Self::ExternalApi { credentials }
     }

@@ -75,8 +75,9 @@ impl SongCatalog {
         let q_len = Self::usize_to_i32_saturating(q_lower.len());
         let hay_len = Self::usize_to_i32_saturating(hay_lower.len());
         let extra_len_penalty = (hay_len - q_len).clamp(0, 200); // 越长越不相关（上限避免过度影响）
-        let pos_bonus = pos
-            .map_or(0, |p| (200_i32 - Self::usize_to_i32_saturating(p).min(200)).max(0)); // 命中越靠前越优
+        let pos_bonus = pos.map_or(0, |p| {
+            (200_i32 - Self::usize_to_i32_saturating(p).min(200)).max(0)
+        }); // 命中越靠前越优
 
         match kind {
             SearchMatchKind::NameEquals => 6000,
@@ -183,7 +184,7 @@ impl SongCatalog {
     /// 分页查询：返回当前页 items 与 total（总命中数）。
     ///
     /// 设计目标：避免 HTTP 层“先全量构建 Vec 再切片”的不必要分配；同时保持与 `search()` 一致的排序语义。
-    #[must_use] 
+    #[must_use]
     pub fn search_page(&self, query: &str, offset: u32, limit: u32) -> (Vec<Arc<SongInfo>>, usize) {
         let q = query.trim();
         if q.is_empty() {
@@ -276,7 +277,7 @@ impl SongCatalog {
     /// 当 ID 精确命中时，直接返回唯一结果；否则按以下优先级合并并去重：
     /// 1) 官方名：等于(忽略大小写) -> 前缀包含 -> 子串包含
     /// 2) 别名：等于(忽略大小写) -> 前缀包含 -> 子串包含
-    #[must_use] 
+    #[must_use]
     pub fn search(&self, query: &str) -> Vec<Arc<SongInfo>> {
         let (items, _total) = self.search_page(query, 0, u32::MAX);
         items
@@ -392,7 +393,7 @@ impl SongCatalog {
     }
 
     /// 多关键词查询，支持 AND / OR、NOT（前缀 `-`）、短语（双引号），忽略大小写与前缀/子串匹配。
-    #[must_use] 
+    #[must_use]
     pub fn search_multi(
         &self,
         query: &str,

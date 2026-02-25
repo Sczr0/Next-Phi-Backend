@@ -204,9 +204,7 @@ pub async fn get_save_data(
         storage.ensure_user_not_banned(user_hash_ref).await?;
     }
 
-    let calc_rks = params
-        .get("calculate_rks")
-        .is_some_and(|v| v == "true");
+    let calc_rks = params.get("calculate_rks").is_some_and(|v| v == "true");
     // 排行榜写入需要：统计存储开启 + 能识别到用户身份
     let need_leaderboard = state.stats_storage.is_some() && user_hash.is_some();
     let auth_ms = duration_ms_i64(t_auth.elapsed());
@@ -932,7 +930,8 @@ fn build_textual_details_from_rks(
         state
             .song_catalog
             .by_id
-            .get(sid).map_or_else(|| sid.to_string(), |s| s.name.clone())
+            .get(sid)
+            .map_or_else(|| sid.to_string(), |s| s.name.clone())
     };
 
     let to_text = |v: &[ChartRankingScore]| -> Vec<ChartTextItem> {

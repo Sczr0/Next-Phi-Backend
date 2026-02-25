@@ -275,8 +275,8 @@ fn issue_session_access_token(
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<String, AppError> {
     let iat = now.timestamp();
-    let exp = (now + chrono::Duration::seconds(saturating_u64_to_i64(cfg.access_ttl_secs)))
-        .timestamp();
+    let exp =
+        (now + chrono::Duration::seconds(saturating_u64_to_i64(cfg.access_ttl_secs))).timestamp();
     let claims = SessionClaims {
         sub: sub.to_string(),
         jti: Uuid::new_v4().to_string(),
@@ -531,7 +531,8 @@ pub async fn post_session_logout(
     validate_bearer_not_revoked(Some(storage), &authz.claims).await?;
     let mut logout_before = None;
     if req.scope == SessionLogoutScope::All {
-        let gate = now + chrono::Duration::seconds(saturating_u64_to_i64(cfg.revoke_all_grace_secs));
+        let gate =
+            now + chrono::Duration::seconds(saturating_u64_to_i64(cfg.revoke_all_grace_secs));
         let gate_rfc3339 = gate.to_rfc3339();
         let gate_expire = (gate
             + chrono::Duration::seconds(saturating_u64_to_i64(cfg.revoke_ttl_secs)))

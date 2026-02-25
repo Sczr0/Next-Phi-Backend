@@ -1049,7 +1049,7 @@ pub fn generate_svg_string<S>(
     scores: &[RenderRecord],
     stats: &PlayerStats,
     push_acc_map: Option<&HashMap<String, engine::PushAccHint, S>>, // 新增：预先计算的推分提示映射，键为"曲目ID-难度"
-    theme: &Theme,                                               // 新增：主题参数
+    theme: &Theme,                                                  // 新增：主题参数
     embed_images: bool,
     // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
     public_illustration_base_url: Option<&str>,
@@ -1091,7 +1091,8 @@ where
         + text_line_height_acc
         + text_line_height_level
         + text_block_spacing * 3.0;
-    let calculated_card_height = round_non_negative_to_u32(text_block_height + card_padding_inner * 2.0);
+    let calculated_card_height =
+        round_non_negative_to_u32(text_block_height + card_padding_inner * 2.0);
     let ap_card_start_y = ap_card_padding_outer;
     let ap_section_height = if stats.ap_top_3_scores.is_empty() {
         0
@@ -1611,8 +1612,8 @@ pub fn render_svg_to_png(svg_data: &str, is_user_generated: bool) -> Result<Vec<
     }
 
     // 使用 png crate 进行快速编码
-    let px_count = usize_from_u32(pixmap_size.width())
-        .saturating_mul(usize_from_u32(pixmap_size.height()));
+    let px_count =
+        usize_from_u32(pixmap_size.width()).saturating_mul(usize_from_u32(pixmap_size.height()));
     let mut out = Vec::with_capacity(px_count.saturating_mul(4));
     {
         let mut encoder = png::Encoder::new(&mut out, pixmap_size.width(), pixmap_size.height());
@@ -2260,7 +2261,7 @@ pub fn generate_song_svg_string(
                 round_non_negative_to_u32(illust_width),
                 round_non_negative_to_u32(illust_height),
             )
-                .unwrap_or(href)
+            .unwrap_or(href)
         } else {
             href
         };
@@ -2467,9 +2468,8 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
     let row_height = 60;
     let header_height = 120;
     let footer_height = 40;
-    let total_height = header_height
-        + (i32_from_usize(data.entries.len()) * row_height)
-        + footer_height;
+    let total_height =
+        header_height + (i32_from_usize(data.entries.len()) * row_height) + footer_height;
 
     let mut svg = String::with_capacity(20000);
     write!(svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{total_height}" viewBox="0 0 {width} {total_height}">"#)
@@ -2947,26 +2947,12 @@ mod tests {
 </svg>"##
             .to_string();
 
-        let (q20, ct20) = render_svg_unified(
-            &svg,
-            false,
-            Some("webp"),
-            Some(64),
-            Some(20),
-            Some(false),
-        )
-        .unwrap();
+        let (q20, ct20) =
+            render_svg_unified(&svg, false, Some("webp"), Some(64), Some(20), Some(false)).unwrap();
         assert_eq!(ct20, "image/webp");
 
-        let (q90, _ct90) = render_svg_unified(
-            &svg,
-            false,
-            Some("webp"),
-            Some(64),
-            Some(90),
-            Some(false),
-        )
-        .unwrap();
+        let (q90, _ct90) =
+            render_svg_unified(&svg, false, Some("webp"), Some(64), Some(90), Some(false)).unwrap();
         assert_ne!(q20, q90);
 
         let img20 = image::load_from_memory(&q20).unwrap();
@@ -2974,24 +2960,10 @@ mod tests {
         assert_eq!((img20.width(), img20.height()), (64, 64));
         assert_eq!((img90.width(), img90.height()), (64, 64));
 
-        let (lossless_q20, _ct1) = render_svg_unified(
-            &svg,
-            false,
-            Some("webp"),
-            Some(64),
-            Some(20),
-            Some(true),
-        )
-        .unwrap();
-        let (lossless_q90, _ct2) = render_svg_unified(
-            &svg,
-            false,
-            Some("webp"),
-            Some(64),
-            Some(90),
-            Some(true),
-        )
-        .unwrap();
+        let (lossless_q20, _ct1) =
+            render_svg_unified(&svg, false, Some("webp"), Some(64), Some(20), Some(true)).unwrap();
+        let (lossless_q90, _ct2) =
+            render_svg_unified(&svg, false, Some("webp"), Some(64), Some(90), Some(true)).unwrap();
 
         let img_l1 = image::load_from_memory(&lossless_q20).unwrap().to_rgba8();
         let img_l2 = image::load_from_memory(&lossless_q90).unwrap().to_rgba8();

@@ -155,10 +155,7 @@ async fn apply_user_status(
 }
 
 fn mask_user_prefix(hash: &str) -> String {
-    let prefix_end = hash
-        .char_indices()
-        .nth(4)
-        .map_or(hash.len(), |(i, _)| i);
+    let prefix_end = hash.char_indices().nth(4).map_or(hash.len(), |(i, _)| i);
 
     let mut out = String::with_capacity(prefix_end + 4);
     out.push_str(&hash[..prefix_end]);

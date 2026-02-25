@@ -21,7 +21,7 @@ pub struct ChartRankingScore {
 ///
 /// 参数 `accuracy` 采用小数形式（例如 98.5% -> 0.985）。
 /// 当 `accuracy` < 0.70 时，直接返回 0.0。
-#[must_use] 
+#[must_use]
 pub fn calculate_single_chart_rks(accuracy: f32, chart_constant: f32) -> f64 {
     let acc = f64::from(accuracy);
     if acc < 0.70 {
@@ -48,7 +48,7 @@ pub struct PlayerRksResult {
 }
 
 /// 根据玩家成绩与定数表计算 B30 与总 RKS（简化口径：Best27 + AP3，允许重叠）
-#[must_use] 
+#[must_use]
 pub fn calculate_player_rks<S>(
     records: &HashMap<String, Vec<DifficultyRecord>, S>,
     chart_constants: &ChartConstantsMap,
@@ -307,7 +307,7 @@ pub enum PushAccHint {
 
 impl PushAccHint {
     /// 若该结果可用具体 ACC 表示，则返回目标 ACC（百分比）。
-    #[must_use] 
+    #[must_use]
     pub fn target_acc(&self) -> Option<f64> {
         match self {
             Self::TargetAcc { acc } => Some(*acc),
@@ -316,7 +316,7 @@ impl PushAccHint {
     }
 
     /// 兼容旧逻辑：无法区分时以 100.0 表示“推到顶/无法推分”。
-    #[must_use] 
+    #[must_use]
     pub fn as_legacy_acc(&self) -> f64 {
         match self {
             Self::TargetAcc { acc } => *acc,
@@ -356,7 +356,7 @@ pub struct PushAccBatchSolver<'a> {
 }
 
 impl<'a> PushAccBatchSolver<'a> {
-    #[must_use] 
+    #[must_use]
     pub fn new(records: &'a [RksRecord]) -> Self {
         let (current_exact_rks, _rounded) = calculate_player_rks_details(records);
         let target_rks_threshold = target_rks_threshold_from_exact(current_exact_rks);
@@ -398,7 +398,7 @@ impl<'a> PushAccBatchSolver<'a> {
     ///
     /// - records 必须按 rks 降序；
     /// - 返回值区分三类：需要具体 ACC / 只能 100 / 无法推分。
-    #[must_use] 
+    #[must_use]
     pub fn solve_for_index(
         &self,
         target_index: usize,
@@ -652,7 +652,7 @@ pub fn calculate_player_rks_details(records: &[RksRecord]) -> (f64, f64) {
 }
 
 /// 计算指定谱面的 RKS 值（acc 以百分比传入，如 98.5 表示 98.5%）
-#[must_use] 
+#[must_use]
 pub fn calculate_chart_rks(acc_percent: f64, constant: f64) -> f64 {
     if acc_percent < 70.0 {
         return 0.0;
@@ -813,7 +813,7 @@ pub fn calculate_target_chart_push_acc(
 
 /// 批量计算给定（已按 rks 降序）的记录列表中每条非 100% 成绩的推分 ACC
 /// 返回键为 `song_id-difficulty` 的映射（值为需要达到的 ACC 百分比）。
-#[must_use] 
+#[must_use]
 pub fn calculate_all_push_accuracies(sorted_records: &[RksRecord]) -> HashMap<String, f64> {
     let mut map = HashMap::new();
     let solver = PushAccBatchSolver::new(sorted_records);
@@ -831,7 +831,7 @@ pub fn calculate_all_push_accuracies(sorted_records: &[RksRecord]) -> HashMap<St
 }
 
 /// 批量计算推分提示（区分 PhiOnly / Unreachable / 具体 ACC）。
-#[must_use] 
+#[must_use]
 pub fn calculate_all_push_hints(sorted_records: &[RksRecord]) -> HashMap<String, PushAccHint> {
     let mut map = HashMap::new();
     let solver = PushAccBatchSolver::new(sorted_records);

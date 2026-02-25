@@ -33,7 +33,7 @@ pub struct OpenApiRoutePolicy {
 }
 
 impl OpenApiRoutePolicy {
-    #[must_use] 
+    #[must_use]
     pub const fn new(required_scopes: &'static [&'static str]) -> Self {
         Self { required_scopes }
     }
@@ -211,9 +211,9 @@ pub async fn snapshot_rate_limit_by_key(
                 .then_with(|| a.route.cmp(&b.route))
                 .then_with(|| a.client_ip.cmp(&b.client_ip))
         });
-        let total_request_count = buckets
-            .iter()
-            .fold(0_u64, |acc, b| acc.saturating_add(u64::from(b.request_count)));
+        let total_request_count = buckets.iter().fold(0_u64, |acc, b| {
+            acc.saturating_add(u64::from(b.request_count))
+        });
         let bucket_count = buckets.len();
         buckets.truncate(limit);
         return OpenApiRateLimitSnapshot {
