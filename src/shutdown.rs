@@ -164,7 +164,7 @@ impl ShutdownManager {
     pub async fn start_signal_handler(&self) -> Result<(), ShutdownError> {
         #[cfg(unix)]
         {
-            self.start_unix_signal_handler().await
+            self.start_unix_signal_handler()
         }
 
         #[cfg(windows)]
@@ -175,7 +175,7 @@ impl ShutdownManager {
     }
 
     #[cfg(unix)]
-    async fn start_unix_signal_handler(&self) -> Result<(), ShutdownError> {
+    fn start_unix_signal_handler(&self) -> Result<(), ShutdownError> {
         use tokio::signal::unix::{SignalKind, signal};
 
         info!("启动Unix信号处理器");

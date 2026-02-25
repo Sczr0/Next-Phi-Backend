@@ -210,8 +210,7 @@ impl SystemdWatchdog {
 
                 if interval_secs * 2 >= watchdog_timeout_secs {
                     return Err(format!(
-                        "看门狗间隔时间({}s)过大，应小于systemd看门狗超时时间({}s)的一半",
-                        interval_secs, watchdog_timeout_secs
+                        "看门狗间隔时间({interval_secs}s)过大，应小于systemd看门狗超时时间({watchdog_timeout_secs}s)的一半"
                     ));
                 }
             }

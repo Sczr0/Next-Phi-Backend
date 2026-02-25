@@ -77,9 +77,9 @@ fn parse_allowed_origins(values: &[String]) -> (bool, Vec<HeaderValue>) {
             continue;
         }
         if let Ok(v) = HeaderValue::from_str(value) {
-            origins.push(v)
+            origins.push(v);
         } else {
-            tracing::warn!("CORS allowed_origins 含无效值: {}", value)
+            tracing::warn!("CORS allowed_origins 含无效值: {}", value);
         }
     }
     (any, origins)
@@ -99,9 +99,9 @@ fn parse_allowed_methods(values: &[String]) -> (bool, Vec<Method>) {
         }
         let normalized = value.to_ascii_uppercase();
         if let Ok(m) = Method::from_bytes(normalized.as_bytes()) {
-            methods.push(m)
+            methods.push(m);
         } else {
-            tracing::warn!("CORS allowed_methods 含无效值: {}", value)
+            tracing::warn!("CORS allowed_methods 含无效值: {}", value);
         }
     }
     (any, methods)
@@ -121,9 +121,9 @@ fn parse_header_names(label: &str, values: &[String]) -> (bool, Vec<header::Head
         }
         let normalized = value.to_ascii_lowercase();
         if let Ok(h) = header::HeaderName::from_bytes(normalized.as_bytes()) {
-            headers.push(h)
+            headers.push(h);
         } else {
-            tracing::warn!("CORS {} 含无效值: {}", label, value)
+            tracing::warn!("CORS {} 含无效值: {}", label, value);
         }
     }
     (any, headers)

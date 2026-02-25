@@ -1552,8 +1552,8 @@ where
     tracing::info!(
         "SVG生成分段: defs={:?}, ap={:?}, main={:?}, 总计={:?}",
         t_defs,
-        t_after_ap - t_after_defs,
-        t_after_main - t_after_ap,
+        t_after_ap.saturating_sub(t_after_defs),
+        t_after_main.saturating_sub(t_after_ap),
         t0.elapsed(),
     );
 
@@ -1642,8 +1642,8 @@ pub fn render_svg_to_png(svg_data: &str, is_user_generated: bool) -> Result<Vec<
     tracing::info!(
         "PNG渲染内部分段: 解析={:?}, 栅格化={:?}, 编码={:?}, 总计={:?}",
         t_parse,
-        t_raster - t_parse,
-        t_encode - t_raster,
+        t_raster.saturating_sub(t_parse),
+        t_encode.saturating_sub(t_raster),
         t_encode
     );
 
@@ -2451,7 +2451,7 @@ pub fn generate_song_svg_string(
     tracing::info!(
         "SVG(单曲)生成分段: defs={:?}, body={:?}, 总计={:?}",
         t_defs_song,
-        t_body_song - t_defs_song,
+        t_body_song.saturating_sub(t_defs_song),
         t0.elapsed(),
     );
 
