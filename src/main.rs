@@ -374,7 +374,7 @@ async fn main() {
         })
         .await
         {
-            Ok(_) => {
+            Ok(()) => {
                 tracing::info!("优雅退出完成");
             }
             Err(_) => {

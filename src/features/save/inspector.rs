@@ -232,7 +232,7 @@ pub async fn inspect_official_save(
 
     Ok(InspectReport {
         generated_at: now,
-        taptap_version: taptap_version.map(|s| s.to_string()),
+        taptap_version: taptap_version.map(std::string::ToString::to_string),
         meta: SaveMetaReport {
             download_url: url_report,
             updated_at,

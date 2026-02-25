@@ -85,6 +85,7 @@ async fn cache_put_session_auth(token: String, value: UnifiedSaveRequest, expire
     );
 }
 
+#[must_use] 
 pub fn has_auth_credentials(auth: &UnifiedSaveRequest) -> bool {
     auth.session_token.is_some() || auth.external_credentials.is_some()
 }
@@ -126,6 +127,7 @@ pub fn resolve_expected_exchange_secret(
     ))
 }
 
+#[must_use] 
 pub fn resolve_exchange_secret(headers: &axum::http::HeaderMap) -> Option<String> {
     headers
         .get("x-exchange-secret")

@@ -21,12 +21,13 @@ pub struct ChartRankingScore {
 ///
 /// 参数 `accuracy` 采用小数形式（例如 98.5% -> 0.985）。
 /// 当 `accuracy` < 0.70 时，直接返回 0.0。
+#[must_use] 
 pub fn calculate_single_chart_rks(accuracy: f32, chart_constant: f32) -> f64 {
-    let acc = accuracy as f64;
+    let acc = f64::from(accuracy);
     if acc < 0.70 {
         return 0.0;
     }
-    let level = chart_constant as f64;
+    let level = f64::from(chart_constant);
     let ratio = ((100.0 * acc) - 55.0) / 45.0;
     let score = (ratio * ratio) * level;
     if score.is_finite() && score > 0.0 {
@@ -47,6 +48,7 @@ pub struct PlayerRksResult {
 }
 
 /// 根据玩家成绩与定数表计算 B30 与总 RKS（简化口径：Best27 + AP3，允许重叠）
+#[must_use] 
 pub fn calculate_player_rks(
     records: &HashMap<String, Vec<DifficultyRecord>>,
     chart_constants: &ChartConstantsMap,
@@ -133,7 +135,7 @@ fn key_of_difficulty(diff: &Difficulty) -> u8 {
 /// - acc_percent：百分比（0-100+），用于 AP 判定等
 /// - acc_decimal：小数（0-1+），用于公式计算
 fn normalize_accuracy(acc: f32) -> (f64, f32) {
-    let raw = acc as f64;
+    let raw = f64::from(acc);
     if raw <= 1.5 {
         (raw * 100.0, acc)
     } else {
@@ -273,6 +275,7 @@ pub enum PushAccHint {
 
 impl PushAccHint {
     /// 若该结果可用具体 ACC 表示，则返回目标 ACC（百分比）。
+    #[must_use] 
     pub fn target_acc(&self) -> Option<f64> {
         match self {
             Self::TargetAcc { acc } => Some(*acc),
@@ -281,6 +284,7 @@ impl PushAccHint {
     }
 
     /// 兼容旧逻辑：无法区分时以 100.0 表示“推到顶/无法推分”。
+    #[must_use] 
     pub fn as_legacy_acc(&self) -> f64 {
         match self {
             Self::TargetAcc { acc } => *acc,
@@ -320,6 +324,7 @@ pub struct PushAccBatchSolver<'a> {
 }
 
 impl<'a> PushAccBatchSolver<'a> {
+    #[must_use] 
     pub fn new(records: &'a [RksRecord]) -> Self {
         let (current_exact_rks, _rounded) = calculate_player_rks_details(records);
         let target_rks_threshold = target_rks_threshold_from_exact(current_exact_rks);
@@ -327,8 +332,8 @@ impl<'a> PushAccBatchSolver<'a> {
         let total_rks_sum: f64 = records.iter().map(|r| r.rks).sum();
         let sum_first_27: f64 = records.iter().take(27).map(|r| r.rks).sum();
         let sum_first_28: f64 = records.iter().take(28).map(|r| r.rks).sum();
-        let rks_27th = records.get(26).map(|r| r.rks).unwrap_or(0.0);
-        let rks_28th = records.get(27).map(|r| r.rks).unwrap_or(0.0);
+        let rks_27th = records.get(26).map_or(0.0, |r| r.rks);
+        let rks_28th = records.get(27).map_or(0.0, |r| r.rks);
 
         // AP 记录与 rank 映射
         let mut ap_rks_vec = Vec::<f64>::new();
@@ -361,6 +366,7 @@ impl<'a> PushAccBatchSolver<'a> {
     ///
     /// - records 必须按 rks 降序；
     /// - 返回值区分三类：需要具体 ACC / 只能 100 / 无法推分。
+    #[must_use] 
     pub fn solve_for_index(
         &self,
         target_index: usize,
@@ -499,15 +505,15 @@ pub fn fill_push_acc_for_game_record(game_record: &mut HashMap<String, Vec<Diffi
     // 1) 扁平化为引擎记录并按 rks 降序排序（PushAccBatchSolver 依赖排序）。
     let mut all: Vec<RksRecord> = Vec::new();
     for (song_id, diffs) in game_record.iter() {
-        for rec in diffs.iter() {
+        for rec in diffs {
             let Some(cc) = rec.chart_constant else {
                 continue;
             };
-            let mut acc_percent = rec.accuracy as f64;
+            let mut acc_percent = f64::from(rec.accuracy);
             if acc_percent <= 1.5 {
                 acc_percent *= 100.0;
             }
-            let chart_constant = cc as f64;
+            let chart_constant = f64::from(cc);
             all.push(RksRecord {
                 song_id: song_id.clone(),
                 difficulty: rec.difficulty.clone(),
@@ -541,7 +547,7 @@ pub fn fill_push_acc_for_game_record(game_record: &mut HashMap<String, Vec<Diffi
     for (song_id, diffs) in game_record.iter_mut() {
         for rec in diffs.iter_mut() {
             let key = format!("{}-{}", song_id, rec.difficulty);
-            let mut acc_percent = rec.accuracy as f64;
+            let mut acc_percent = f64::from(rec.accuracy);
             if acc_percent <= 1.5 {
                 acc_percent *= 100.0;
             }
@@ -556,7 +562,7 @@ pub fn fill_push_acc_for_game_record(game_record: &mut HashMap<String, Vec<Diffi
                 rec.push_acc_hint = Some(PushAccHint::Unreachable);
                 continue;
             };
-            if (cc as f64) <= 0.0 {
+            if f64::from(cc) <= 0.0 {
                 rec.push_acc = Some(100.0);
                 rec.push_acc_hint = Some(PushAccHint::Unreachable);
                 continue;
@@ -611,6 +617,7 @@ pub fn calculate_player_rks_details(records: &[RksRecord]) -> (f64, f64) {
 }
 
 /// 计算指定谱面的 RKS 值（acc 以百分比传入，如 98.5 表示 98.5%）
+#[must_use] 
 pub fn calculate_chart_rks(acc_percent: f64, constant: f64) -> f64 {
     if acc_percent < 70.0 {
         return 0.0;
@@ -771,6 +778,7 @@ pub fn calculate_target_chart_push_acc(
 
 /// 批量计算给定（已按 rks 降序）的记录列表中每条非 100% 成绩的推分 ACC
 /// 返回键为 `song_id-difficulty` 的映射（值为需要达到的 ACC 百分比）。
+#[must_use] 
 pub fn calculate_all_push_accuracies(sorted_records: &[RksRecord]) -> HashMap<String, f64> {
     let mut map = HashMap::new();
     let solver = PushAccBatchSolver::new(sorted_records);
@@ -788,6 +796,7 @@ pub fn calculate_all_push_accuracies(sorted_records: &[RksRecord]) -> HashMap<St
 }
 
 /// 批量计算推分提示（区分 PhiOnly / Unreachable / 具体 ACC）。
+#[must_use] 
 pub fn calculate_all_push_hints(sorted_records: &[RksRecord]) -> HashMap<String, PushAccHint> {
     let mut map = HashMap::new();
     let solver = PushAccBatchSolver::new(sorted_records);
@@ -1596,7 +1605,7 @@ mod tests {
 
         fill_push_acc_for_game_record(&mut game_record);
 
-        for (song_id, diffs) in game_record.iter() {
+        for (song_id, diffs) in &game_record {
             for rec in diffs {
                 let Some(push) = rec.push_acc else {
                     panic!(
@@ -1611,7 +1620,7 @@ mod tests {
                     );
                 };
                 assert!(push <= 100.0, "push_acc 应 <=100: {push}");
-                let mut current = rec.accuracy as f64;
+                let mut current = f64::from(rec.accuracy);
                 if current <= 1.5 {
                     current *= 100.0;
                 }

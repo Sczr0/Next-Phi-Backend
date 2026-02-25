@@ -9,6 +9,7 @@ impl Default for ImageService {
 
 impl ImageService {
     #[allow(dead_code)]
+    #[must_use] 
     pub fn new() -> Self {
         Self
     }

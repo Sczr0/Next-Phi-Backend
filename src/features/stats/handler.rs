@@ -853,7 +853,7 @@ pub async fn get_stats_summary(
     let status_codes = summary.status_codes.map(|rows| {
         rows.into_iter()
             .filter_map(|r| {
-                if !(0..=u16::MAX as i64).contains(&r.status) {
+                if !(0..=i64::from(u16::MAX)).contains(&r.status) {
                     return None;
                 }
                 Some(StatusCodeSummary {
@@ -959,14 +959,14 @@ fn build_stats_summary_cache_key(
         end_utc.unwrap_or(""),
         feature.unwrap_or(""),
         top,
-        include.routes as u8,
-        include.methods as u8,
-        include.status_codes as u8,
-        include.instances as u8,
-        include.actions as u8,
-        include.latency as u8,
-        include.unique_ips as u8,
-        include.user_kinds as u8,
+        u8::from(include.routes),
+        u8::from(include.methods),
+        u8::from(include.status_codes),
+        u8::from(include.instances),
+        u8::from(include.actions),
+        u8::from(include.latency),
+        u8::from(include.unique_ips),
+        u8::from(include.user_kinds),
     )
 }
 
@@ -1078,7 +1078,7 @@ struct DateBucket {
 }
 
 fn week_start_monday(d: NaiveDate) -> NaiveDate {
-    let delta = d.weekday().num_days_from_monday() as i64;
+    let delta = i64::from(d.weekday().num_days_from_monday());
     d - chrono::Duration::days(delta)
 }
 
@@ -1538,7 +1538,7 @@ async fn query_daily_http(
 
     // totals: sum(route rows) per day, and fill missing days with 0
     if fixed_offset.is_none() {
-        for r in route_rows.iter() {
+        for r in &route_rows {
             let e = totals_map.entry(r.date.clone()).or_insert((0, 0, 0, 0));
             e.0 += r.total;
             e.1 += r.errors;
@@ -1569,7 +1569,7 @@ async fn query_daily_http(
     // DST fallback 的 per-day top limit 在内存应用（fixed-offset 路径已在 SQL 下推）
     if top_per_day > 0 && fixed_offset.is_none() {
         let mut grouped: HashMap<String, Vec<DailyHttpRouteRow>> = HashMap::new();
-        for r in route_rows.into_iter() {
+        for r in route_rows {
             grouped.entry(r.date.clone()).or_default().push(r);
         }
 
@@ -1660,7 +1660,7 @@ fn parse_include_flags(include: Option<&str>) -> IncludeFlags {
             "latency" => flags.latency = true,
             "unique_ips" | "uniqueip" | "uniqueips" | "ips" => flags.unique_ips = true,
             "user_kinds" | "userkind" | "userkinds" | "kinds" | "by_kind" => {
-                flags.user_kinds = true
+                flags.user_kinds = true;
             }
             _ => {}
         }

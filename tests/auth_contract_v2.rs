@@ -126,10 +126,10 @@ async fn exchange_token(secret: &str) -> String {
 
 fn decode_claims(token: &str) -> serde_json::Value {
     let cfg = &AppConfig::global().session;
-    let jwt_secret = if !cfg.jwt_secret.trim().is_empty() {
-        cfg.jwt_secret.clone()
-    } else {
+    let jwt_secret = if cfg.jwt_secret.trim().is_empty() {
         std::env::var("APP_SESSION_JWT_SECRET").expect("APP_SESSION_JWT_SECRET")
+    } else {
+        cfg.jwt_secret.clone()
     };
     let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
     validation.validate_exp = true;
@@ -146,10 +146,10 @@ fn decode_claims(token: &str) -> serde_json::Value {
 
 fn session_jwt_secret() -> String {
     let cfg = &AppConfig::global().session;
-    if !cfg.jwt_secret.trim().is_empty() {
-        cfg.jwt_secret.clone()
-    } else {
+    if cfg.jwt_secret.trim().is_empty() {
         std::env::var("APP_SESSION_JWT_SECRET").expect("APP_SESSION_JWT_SECRET")
+    } else {
+        cfg.jwt_secret.clone()
     }
 }
 

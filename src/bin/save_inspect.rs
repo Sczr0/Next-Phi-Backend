@@ -30,8 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stoken_env = args.stoken_env.as_deref().unwrap_or(DEFAULT_STOKEN_ENV);
     let stoken = std::env::var(stoken_env).map_err(|_| {
         format!(
-            "未找到环境变量 `{}`（建议 PowerShell: `$env:{}='...'`）",
-            stoken_env, stoken_env
+            "未找到环境变量 `{stoken_env}`（建议 PowerShell: `$env:{stoken_env}='...'`）"
         )
     })?;
 
@@ -88,7 +87,7 @@ fn render_text(report: &phi_backend::features::save::inspector::InspectReport) -
             parsed.ranking_score,
             parsed.game_version,
             parsed.avatar.len(),
-            parsed.progress.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")
+            parsed.progress.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",")
         ));
     }
     if let Some(e) = report.meta.summary_parse_error.as_deref() {
@@ -259,7 +258,7 @@ impl Args {
 
 fn print_help() {
     println!(
-        r#"save_inspect（本地诊断工具）
+        r"save_inspect（本地诊断工具）
 
 用法（推荐：通过环境变量提供 stoken）：
   $env:PHI_STOKEN='...'; cargo run --bin save_inspect -- --taptap-version cn
@@ -273,6 +272,6 @@ fn print_help() {
   --preview-bytes N             输出解密后明文前 N 字节（hex，默认 0）
   --max-download-bytes N        限制下载最大字节数（默认 67108864）
   --out PATH                    写入到文件（否则 stdout）
-"#
+"
     );
 }

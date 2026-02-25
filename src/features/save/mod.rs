@@ -21,7 +21,7 @@ pub use provider::SaveSource;
 fn default_save_blocking_parallelism_total() -> usize {
     // /save 路径包含多类 CPU 密集任务；总并发预算需要受控，避免高并发下 blocking 线程池被打满。
     let cpu = std::thread::available_parallelism()
-        .map(|n| n.get())
+        .map(std::num::NonZero::get)
         .unwrap_or(4);
     cpu.clamp(2, 16)
 }

@@ -145,8 +145,7 @@ pub async fn post_rks_history(
     let current_rks = storage
         .get_prev_rks(&user_hash)
         .await?
-        .map(|(rks, _)| rks)
-        .unwrap_or(0.0);
+        .map_or(0.0, |(rks, _)| rks);
 
     // 获取历史最高 RKS
     let peak_rks = storage.get_peak_rks(&user_hash).await?;

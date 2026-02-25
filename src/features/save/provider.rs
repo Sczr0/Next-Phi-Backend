@@ -80,6 +80,7 @@ impl SaveSource {
             session_token: session_token.into(),
         }
     }
+    #[must_use] 
     pub fn external(credentials: ExternalApiCredentials) -> Self {
         Self::ExternalApi { credentials }
     }
@@ -222,7 +223,7 @@ pub async fn get_decrypted_save_from_meta(
                 match name.as_str() {
                     "gameKey" => game_key = Some(super::parser::parse_game_key_entry(&plain)?),
                     "gameProgress" => {
-                        game_progress = Some(super::parser::parse_game_progress_entry(&plain)?)
+                        game_progress = Some(super::parser::parse_game_progress_entry(&plain)?);
                     }
                     "user" => user = Some(super::parser::parse_user_entry(&plain)?),
                     "settings" => settings = Some(super::parser::parse_settings_entry(&plain)?),
@@ -309,8 +310,7 @@ async fn download_encrypted_save(url: &str, max_bytes: usize) -> Result<Bytes, S
         total = total.saturating_add(chunk.len());
         if total > max_bytes {
             return Err(SaveProviderError::Io(format!(
-                "download too large: bytes={} exceeds limit={max_bytes}",
-                total
+                "download too large: bytes={total} exceeds limit={max_bytes}"
             )));
         }
         out.extend_from_slice(&chunk);
@@ -348,7 +348,7 @@ fn try_decompress(bytes: Bytes, max_decompress_bytes: usize) -> Result<Bytes, Sa
     let mut z = ZlibDecoder::new(raw);
     let mut out = Vec::with_capacity(raw.len().min(DECOMPRESS_PREALLOC_CAP));
     match read_to_end_limited(&mut z, &mut out, max_decompress_bytes, "zlib 解压输出超限") {
-        Ok(_) => Ok(Bytes::from(out)),
+        Ok(()) => Ok(Bytes::from(out)),
         Err(_) => Ok(bytes),
     }
 }
@@ -369,8 +369,7 @@ fn read_to_end_limited<R: Read>(
         total = total.saturating_add(n);
         if total > limit {
             return Err(SaveProviderError::Io(format!(
-                "{err_label}: bytes={} exceeds limit={limit}",
-                total
+                "{err_label}: bytes={total} exceeds limit={limit}"
             )));
         }
         out.extend_from_slice(&buf[..n]);

@@ -283,8 +283,7 @@ impl Args {
                     idx += 1;
                     base_url = Some(
                         argv.get(idx)
-                            .ok_or_else(|| CliError::Args("缺少 --base-url 的值".to_string()))?
-                            .to_string(),
+                            .ok_or_else(|| CliError::Args("缺少 --base-url 的值".to_string()))?.clone(),
                     );
                     idx += 1;
                 }
@@ -292,8 +291,7 @@ impl Args {
                     idx += 1;
                     token = Some(
                         argv.get(idx)
-                            .ok_or_else(|| CliError::Args("缺少 --token 的值".to_string()))?
-                            .to_string(),
+                            .ok_or_else(|| CliError::Args("缺少 --token 的值".to_string()))?.clone(),
                     );
                     idx += 1;
                 }
@@ -301,8 +299,7 @@ impl Args {
                     idx += 1;
                     token_env = argv
                         .get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --token-env 的值".to_string()))?
-                        .to_string();
+                        .ok_or_else(|| CliError::Args("缺少 --token-env 的值".to_string()))?.clone();
                     idx += 1;
                 }
                 "--timeout-secs" => {
@@ -383,8 +380,7 @@ fn parse_users_cmd(rest: &[String]) -> Result<UsersCmd, CliError> {
                 idx += 1;
                 cmd.status = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --status 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --status 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -392,8 +388,7 @@ fn parse_users_cmd(rest: &[String]) -> Result<UsersCmd, CliError> {
                 idx += 1;
                 cmd.alias = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --alias 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --alias 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -460,8 +455,7 @@ fn parse_suspicious_cmd(rest: &[String]) -> Result<SuspiciousCmd, CliError> {
                 idx += 1;
                 cmd.status = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --status 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --status 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -469,8 +463,7 @@ fn parse_suspicious_cmd(rest: &[String]) -> Result<SuspiciousCmd, CliError> {
                 idx += 1;
                 cmd.alias = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --alias 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --alias 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -499,8 +492,7 @@ fn parse_set_status_cmd(rest: &[String]) -> Result<SetStatusCmd, CliError> {
                 idx += 1;
                 user_hash = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --user-hash 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --user-hash 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -508,8 +500,7 @@ fn parse_set_status_cmd(rest: &[String]) -> Result<SetStatusCmd, CliError> {
                 idx += 1;
                 status = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --status 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --status 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -517,8 +508,7 @@ fn parse_set_status_cmd(rest: &[String]) -> Result<SetStatusCmd, CliError> {
                 idx += 1;
                 reason = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --reason 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --reason 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -552,8 +542,7 @@ fn parse_user_hash_reason_cmd(
                 idx += 1;
                 user_hash = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --user-hash 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --user-hash 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -561,8 +550,7 @@ fn parse_user_hash_reason_cmd(
                 idx += 1;
                 reason = Some(
                     rest.get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --reason 的值".to_string()))?
-                        .to_string(),
+                        .ok_or_else(|| CliError::Args("缺少 --reason 的值".to_string()))?.clone(),
                 );
                 idx += 1;
             }
@@ -583,8 +571,7 @@ fn parse_user_hash_flag(rest: &[String], cmd_name: &str) -> Result<String, CliEr
             idx += 1;
             return Ok(rest
                 .get(idx)
-                .ok_or_else(|| CliError::Args("缺少 --user-hash 的值".to_string()))?
-                .to_string());
+                .ok_or_else(|| CliError::Args("缺少 --user-hash 的值".to_string()))?.clone());
         }
         return Err(CliError::Args(format!(
             "{cmd_name} 不支持参数: {}",

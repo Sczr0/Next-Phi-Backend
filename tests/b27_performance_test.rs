@@ -128,24 +128,22 @@ async fn test_b27_generation_with_flamegraph() {
     use std::collections::HashMap;
 
     let mut all_records: Vec<RenderRecord> = Vec::new();
-    for (song_id, diffs) in parsed.game_record.iter() {
+    for (song_id, diffs) in &parsed.game_record {
         let chart = chart_map.get(song_id);
         let name = song_catalog
             .by_id
-            .get(song_id)
-            .map(|s| s.name.clone())
-            .unwrap_or_else(|| song_id.clone());
+            .get(song_id).map_or_else(|| song_id.clone(), |s| s.name.clone());
 
         for rec in diffs {
             let (dv_opt, diff_str) = match rec.difficulty {
-                Difficulty::EZ => (chart.and_then(|c| c.ez).map(|v| v as f64), "EZ"),
-                Difficulty::HD => (chart.and_then(|c| c.hd).map(|v| v as f64), "HD"),
-                Difficulty::IN => (chart.and_then(|c| c.in_level).map(|v| v as f64), "IN"),
-                Difficulty::AT => (chart.and_then(|c| c.at).map(|v| v as f64), "AT"),
+                Difficulty::EZ => (chart.and_then(|c| c.ez).map(|v| f64::from(v)), "EZ"),
+                Difficulty::HD => (chart.and_then(|c| c.hd).map(|v| f64::from(v)), "HD"),
+                Difficulty::IN => (chart.and_then(|c| c.in_level).map(|v| f64::from(v)), "IN"),
+                Difficulty::AT => (chart.and_then(|c| c.at).map(|v| f64::from(v)), "AT"),
             };
             let Some(dv) = dv_opt else { continue };
 
-            let mut acc_percent = rec.accuracy as f64;
+            let mut acc_percent = f64::from(rec.accuracy);
             if acc_percent <= 1.5 {
                 acc_percent *= 100.0;
             }
@@ -155,7 +153,7 @@ async fn test_b27_generation_with_flamegraph() {
                 song_id: song_id.clone(),
                 song_name: name.clone(),
                 difficulty: diff_str.to_string(),
-                score: Some(rec.score as f64),
+                score: Some(f64::from(rec.score)),
                 acc: acc_percent,
                 rks,
                 difficulty_value: dv,

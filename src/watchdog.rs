@@ -98,6 +98,7 @@ mod systemd_impl {
 
 impl SystemdWatchdog {
     /// 创建新的看门狗管理器
+    #[must_use] 
     pub fn new(config: WatchdogConfig, shutdown_manager: &ShutdownManager) -> Self {
         let shutdown_handle = ShutdownHandle::new(shutdown_manager);
 
@@ -167,7 +168,7 @@ impl SystemdWatchdog {
                         }
                     }
                     // 定期检查退出信号
-                    _ = tokio::time::sleep(Duration::from_secs(1)) => {
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {
                         if shutdown_handle.is_shutting_down() {
                             info!("看门狗任务检测到退出信号，停止发送心跳");
                             break;

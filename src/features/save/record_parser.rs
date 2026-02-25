@@ -94,7 +94,7 @@ pub fn parse_game_record(
 
     let mut result: HashMap<String, Vec<DifficultyRecord>> = HashMap::with_capacity(obj.len());
 
-    for (song_id, scores_value) in obj.iter() {
+    for (song_id, scores_value) in obj {
         let arr = scores_value
             .as_array()
             .ok_or_else(|| format!("scores for '{song_id}' must be a JSON array"))?;
@@ -157,7 +157,7 @@ pub fn parse_game_record(
             });
         }
 
-        result.insert(song_id.to_string(), records);
+        result.insert(song_id.clone(), records);
     }
 
     Ok(result)

@@ -72,8 +72,7 @@ impl SongCatalog {
         let hay_len = hay_lower.len() as i32;
         let extra_len_penalty = (hay_len - q_len).clamp(0, 200); // 越长越不相关（上限避免过度影响）
         let pos_bonus = pos
-            .map(|p| (200_i32 - (p as i32).min(200)).max(0))
-            .unwrap_or(0); // 命中越靠前越优
+            .map_or(0, |p| (200_i32 - (p as i32).min(200)).max(0)); // 命中越靠前越优
 
         match kind {
             SearchMatchKind::NameEquals => 6000,
@@ -98,7 +97,7 @@ impl SongCatalog {
         let mut seen: HashSet<&str> = HashSet::new(); // 基于 id 去重
 
         // 官方名：等于（忽略大小写）
-        for (item, name_lower) in self.search_cache_name_lower.iter() {
+        for (item, name_lower) in &self.search_cache_name_lower {
             if item.name.eq_ignore_ascii_case(q) && seen.insert(item.id.as_str()) {
                 on_match(
                     item,
@@ -108,7 +107,7 @@ impl SongCatalog {
             }
         }
         // 官方名：前缀包含（忽略大小写）
-        for (item, name_lower) in self.search_cache_name_lower.iter() {
+        for (item, name_lower) in &self.search_cache_name_lower {
             if name_lower.starts_with(q_lower.as_str()) && seen.insert(item.id.as_str()) {
                 on_match(
                     item,
@@ -118,7 +117,7 @@ impl SongCatalog {
             }
         }
         // 官方名：子串包含（忽略大小写）
-        for (item, name_lower) in self.search_cache_name_lower.iter() {
+        for (item, name_lower) in &self.search_cache_name_lower {
             if let Some(pos) = name_lower.find(q_lower.as_str())
                 && seen.insert(item.id.as_str())
             {
@@ -136,11 +135,11 @@ impl SongCatalog {
         }
 
         // 别名：等于（忽略大小写）
-        for (nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
+        for (nick, nick_lower, list) in &self.search_cache_nick_lower {
             if nick.eq_ignore_ascii_case(q) {
                 let score =
                     Self::score_match(SearchMatchKind::NickEquals, &q_lower, nick_lower, Some(0));
-                for item in list.iter() {
+                for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickEquals, score);
                     }
@@ -148,11 +147,11 @@ impl SongCatalog {
             }
         }
         // 别名：前缀包含（忽略大小写）
-        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
+        for (_nick, nick_lower, list) in &self.search_cache_nick_lower {
             if nick_lower.starts_with(q_lower.as_str()) {
                 let score =
                     Self::score_match(SearchMatchKind::NickPrefix, &q_lower, nick_lower, Some(0));
-                for item in list.iter() {
+                for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickPrefix, score);
                     }
@@ -160,7 +159,7 @@ impl SongCatalog {
             }
         }
         // 别名：子串包含（忽略大小写）
-        for (_nick, nick_lower, list) in self.search_cache_nick_lower.iter() {
+        for (_nick, nick_lower, list) in &self.search_cache_nick_lower {
             if let Some(pos) = nick_lower.find(q_lower.as_str()) {
                 let score = Self::score_match(
                     SearchMatchKind::NickContains,
@@ -168,7 +167,7 @@ impl SongCatalog {
                     nick_lower,
                     Some(pos),
                 );
-                for item in list.iter() {
+                for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickContains, score);
                     }
@@ -180,6 +179,7 @@ impl SongCatalog {
     /// 分页查询：返回当前页 items 与 total（总命中数）。
     ///
     /// 设计目标：避免 HTTP 层“先全量构建 Vec 再切片”的不必要分配；同时保持与 `search()` 一致的排序语义。
+    #[must_use] 
     pub fn search_page(&self, query: &str, offset: u32, limit: u32) -> (Vec<Arc<SongInfo>>, usize) {
         let q = query.trim();
         if q.is_empty() {
@@ -272,6 +272,7 @@ impl SongCatalog {
     /// 当 ID 精确命中时，直接返回唯一结果；否则按以下优先级合并并去重：
     /// 1) 官方名：等于(忽略大小写) -> 前缀包含 -> 子串包含
     /// 2) 别名：等于(忽略大小写) -> 前缀包含 -> 子串包含
+    #[must_use] 
     pub fn search(&self, query: &str) -> Vec<Arc<SongInfo>> {
         let (items, _total) = self.search_page(query, 0, u32::MAX);
         items
@@ -387,6 +388,7 @@ impl SongCatalog {
     }
 
     /// 多关键词查询，支持 AND / OR、NOT（前缀 `-`）、短语（双引号），忽略大小写与前缀/子串匹配。
+    #[must_use] 
     pub fn search_multi(
         &self,
         query: &str,
@@ -399,7 +401,7 @@ impl SongCatalog {
         }
 
         // 预备集合
-        let all_ids: HashSet<&str> = self.by_id.keys().map(|s| s.as_str()).collect();
+        let all_ids: HashSet<&str> = self.by_id.keys().map(std::string::String::as_str).collect();
 
         // 计算每个 token 匹配到的歌曲 ID 集合
         let mut positives: Vec<HashSet<&str>> = Vec::new();

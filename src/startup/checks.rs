@@ -70,13 +70,13 @@ pub async fn run_startup_checks(config: &AppConfig) -> Result<(), AppError> {
 fn ensure_resources_folder(config: &AppConfig) -> Result<(), AppError> {
     let resources_path = config.resources_path();
 
-    if !resources_path.exists() {
+    if resources_path.exists() {
+        tracing::info!("✅ resources 文件夹已存在");
+    } else {
         tracing::warn!("📁 未找到 resources 文件夹，正在创建: {:?}", resources_path);
         fs::create_dir_all(&resources_path)
             .map_err(|e| AppError::Internal(format!("创建 resources 文件夹失败: {e}")))?;
         tracing::info!("✅ resources 文件夹创建成功");
-    } else {
-        tracing::info!("✅ resources 文件夹已存在");
     }
 
     Ok(())
@@ -198,26 +198,23 @@ fn update_repository(path: &Path) -> Result<(), AppError> {
         tracing::info!("🔁 正在快速前进更新...");
         // 快速前进合并逻辑
         let refname = "refs/heads/main";
-        match repo.find_reference(refname) {
-            Ok(mut r) => {
+        if let Ok(mut r) = repo.find_reference(refname) {
+            r.set_target(fetch_commit.id(), "Fast-Forward")
+                .map_err(|e| AppError::Internal(format!("设置 target 失败: {e}")))?;
+            repo.set_head(refname)
+                .map_err(|e| AppError::Internal(format!("设置 HEAD 失败: {e}")))?;
+            repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+                .map_err(|e| AppError::Internal(format!("Checkout 失败: {e}")))?;
+        } else {
+            // 如果 main 不存在，尝试 master
+            let refname = "refs/heads/master";
+            if let Ok(mut r) = repo.find_reference(refname) {
                 r.set_target(fetch_commit.id(), "Fast-Forward")
                     .map_err(|e| AppError::Internal(format!("设置 target 失败: {e}")))?;
                 repo.set_head(refname)
                     .map_err(|e| AppError::Internal(format!("设置 HEAD 失败: {e}")))?;
                 repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
                     .map_err(|e| AppError::Internal(format!("Checkout 失败: {e}")))?;
-            }
-            Err(_) => {
-                // 如果 main 不存在，尝试 master
-                let refname = "refs/heads/master";
-                if let Ok(mut r) = repo.find_reference(refname) {
-                    r.set_target(fetch_commit.id(), "Fast-Forward")
-                        .map_err(|e| AppError::Internal(format!("设置 target 失败: {e}")))?;
-                    repo.set_head(refname)
-                        .map_err(|e| AppError::Internal(format!("设置 HEAD 失败: {e}")))?;
-                    repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-                        .map_err(|e| AppError::Internal(format!("Checkout 失败: {e}")))?;
-                }
             }
         }
     }
@@ -230,10 +227,10 @@ fn ensure_font_resources() -> Result<(), AppError> {
     use std::path::PathBuf;
     let font_dir = PathBuf::from("resources/fonts");
     let required_font = "Source Han Sans & Saira Hybrid-Regular #5446.ttf";
-    if !font_dir.join(required_font).exists() {
-        tracing::warn!("未找到必需字体文件: {}", required_font);
-    } else {
+    if font_dir.join(required_font).exists() {
         tracing::info!("字体存在: {}", required_font);
+    } else {
+        tracing::warn!("未找到必需字体文件: {}", required_font);
     }
     Ok(())
 }

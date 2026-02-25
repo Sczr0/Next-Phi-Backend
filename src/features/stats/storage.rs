@@ -149,6 +149,7 @@ pub struct SummaryIncludeFlags {
 }
 
 impl SummaryIncludeFlags {
+    #[must_use] 
     pub fn any(self) -> bool {
         self.routes
             || self.methods
@@ -160,6 +161,7 @@ impl SummaryIncludeFlags {
             || self.user_kinds
     }
 
+    #[must_use] 
     pub fn any_http(self) -> bool {
         self.routes || self.methods || self.status_codes || self.latency || self.unique_ips
     }
@@ -293,7 +295,7 @@ impl StatsStorage {
     }
 
     pub async fn init_schema(&self) -> Result<(), AppError> {
-        let ddl = r#"
+        let ddl = r"
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts_utc TEXT NOT NULL,
@@ -411,7 +413,7 @@ impl StatsStorage {
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_moderation_flags_user_created ON moderation_flags(user_hash, created_at DESC);
-        "#;
+        ";
         sqlx::query(ddl)
             .execute(&self.pool)
             .await
@@ -449,7 +451,7 @@ impl StatsStorage {
                     .push_bind(&e.feature)
                     .push_bind(&e.action)
                     .push_bind(&e.method)
-                    .push_bind(e.status.map(|v| v as i64))
+                    .push_bind(e.status.map(i64::from))
                     .push_bind(e.duration_ms)
                     .push_bind(&e.user_hash)
                     .push_bind(&e.client_ip_hash)
@@ -541,7 +543,7 @@ impl StatsStorage {
         end_rfc3339: &str,
     ) -> Result<Vec<ArchiveEventRow>, AppError> {
         let rows = sqlx::query(
-            r#"SELECT ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json FROM events WHERE ts_utc BETWEEN ? AND ? ORDER BY ts_utc ASC"#,
+            r"SELECT ts_utc, route, feature, action, method, status, duration_ms, user_hash, client_ip_hash, instance, extra_json FROM events WHERE ts_utc BETWEEN ? AND ? ORDER BY ts_utc ASC",
         )
         .bind(start_rfc3339)
         .bind(end_rfc3339)
@@ -577,7 +579,7 @@ impl StatsStorage {
         method: Option<&str>,
     ) -> Result<Vec<DailyAggRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT date(ts_utc, ?) as date,
                    feature,
                    route,
@@ -591,7 +593,7 @@ impl StatsStorage {
               AND (? IS NULL OR method = ?)
             GROUP BY date, feature, route, method
             ORDER BY date ASC
-        "#,
+        ",
         )
         .bind(modifier)
         .bind(start_utc)
@@ -629,7 +631,7 @@ impl StatsStorage {
         method: Option<&str>,
     ) -> Result<Vec<DailyAggSliceRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT feature,
                    route,
                    method,
@@ -641,7 +643,7 @@ impl StatsStorage {
               AND (? IS NULL OR route = ?)
               AND (? IS NULL OR method = ?)
             GROUP BY feature, route, method
-        "#,
+        ",
         )
         .bind(start_utc)
         .bind(end_utc)
@@ -676,7 +678,7 @@ impl StatsStorage {
         feature: Option<&str>,
     ) -> Result<Vec<DailyFeatureUsageDateRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT date(ts_utc, ?) as date,
                    feature,
                    COUNT(1) as count,
@@ -687,7 +689,7 @@ impl StatsStorage {
               AND (? IS NULL OR feature = ?)
             GROUP BY date, feature
             ORDER BY date ASC
-        "#,
+        ",
         )
         .bind(modifier)
         .bind(start_utc)
@@ -717,7 +719,7 @@ impl StatsStorage {
         feature: Option<&str>,
     ) -> Result<Vec<DailyFeatureUsageSliceRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT feature,
                    COUNT(1) as count,
                    COUNT(DISTINCT user_hash) as unique_users
@@ -726,7 +728,7 @@ impl StatsStorage {
               AND ts_utc BETWEEN ? AND ?
               AND (? IS NULL OR feature = ?)
             GROUP BY feature
-        "#,
+        ",
         )
         .bind(start_utc)
         .bind(end_utc)
@@ -754,7 +756,7 @@ impl StatsStorage {
         end_utc: &str,
     ) -> Result<Vec<DailyDauDateRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT date(ts_utc, ?) as date,
                    COUNT(DISTINCT user_hash) as active_users,
                    COUNT(DISTINCT client_ip_hash) as active_ips
@@ -762,7 +764,7 @@ impl StatsStorage {
             WHERE ts_utc BETWEEN ? AND ?
             GROUP BY date
             ORDER BY date ASC
-        "#,
+        ",
         )
         .bind(modifier)
         .bind(start_utc)
@@ -788,12 +790,12 @@ impl StatsStorage {
         end_utc: &str,
     ) -> Result<(i64, i64), AppError> {
         let r = sqlx::query(
-            r#"
+            r"
             SELECT COUNT(DISTINCT user_hash) as active_users,
                    COUNT(DISTINCT client_ip_hash) as active_ips
             FROM events
             WHERE ts_utc BETWEEN ? AND ?
-        "#,
+        ",
         )
         .bind(start_utc)
         .bind(end_utc)
@@ -816,7 +818,7 @@ impl StatsStorage {
         method: Option<&str>,
     ) -> Result<Vec<LatencyAggBucketRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT date(ts_utc, ?) as bucket,
                    feature,
                    route,
@@ -834,7 +836,7 @@ impl StatsStorage {
               AND (? IS NULL OR method = ?)
             GROUP BY bucket, feature, route, method
             ORDER BY bucket ASC, route ASC, method ASC
-        "#,
+        ",
         )
         .bind(modifier)
         .bind(start_utc)
@@ -874,7 +876,7 @@ impl StatsStorage {
         method: Option<&str>,
     ) -> Result<Vec<LatencyAggSliceRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT feature,
                    route,
                    method,
@@ -891,7 +893,7 @@ impl StatsStorage {
               AND (? IS NULL OR method = ?)
             GROUP BY feature, route, method
             ORDER BY route ASC, method ASC
-        "#,
+        ",
         )
         .bind(start_utc)
         .bind(end_utc)
@@ -931,15 +933,15 @@ impl StatsStorage {
     ) -> Result<Vec<DailyHttpRouteMetricRow>, AppError> {
         let rows = if top_per_day > 0 {
             let mut qb = QueryBuilder::<Sqlite>::new(
-                r#"
+                r"
                 SELECT date, route, method, total, errors, client_errors, server_errors
                 FROM (
                     SELECT date(ts_utc, 
-                "#,
+                ",
             );
             qb.push_bind(modifier)
                 .push(
-                    r#") as date,
+                    r") as date,
                            route,
                            method,
                            COUNT(1) as total,
@@ -947,11 +949,11 @@ impl StatsStorage {
                            COALESCE(SUM(CASE WHEN status BETWEEN 400 AND 499 THEN 1 ELSE 0 END), 0) as client_errors,
                            COALESCE(SUM(CASE WHEN status >= 500 THEN 1 ELSE 0 END), 0) as server_errors,
                            ROW_NUMBER() OVER (
-                               PARTITION BY date(ts_utc, "#,
+                               PARTITION BY date(ts_utc, ",
                 )
                 .push_bind(modifier)
                 .push(
-                    r#")
+                    r")
                                ORDER BY
                                    COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) DESC,
                                    COUNT(1) DESC,
@@ -961,7 +963,7 @@ impl StatsStorage {
                     FROM events
                     WHERE route IS NOT NULL
                       AND status IS NOT NULL
-                      AND ts_utc BETWEEN "#,
+                      AND ts_utc BETWEEN ",
                 )
                 .push_bind(start_utc.to_string())
                 .push(" AND ")
@@ -975,14 +977,14 @@ impl StatsStorage {
             }
 
             qb.push(
-                r#"
-                    GROUP BY date(ts_utc, "#,
+                r"
+                    GROUP BY date(ts_utc, ",
             )
             .push_bind(modifier)
             .push(
-                r#"), route, method
+                r"), route, method
                 ) ranked
-                WHERE rn <= "#,
+                WHERE rn <= ",
             )
             .push_bind(top_per_day)
             .push(" ORDER BY date ASC, errors DESC, total DESC, route ASC, method ASC");
@@ -992,12 +994,12 @@ impl StatsStorage {
                 .map_err(|e| AppError::Internal(format!("daily http routes with offset: {e}")))?
         } else {
             let mut qb = QueryBuilder::<Sqlite>::new(
-                r#"
-                SELECT date(ts_utc, "#,
+                r"
+                SELECT date(ts_utc, ",
             );
             qb.push_bind(modifier)
                 .push(
-                    r#") as date,
+                    r") as date,
                        route,
                        method,
                        COUNT(1) as total,
@@ -1007,7 +1009,7 @@ impl StatsStorage {
                 FROM events
                 WHERE route IS NOT NULL
                   AND status IS NOT NULL
-                  AND ts_utc BETWEEN "#,
+                  AND ts_utc BETWEEN ",
                 )
                 .push_bind(start_utc.to_string())
                 .push(" AND ")
@@ -1021,14 +1023,14 @@ impl StatsStorage {
             }
 
             qb.push(
-                r#"
-                GROUP BY date(ts_utc, "#,
+                r"
+                GROUP BY date(ts_utc, ",
             )
             .push_bind(modifier)
             .push(
-                r#"), route, method
+                r"), route, method
                 ORDER BY date ASC
-            "#,
+            ",
             );
             qb.build()
                 .fetch_all(&self.pool)
@@ -1105,7 +1107,7 @@ impl StatsStorage {
         method: Option<&str>,
     ) -> Result<Vec<DailyHttpRouteMetricSliceRow>, AppError> {
         let rows = sqlx::query(
-            r#"
+            r"
             SELECT route,
                    method,
                    COUNT(1) as total,
@@ -1119,7 +1121,7 @@ impl StatsStorage {
               AND (? IS NULL OR route = ?)
               AND (? IS NULL OR method = ?)
             GROUP BY route, method
-        "#,
+        ",
         )
         .bind(start_utc)
         .bind(end_utc)
@@ -1179,7 +1181,7 @@ impl StatsStorage {
             .map_err(|e| AppError::Internal(format!("summary features: {e}")))?;
         let mut features = Vec::with_capacity(feat_rows.len());
         for r in feat_rows {
-            let f: String = r.try_get("feature").unwrap_or_else(|_| "".into());
+            let f: String = r.try_get("feature").unwrap_or_else(|_| String::new());
             let c: i64 = r.try_get("cnt").unwrap_or(0);
             let last_ts: Option<String> = r.try_get("last_ts").ok();
             features.push(SummaryFeatureRow {
@@ -1308,7 +1310,7 @@ impl StatsStorage {
             let mut out = Vec::with_capacity(rows.len());
             for r in rows {
                 out.push(SummaryRouteRow {
-                    route: r.try_get("route").unwrap_or_else(|_| "".into()),
+                    route: r.try_get("route").unwrap_or_else(|_| String::new()),
                     count: r.try_get("cnt").unwrap_or(0),
                     err_count: r.try_get("err_cnt").unwrap_or(0),
                     last_ts: r.try_get("last_ts").ok(),
@@ -1336,7 +1338,7 @@ impl StatsStorage {
             let mut out = Vec::with_capacity(rows.len());
             for r in rows {
                 out.push(SummaryMethodRow {
-                    method: r.try_get("method").unwrap_or_else(|_| "".into()),
+                    method: r.try_get("method").unwrap_or_else(|_| String::new()),
                     count: r.try_get("cnt").unwrap_or(0),
                 });
             }
@@ -1388,7 +1390,7 @@ impl StatsStorage {
             let mut out = Vec::with_capacity(rows.len());
             for r in rows {
                 out.push(SummaryInstanceRow {
-                    instance: r.try_get("instance").unwrap_or_else(|_| "".into()),
+                    instance: r.try_get("instance").unwrap_or_else(|_| String::new()),
                     count: r.try_get("cnt").unwrap_or(0),
                     last_ts: r.try_get("last_ts").ok(),
                 });
@@ -1416,8 +1418,8 @@ impl StatsStorage {
             let mut out = Vec::with_capacity(rows.len());
             for r in rows {
                 out.push(SummaryActionRow {
-                    feature: r.try_get("feature").unwrap_or_else(|_| "".into()),
-                    action: r.try_get("action").unwrap_or_else(|_| "".into()),
+                    feature: r.try_get("feature").unwrap_or_else(|_| String::new()),
+                    action: r.try_get("action").unwrap_or_else(|_| String::new()),
                     count: r.try_get("cnt").unwrap_or(0),
                     last_ts: r.try_get("last_ts").ok(),
                 });
@@ -1538,7 +1540,7 @@ impl StatsStorage {
         let start_s = DateTime::<Utc>::from_naive_utc_and_offset(start_dt, Utc).to_rfc3339();
         let end_s = DateTime::<Utc>::from_naive_utc_and_offset(end_dt, Utc).to_rfc3339();
 
-        let sql = r#"
+        let sql = r"
             SELECT substr(ts_utc, 1, 10) as date,
                    feature,
                    route,
@@ -1552,7 +1554,7 @@ impl StatsStorage {
               AND (? IS NULL OR method = ?)
             GROUP BY date, feature, route, method
             ORDER BY date ASC
-        "#;
+        ";
         let rows = sqlx::query(sql)
             .bind(&start_s)
             .bind(&end_s)
@@ -1925,7 +1927,7 @@ impl StatsStorage {
         hide: bool,
         now_rfc3339: &str,
     ) -> Result<(), AppError> {
-        let is_hidden_i = if hide { 1_i64 } else { 0_i64 };
+        let is_hidden_i = i64::from(hide);
         sqlx::query(
             "INSERT INTO leaderboard_rks(user_hash,total_rks,user_kind,suspicion_score,is_hidden,created_at,updated_at) VALUES(?,?,?,?,?,?,?)
              ON CONFLICT(user_hash) DO UPDATE SET
@@ -1953,7 +1955,7 @@ impl StatsStorage {
         user_hash: &str,
         hide: bool,
     ) -> Result<(), AppError> {
-        let is_hidden_i = if hide { 1_i64 } else { 0_i64 };
+        let is_hidden_i = i64::from(hide);
         sqlx::query("UPDATE leaderboard_rks SET is_hidden=? WHERE user_hash=?")
             .bind(is_hidden_i)
             .bind(user_hash)
@@ -1999,9 +2001,9 @@ impl StatsStorage {
         show_ap_top3: bool,
         now_rfc3339: &str,
     ) -> Result<(), AppError> {
-        let show_rks_comp_i = if show_rks_composition { 1_i64 } else { 0_i64 };
-        let show_best_top3_i = if show_best_top3 { 1_i64 } else { 0_i64 };
-        let show_ap_top3_i = if show_ap_top3 { 1_i64 } else { 0_i64 };
+        let show_rks_comp_i = i64::from(show_rks_composition);
+        let show_best_top3_i = i64::from(show_best_top3);
+        let show_ap_top3_i = i64::from(show_ap_top3);
         sqlx::query(
             "INSERT INTO user_profile(user_hash,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)
              ON CONFLICT(user_hash) DO NOTHING",
@@ -2043,18 +2045,10 @@ impl StatsStorage {
         alias: &str,
         defaults: UserAliasDefaults<'_>,
     ) -> Result<(), AppError> {
-        let is_public_i = if defaults.is_public { 1_i64 } else { 0_i64 };
-        let show_rks_comp_i = if defaults.show_rks_composition {
-            1_i64
-        } else {
-            0_i64
-        };
-        let show_best_top3_i = if defaults.show_best_top3 {
-            1_i64
-        } else {
-            0_i64
-        };
-        let show_ap_top3_i = if defaults.show_ap_top3 { 1_i64 } else { 0_i64 };
+        let is_public_i = i64::from(defaults.is_public);
+        let show_rks_comp_i = i64::from(defaults.show_rks_composition);
+        let show_best_top3_i = i64::from(defaults.show_best_top3);
+        let show_ap_top3_i = i64::from(defaults.show_ap_top3);
         let res = sqlx::query(
             "INSERT INTO user_profile(user_hash,alias,is_public,show_rks_composition,show_best_top3,show_ap_top3,user_kind,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)
              ON CONFLICT(user_hash) DO UPDATE SET alias=excluded.alias, updated_at=excluded.updated_at",

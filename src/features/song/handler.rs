@@ -124,7 +124,7 @@ pub async fn search_songs(
         )));
     }
 
-    let unique = params.unique.as_deref().map(parse_bool).unwrap_or(false);
+    let unique = params.unique.as_deref().is_some_and(parse_bool);
 
     let limit = match params.limit {
         None => DEFAULT_LIMIT,

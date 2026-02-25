@@ -54,7 +54,7 @@ impl StatsHandle {
         };
 
         match tokio::time::timeout(timeout, wait).await {
-            Ok(_) => {
+            Ok(()) => {
                 tracing::info!("统计服务已关闭");
                 Ok(())
             }
@@ -63,6 +63,7 @@ impl StatsHandle {
     }
 
     /// 检查统计服务是否仍在运行
+    #[must_use] 
     pub fn is_closed(&self) -> bool {
         self.tx.is_closed()
     }
@@ -166,44 +167,41 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
                 }
                 // 接收到新事件或通道关闭
                 result = rx.recv() => {
-                    match result {
-                        Some(evt) => {
+                    if let Some(evt) = result {
+                        buf.push(evt);
+                        if buf.len() >= batch_size {
+                            if let Err(e) = writer_storage.insert_events(&buf).await {
+                                tracing::warn!("stats insert batch failed: {}", e);
+                            }
+                            buf.clear();
+                            last = Instant::now();
+                        }
+                    } else {
+                        tracing::info!("统计事件通道关闭，处理剩余事件...");
+                        // 处理剩余的所有事件
+                        while let Ok(evt) = rx.try_recv() {
                             buf.push(evt);
                             if buf.len() >= batch_size {
                                 if let Err(e) = writer_storage.insert_events(&buf).await {
-                                    tracing::warn!("stats insert batch failed: {}", e);
-                                }
-                                buf.clear();
-                                last = Instant::now();
-                            }
-                        }
-                        None => {
-                            tracing::info!("统计事件通道关闭，处理剩余事件...");
-                            // 处理剩余的所有事件
-                            while let Ok(evt) = rx.try_recv() {
-                                buf.push(evt);
-                                if buf.len() >= batch_size {
-                                    if let Err(e) = writer_storage.insert_events(&buf).await {
-                                        tracing::warn!("stats final batch insert failed: {}", e);
-                                    }
-                                    buf.clear();
-                                }
-                            }
-                            // 处理最后一批事件
-                            if !buf.is_empty() {
-                                if let Err(e) = writer_storage.insert_events(&buf).await {
-                                    tracing::warn!("stats final flush failed: {}", e);
+                                    tracing::warn!("stats final batch insert failed: {}", e);
                                 }
                                 buf.clear();
                             }
-                            tracing::info!("统计事件处理完成");
-                            let _ = done_tx.send(true);
-                            break;
                         }
+                        // 处理最后一批事件
+                        if !buf.is_empty() {
+                            if let Err(e) = writer_storage.insert_events(&buf).await {
+                                tracing::warn!("stats final flush failed: {}", e);
+                            }
+                            buf.clear();
+                        }
+                        tracing::info!("统计事件处理完成");
+                        let _ = done_tx.send(true);
+                        break;
                     }
                 }
                 // 定时刷新
-                _ = sleep(timeout) => {
+                () = sleep(timeout) => {
                     if !buf.is_empty() && last.elapsed() >= flush_interval {
                         if let Err(e) = writer_storage.insert_events(&buf).await {
                             tracing::warn!("stats periodic flush failed: {}", e);
@@ -236,11 +234,13 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
 }
 
 /// HMAC-SHA256(盐, 值) -> hex 前 32 位（16字节）
+#[must_use] 
 pub fn hmac_hex16(salt: &str, value: &str) -> String {
     crate::identity_hash::hmac_hex16(salt, value)
 }
 
 /// 依据 `UnifiedSaveRequest` 推导用户哈希（优先稳定标识）
+#[must_use] 
 pub fn derive_user_identity_from_auth(
     salt_opt: Option<&str>,
     auth: &crate::auth_contract::UnifiedSaveRequest,

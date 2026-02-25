@@ -43,6 +43,7 @@ pub enum ShutdownReason {
 
 impl ShutdownManager {
     /// 创建新的优雅退出管理器
+    #[must_use] 
     pub fn new() -> Self {
         let (reason_tx, _) = broadcast::channel(16);
 
@@ -93,12 +94,9 @@ impl ShutdownManager {
         &self,
         duration: Duration,
     ) -> Result<ShutdownReason, ShutdownError> {
-        match timeout(duration, self.wait_for_shutdown()).await {
-            Ok(reason) => Ok(reason),
-            Err(_) => {
-                warn!("优雅退出超时，准备强制退出");
-                Err(ShutdownError::Timeout)
-            }
+        if let Ok(reason) = timeout(duration, self.wait_for_shutdown()).await { Ok(reason) } else {
+            warn!("优雅退出超时，准备强制退出");
+            Err(ShutdownError::Timeout)
         }
     }
 
@@ -120,7 +118,9 @@ impl ShutdownManager {
             )
             .unwrap_or(true);
 
-        if !was_shutting_down {
+        if was_shutting_down {
+            debug!("重复的退出信号被忽略");
+        } else {
             info!("触发优雅退出: {:?}", reason);
 
             // 发送退出原因
@@ -135,12 +135,11 @@ impl ShutdownManager {
 
             // 通知所有等待者
             self.inner.notify.notify_waiters();
-        } else {
-            debug!("重复的退出信号被忽略");
         }
     }
 
     /// 检查是否正在关闭
+    #[must_use] 
     pub fn is_shutting_down(&self) -> bool {
         self.inner
             .shutting_down
@@ -150,6 +149,7 @@ impl ShutdownManager {
     /// 创建退出原因接收器
     ///
     /// 用于其他组件监听退出事件
+    #[must_use] 
     pub fn subscribe(&self) -> broadcast::Receiver<ShutdownReason> {
         self.inner.reason_tx.subscribe()
     }
@@ -258,6 +258,7 @@ pub struct ShutdownHandle {
 
 impl ShutdownHandle {
     /// 创建新的退出句柄
+    #[must_use] 
     pub fn new(manager: &ShutdownManager) -> Self {
         Self {
             reason_rx: manager.subscribe(),
@@ -275,6 +276,7 @@ impl ShutdownHandle {
     }
 
     /// 检查是否正在关闭
+    #[must_use] 
     pub fn is_shutting_down(&self) -> bool {
         self.manager.is_shutting_down()
     }
@@ -297,12 +299,9 @@ impl ShutdownHandle {
     where
         F: std::future::Future<Output = T>,
     {
-        match timeout(timeout_duration, cleanup_fn).await {
-            Ok(result) => Ok(result),
-            Err(_) => {
-                error!("清理操作超时");
-                Err(ShutdownError::Timeout)
-            }
+        if let Ok(result) = timeout(timeout_duration, cleanup_fn).await { Ok(result) } else {
+            error!("清理操作超时");
+            Err(ShutdownError::Timeout)
         }
     }
 }

@@ -300,12 +300,11 @@ async fn exchange_github_access_token(
 
                 if !status.is_success() {
                     if status.is_server_error() && attempt < retry_count {
-                        sleep(Duration::from_millis(250 * (attempt as u64 + 1))).await;
+                        sleep(Duration::from_millis(250 * (u64::from(attempt) + 1))).await;
                         continue;
                     }
                     return Err(AppError::Auth(format!(
-                        "GitHub token 交换失败: HTTP {}",
-                        status
+                        "GitHub token 交换失败: HTTP {status}"
                     )));
                 }
 
@@ -314,8 +313,7 @@ async fn exchange_github_access_token(
                 if let Some(err_code) = parsed.error {
                     let err_msg = parsed.error_description.unwrap_or_default();
                     return Err(AppError::Auth(format!(
-                        "GitHub token 交换失败: {} {}",
-                        err_code, err_msg
+                        "GitHub token 交换失败: {err_code} {err_msg}"
                     )));
                 }
                 let token = parsed
@@ -326,7 +324,7 @@ async fn exchange_github_access_token(
             }
             Err(e) => {
                 if attempt < retry_count {
-                    sleep(Duration::from_millis(250 * (attempt as u64 + 1))).await;
+                    sleep(Duration::from_millis(250 * (u64::from(attempt) + 1))).await;
                     continue;
                 }
                 return Err(map_reqwest_error("请求 GitHub token 失败", e));
@@ -360,8 +358,7 @@ async fn fetch_github_user(
     let status = resp.status();
     if !status.is_success() {
         return Err(AppError::Auth(format!(
-            "GitHub 用户信息查询失败: HTTP {}",
-            status
+            "GitHub 用户信息查询失败: HTTP {status}"
         )));
     }
     resp.json::<GithubUserResponse>()

@@ -3,6 +3,10 @@ name = "phi-backend"
 version = "0.1.0"
 edition = "2024"
 
+[lints.clippy]
+# 文档注释以中文为主，`doc_markdown` 会产生大量误报并污染注释文本。
+doc_markdown = "allow"
+
 [dependencies]
 # 核心异步与服务框架
 tokio = { version = "1.41", features = ["full"] }

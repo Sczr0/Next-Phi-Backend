@@ -80,7 +80,7 @@ fn client_ip_from_headers(headers: &axum::http::HeaderMap) -> Option<&str> {
     if let Some(ip) = headers
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next().map(|s| s.trim()))
+        .and_then(|v| v.split(',').next().map(str::trim))
         && !ip.is_empty()
     {
         return Some(ip);

@@ -31,7 +31,7 @@ fn map_reqwest_error(context: &'static str, err: reqwest::Error) -> AppError {
 fn parse_taptap_business_error(body: &Value) -> Option<(String, String)> {
     let success = body
         .get("success")
-        .and_then(|v| v.as_bool())
+        .and_then(serde_json::Value::as_bool)
         .unwrap_or(false);
     if success {
         return None;
@@ -189,7 +189,7 @@ impl TapTapClient {
 
         let success = body
             .get("success")
-            .and_then(|v| v.as_bool())
+            .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         if !success {
             let data = body.get("data").cloned().unwrap_or(Value::Null);

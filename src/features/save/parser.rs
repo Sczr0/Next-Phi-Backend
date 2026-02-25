@@ -60,10 +60,10 @@ impl<'a> Reader<'a> {
     fn read_varshort(&mut self) -> Result<i32, SaveProviderError> {
         let b0 = self.read_u8()?;
         if b0 < 0x80 {
-            Ok(b0 as i32)
+            Ok(i32::from(b0))
         } else {
             let b1 = self.read_u8()?;
-            Ok(((b0 as i32 & 0x7F) ^ ((b1 as i32) << 7)) & 0xFFFF)
+            Ok(((i32::from(b0) & 0x7F) ^ (i32::from(b1) << 7)) & 0xFFFF)
         }
     }
     fn read_string(&mut self, end: usize) -> Result<String, SaveProviderError> {
@@ -304,12 +304,12 @@ pub fn parse_settings_entry(entry: &[u8]) -> Result<SettingsParsed, SaveProvider
         enable_hit_sound: (flags & 0b0100) != 0,
         low_resolution_mode: (flags & 0b1000) != 0,
         device_name: r.read_string(0)?,
-        bright: r.read_f32_le()? as f64,
-        music_volume: r.read_f32_le()? as f64,
-        effect_volume: r.read_f32_le()? as f64,
-        hit_sound_volume: r.read_f32_le()? as f64,
-        sound_offset: r.read_f32_le()? as f64,
-        note_scale: r.read_f32_le()? as f64,
+        bright: f64::from(r.read_f32_le()?),
+        music_volume: f64::from(r.read_f32_le()?),
+        effect_volume: f64::from(r.read_f32_le()?),
+        hit_sound_volume: f64::from(r.read_f32_le()?),
+        sound_offset: f64::from(r.read_f32_le()?),
+        note_scale: f64::from(r.read_f32_le()?),
     })
 }
 
@@ -330,9 +330,9 @@ fn deser_map(reader: &mut Reader, end: u8) -> Result<Value, SaveProviderError> {
             let fc = reader.read_u8()?;
             for level in 0..4 {
                 if ((len >> level) & 1) != 0 {
-                    let score = reader.read_i32_le()? as i64;
-                    let acc = reader.read_f32_le()? as f64;
-                    let fc_bit = ((fc >> level) & 1) as i64;
+                    let score = i64::from(reader.read_i32_le()?);
+                    let acc = f64::from(reader.read_f32_le()?);
+                    let fc_bit = i64::from((fc >> level) & 1);
                     arr.push(Value::Number(Number::from(score)));
                     arr.push(Value::Number(
                         Number::from_f64(acc).unwrap_or_else(|| Number::from(0)),
@@ -347,7 +347,7 @@ fn deser_map(reader: &mut Reader, end: u8) -> Result<Value, SaveProviderError> {
         } else {
             for ii in 0..5 {
                 if ((len >> ii) & 1) != 0 {
-                    arr.push(Value::Number(Number::from(reader.read_u8()? as i64)));
+                    arr.push(Value::Number(Number::from(i64::from(reader.read_u8()?))));
                 } else {
                     arr.push(Value::Number(Number::from(0)));
                 }

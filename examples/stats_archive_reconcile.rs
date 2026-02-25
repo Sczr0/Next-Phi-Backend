@@ -178,8 +178,7 @@ fn collect_archived_days(base: &Path) -> Result<BTreeSet<NaiveDate>, AppError> {
             let is_parquet = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("parquet"))
-                .unwrap_or(false);
+                .is_some_and(|e| e.eq_ignore_ascii_case("parquet"));
             if !is_parquet {
                 continue;
             }
@@ -239,8 +238,7 @@ fn count_parquet_files_in_dir(dir: &Path) -> Result<usize, AppError> {
         let is_parquet = path
             .extension()
             .and_then(|e| e.to_str())
-            .map(|e| e.eq_ignore_ascii_case("parquet"))
-            .unwrap_or(false);
+            .is_some_and(|e| e.eq_ignore_ascii_case("parquet"));
         if is_parquet {
             n += 1;
         }
@@ -323,11 +321,11 @@ async fn run() -> Result<(), AppError> {
     println!("archive_dir: {}", archive_dir.display());
     println!("db_days: {}", db_days.len());
     println!("archived_days: {}", archived_days.len());
-    println!("all_rows: {}", all_rows);
-    println!("covered_rows: {}", covered_rows);
-    println!("coverage: {:.2}%", coverage);
+    println!("all_rows: {all_rows}");
+    println!("covered_rows: {covered_rows}");
+    println!("coverage: {coverage:.2}%");
     println!("missing_days(in range): {}", missing.len());
-    println!("missing_rows(in range): {}", missing_rows);
+    println!("missing_rows(in range): {missing_rows}");
     if let Some(d) = args.from_day {
         println!("from: {d}");
     }
@@ -367,13 +365,12 @@ async fn run() -> Result<(), AppError> {
         let part_dir = day_partition_dir(&archive_dir, day);
         let before = count_parquet_files_in_dir(&part_dir)?;
         match archive_one_day(&storage, &arcfg, day).await {
-            Ok(_) => {
+            Ok(()) => {
                 let after = count_parquet_files_in_dir(&part_dir)?;
                 if after <= before {
                     fail_days.push((day, "归档执行成功但未生成新的 parquet 文件".to_string()));
                     eprintln!(
-                        "补档异常: {} (expected_rows={}, before_files={}, after_files={})",
-                        day, expected_rows, before, after
+                        "补档异常: {day} (expected_rows={expected_rows}, before_files={before}, after_files={after})"
                     );
                 } else {
                     ok_days += 1;
@@ -387,7 +384,7 @@ async fn run() -> Result<(), AppError> {
             }
             Err(e) => {
                 fail_days.push((day, e.to_string()));
-                eprintln!("补档失败: {} => {}", day, e);
+                eprintln!("补档失败: {day} => {e}");
             }
         }
     }
@@ -398,7 +395,7 @@ async fn run() -> Result<(), AppError> {
     if !fail_days.is_empty() {
         println!("failed detail:");
         for (d, err) in fail_days {
-            println!("  - {} => {}", d, err);
+            println!("  - {d} => {err}");
         }
         return Err(AppError::Internal("存在补档失败，请修复后重试".into()));
     }

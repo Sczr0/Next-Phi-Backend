@@ -153,7 +153,7 @@ async fn cleanup_archived_hot_events(
         .keys()
         .last()
         .ok_or_else(|| AppError::Internal("无法获取最新统计日期".into()))?;
-    let keep_start = latest_day - chrono::Duration::days((retention_hot_days - 1) as i64);
+    let keep_start = latest_day - chrono::Duration::days(i64::from(retention_hot_days - 1));
     let archived_days = collect_archived_days(Path::new(&arcfg.dir))?;
 
     let mut stats = CleanupStats::default();
@@ -171,8 +171,7 @@ async fn cleanup_archived_hot_events(
             let remain = count_one_day_events(storage, day).await?;
             if remain != 0 {
                 return Err(AppError::Internal(format!(
-                    "清理后仍有残留数据: day={}, remain={}",
-                    day, remain
+                    "清理后仍有残留数据: day={day}, remain={remain}"
                 )));
             }
             stats.deleted_days += 1;
@@ -222,8 +221,7 @@ fn collect_archived_days(base: &Path) -> Result<BTreeSet<NaiveDate>, AppError> {
             let is_parquet = path
                 .extension()
                 .and_then(|e| e.to_str())
-                .map(|e| e.eq_ignore_ascii_case("parquet"))
-                .unwrap_or(false);
+                .is_some_and(|e| e.eq_ignore_ascii_case("parquet"));
             if !is_parquet {
                 continue;
             }
@@ -268,7 +266,7 @@ async fn delete_one_day_in_batches(
         let affected = storage
             .delete_events_in_range_batch(&from, &to, batch_size)
             .await
-            .map_err(|e| AppError::Internal(format!("delete events day {}: {e}", day)))?;
+            .map_err(|e| AppError::Internal(format!("delete events day {day}: {e}")))?;
         if affected == 0 {
             break;
         }
@@ -286,7 +284,7 @@ async fn count_one_day_events(storage: &StatsStorage, day: NaiveDate) -> Result<
     storage
         .count_events_in_range(&from, &to)
         .await
-        .map_err(|e| AppError::Internal(format!("count events day {}: {e}", day)))
+        .map_err(|e| AppError::Internal(format!("count events day {day}: {e}")))
 }
 
 fn parse_today_time(s: &str) -> Option<(u32, u32)> {

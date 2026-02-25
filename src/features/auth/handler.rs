@@ -729,7 +729,7 @@ pub(crate) async fn post_qrcode(
             device_id,
             interval_secs,
             device.expires_in,
-            version.map(|v| v.to_string()),
+            version.map(std::string::ToString::to_string),
         )
         .await;
     tracing::info!(
@@ -786,39 +786,36 @@ pub async fn get_qrcode_status(
     };
 
     let t_cache_get = Instant::now();
-    let current = match state.qrcode_service.get(&qr_id).await {
-        Some(c) => {
-            tracing::info!(
-                target: "phi_backend::auth::performance",
-                route = "/auth/qrcode/:qr_id/status",
-                phase = "cache_get",
-                status = "hit",
-                dur_ms = t_cache_get.elapsed().as_millis(),
-                "auth performance"
-            );
-            c
-        }
-        None => {
-            tracing::info!(
-                target: "phi_backend::auth::performance",
-                route = "/auth/qrcode/:qr_id/status",
-                phase = "cache_get",
-                status = "miss",
-                dur_ms = t_cache_get.elapsed().as_millis(),
-                "auth performance"
-            );
-            log_total("expired_not_found");
-            return Ok(json_no_store(
-                StatusCode::OK,
-                QrCodeStatusResponse {
-                    status: QrCodeStatusValue::Expired,
-                    session_token: None,
-                    error_code: None,
-                    message: Some("二维码不存在或已过期".to_string()),
-                    retry_after: None,
-                },
-            ));
-        }
+    let current = if let Some(c) = state.qrcode_service.get(&qr_id).await {
+        tracing::info!(
+            target: "phi_backend::auth::performance",
+            route = "/auth/qrcode/:qr_id/status",
+            phase = "cache_get",
+            status = "hit",
+            dur_ms = t_cache_get.elapsed().as_millis(),
+            "auth performance"
+        );
+        c
+    } else {
+        tracing::info!(
+            target: "phi_backend::auth::performance",
+            route = "/auth/qrcode/:qr_id/status",
+            phase = "cache_get",
+            status = "miss",
+            dur_ms = t_cache_get.elapsed().as_millis(),
+            "auth performance"
+        );
+        log_total("expired_not_found");
+        return Ok(json_no_store(
+            StatusCode::OK,
+            QrCodeStatusResponse {
+                status: QrCodeStatusValue::Expired,
+                session_token: None,
+                error_code: None,
+                message: Some("二维码不存在或已过期".to_string()),
+                retry_after: None,
+            },
+        ));
     };
 
     match current {

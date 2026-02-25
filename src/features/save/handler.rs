@@ -202,8 +202,7 @@ pub async fn get_save_data(
 
     let calc_rks = params
         .get("calculate_rks")
-        .map(|v| v == "true")
-        .unwrap_or(false);
+        .is_some_and(|v| v == "true");
     // 排行榜写入需要：统计存储开启 + 能识别到用户身份
     let need_leaderboard = state.stats_storage.is_some() && user_hash.is_some();
     let auth_ms = t_auth.elapsed().as_millis() as i64;
@@ -558,7 +557,7 @@ pub async fn get_save_data(
                     None
                 }
             };
-            let prev_rks = prev.as_ref().map(|v| v.0).unwrap_or(0.0);
+            let prev_rks = prev.as_ref().map_or(0.0, |v| v.0);
             // rksJump 用于“相对前值的变化量/异常跳变”判断：去除 f64 计算与存储带来的极小噪声。
             // 说明：1e-9 远小于 UI 常见展示精度（0.01），但足以覆盖 1e-15 量级抖动。
             const RKS_JUMP_EPS: f64 = 1e-9;
@@ -836,8 +835,8 @@ fn compute_grade_counts(
 
     let mut counts = CfcPCountsByDifficulty::default();
 
-    for (_song_id, diffs) in records.iter() {
-        for rec in diffs.iter() {
+    for diffs in records.values() {
+        for rec in diffs {
             let tier = if rec.score == 1_000_000 {
                 Tier::P
             } else if rec.is_full_combo {
@@ -876,7 +875,7 @@ fn compute_grade_counts(
 }
 
 fn normalize_accuracy_percent(acc: f32) -> f64 {
-    let raw = acc as f64;
+    let raw = f64::from(acc);
     if raw <= 1.5 { raw * 100.0 } else { raw }
 }
 
@@ -929,9 +928,7 @@ fn build_textual_details_from_rks(
         state
             .song_catalog
             .by_id
-            .get(sid)
-            .map(|s| s.name.clone())
-            .unwrap_or_else(|| sid.to_string())
+            .get(sid).map_or_else(|| sid.to_string(), |s| s.name.clone())
     };
 
     let to_text = |v: &[ChartRankingScore]| -> Vec<ChartTextItem> {

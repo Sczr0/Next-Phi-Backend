@@ -122,7 +122,7 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
     let nick_map: HashMap<String, Vec<String>> = serde_yaml::from_reader(nick_file)
         .map_err(|e| AppError::Internal(format!("解析 nicklist.yaml 失败: {e}")))?;
 
-    for (song_id, nick_vec) in nick_map.into_iter() {
+    for (song_id, nick_vec) in nick_map {
         match catalog.by_id.get(&song_id) {
             Some(info_arc) => {
                 for nickname in nick_vec {

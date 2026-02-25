@@ -158,8 +158,7 @@ fn mask_user_prefix(hash: &str) -> String {
     let prefix_end = hash
         .char_indices()
         .nth(4)
-        .map(|(i, _)| i)
-        .unwrap_or(hash.len());
+        .map_or(hash.len(), |(i, _)| i);
 
     let mut out = String::with_capacity(prefix_end + 4);
     out.push_str(&hash[..prefix_end]);
@@ -260,9 +259,11 @@ pub async fn get_top(
         last_user_hash = r.try_get::<String, _>("user_hash").ok();
     }
 
-    let details_map = if !lite {
+    let details_map = if lite {
+        HashMap::new()
+    } else {
         let mut detail_users: Vec<String> = Vec::new();
-        for r in rows.iter() {
+        for r in &rows {
             let sbt: i64 = r.try_get("sbt").unwrap_or(0);
             let sat: i64 = r.try_get("sat").unwrap_or(0);
             if (sbt != 0 || sat != 0)
@@ -272,8 +273,6 @@ pub async fn get_top(
             }
         }
         fetch_top3_details_map(storage, &detail_users).await
-    } else {
-        HashMap::new()
     };
 
     for (idx, r) in rows.into_iter().enumerate() {
@@ -410,9 +409,11 @@ pub async fn get_by_rank(
         last_user_hash = r.try_get::<String, _>("user_hash").ok();
     }
 
-    let details_map = if !lite {
+    let details_map = if lite {
+        HashMap::new()
+    } else {
         let mut detail_users: Vec<String> = Vec::new();
-        for r in rows.iter() {
+        for r in &rows {
             let sbt: i64 = r.try_get("sbt").unwrap_or(0);
             let sat: i64 = r.try_get("sat").unwrap_or(0);
             if (sbt != 0 || sat != 0)
@@ -422,8 +423,6 @@ pub async fn get_by_rank(
             }
         }
         fetch_top3_details_map(storage, &detail_users).await
-    } else {
-        HashMap::new()
     };
 
     for (i, r) in rows.into_iter().enumerate() {
@@ -537,7 +536,7 @@ pub async fn post_me(
         if let Some((score, updated)) = storage.get_prev_rks(&user_hash).await? {
             (score, updated)
         } else {
-            (0.0, String::from(""))
+            (0.0, String::new())
         };
 
     let total = storage.count_public_leaderboard_total().await?;
@@ -717,16 +716,16 @@ pub async fn put_profile(
         if v && !crate::config::AppConfig::global().leaderboard.allow_public {
             return Err(AppError::Validation("当前配置禁止公开资料".into()));
         }
-        is_public = Some(if v { 1 } else { 0 });
+        is_public = Some(i64::from(v));
     }
     if let Some(v) = req.show_rks_composition {
-        show_rc = Some(if v { 1 } else { 0 });
+        show_rc = Some(i64::from(v));
     }
     if let Some(v) = req.show_best_top3 {
-        show_b3 = Some(if v { 1 } else { 0 });
+        show_b3 = Some(i64::from(v));
     }
     if let Some(v) = req.show_ap_top3 {
-        show_ap3 = Some(if v { 1 } else { 0 });
+        show_ap3 = Some(i64::from(v));
     }
 
     // Ensure row exists
@@ -1141,7 +1140,7 @@ pub async fn post_admin_user_status(
     Ok(Json(AdminUserStatusResponse {
         user_hash: user_hash.to_string(),
         status,
-        reason: reason_clean.map(|v| v.to_string()),
+        reason: reason_clean.map(std::string::ToString::to_string),
         updated_by: Some(admin),
         updated_at: Some(now),
     }))

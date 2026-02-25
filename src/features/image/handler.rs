@@ -76,7 +76,7 @@ fn format_code(q: &ImageQueryOpts) -> &'static str {
         return "svg";
     }
     match q.format.as_deref() {
-        Some("jpeg") | Some("jpg") => "jpg",
+        Some("jpeg" | "jpg") => "jpg",
         Some("webp") => "webp",
         _ => "png",
     }
@@ -431,7 +431,7 @@ pub async fn render_bn(
             req.n.max(1),
             updated,
             theme_code,
-            if embed_images_effective { 1 } else { 0 },
+            i32::from(embed_images_effective),
             tpl_code,
             fmt_code,
             width_code,
@@ -531,26 +531,24 @@ pub async fn render_bn(
         let join = tokio::task::spawn_blocking(move || {
             let t_flatten = Instant::now();
     let mut all: Vec<RenderRecord> = Vec::new();
-    for (song_id, diffs) in parsed.game_record.iter() {
+    for (song_id, diffs) in &parsed.game_record {
         // 查定数与曲名
         let chart = state.chart_constants.get(song_id);
         let name = state
             .song_catalog
             .by_id
-            .get(song_id)
-            .map(|s| s.name.clone())
-            .unwrap_or_else(|| song_id.clone());
+            .get(song_id).map_or_else(|| song_id.clone(), |s| s.name.clone());
 
         for rec in diffs {
             let (dv_opt, diff_str) = match rec.difficulty {
-                Difficulty::EZ => (chart.and_then(|c| c.ez).map(|v| v as f64), "EZ"),
-                Difficulty::HD => (chart.and_then(|c| c.hd).map(|v| v as f64), "HD"),
-                Difficulty::IN => (chart.and_then(|c| c.in_level).map(|v| v as f64), "IN"),
-                Difficulty::AT => (chart.and_then(|c| c.at).map(|v| v as f64), "AT"),
+                Difficulty::EZ => (chart.and_then(|c| c.ez).map(f64::from), "EZ"),
+                Difficulty::HD => (chart.and_then(|c| c.hd).map(f64::from), "HD"),
+                Difficulty::IN => (chart.and_then(|c| c.in_level).map(f64::from), "IN"),
+                Difficulty::AT => (chart.and_then(|c| c.at).map(f64::from), "AT"),
             };
             let Some(dv) = dv_opt else { continue };
 
-            let mut acc_percent = rec.accuracy as f64;
+            let mut acc_percent = f64::from(rec.accuracy);
             if acc_percent <= 1.5 {
                 acc_percent *= 100.0;
             }
@@ -560,7 +558,7 @@ pub async fn render_bn(
                 song_id: song_id.clone(),
                 song_name: name.clone(),
                 difficulty: diff_str.to_string(),
-                score: Some(rec.score as f64),
+                score: Some(f64::from(rec.score)),
                 acc: acc_percent,
                 rks,
                 difficulty_value: dv,
@@ -628,7 +626,7 @@ pub async fn render_bn(
     // 课题模式等级（优先使用 summaryParsed，其次使用 gameProgress.challengeModeRank）
     let t_challenge_start = Instant::now();
     let challenge_rank = if let Some(sum) = parsed.summary_parsed.as_ref() {
-        Some(sum.challenge_mode_rank as i64)
+        Some(i64::from(sum.challenge_mode_rank))
     } else {
         parsed
             .game_progress
@@ -670,7 +668,7 @@ pub async fn render_bn(
                 .iter()
                 .zip(units.iter())
                 .filter_map(|(val, unit)| {
-                    let u = *val as i64;
+                    let u = i64::from(*val);
                     (u > 0).then(|| format!("{u} {unit}"))
                 })
                 .collect();
@@ -688,9 +686,7 @@ pub async fn render_bn(
     let update_time: DateTime<Utc> = parsed
         .updated_at
         .as_deref()
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map_or_else(Utc::now, |dt| dt.with_timezone(&Utc));
     let time_parse_duration = t_time_start.elapsed();
     tracing::info!(target: "bestn_performance", "更新时间解析完成, 耗时: {:?}ms", time_parse_duration.as_millis());
 
@@ -783,7 +779,7 @@ pub async fn render_bn(
     let t_svg_start = Instant::now();
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
     let theme = req.theme;
-    let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let public_base_url = public_illustration_base_url.map(std::string::ToString::to_string);
     let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
         renderer::generate_svg_string(
@@ -870,7 +866,7 @@ pub async fn render_bn(
                 n,
                 updated,
                 theme_code,
-                if embed_images_effective { 1 } else { 0 },
+                i32::from(embed_images_effective),
                 tpl_code,
                 fmt_code,
                 width_code,
@@ -890,7 +886,7 @@ pub async fn render_bn(
         let total_ms = t_total.elapsed().as_millis() as i64;
         let logic_ms = total_ms.saturating_sub(save_ms).saturating_sub(render_ms);
         let fmt_str = match q.format.as_deref() {
-            Some("jpeg") | Some("jpg") => "jpg",
+            Some("jpeg" | "jpg") => "jpg",
             Some("webp") => "webp",
             _ => "png",
         };
@@ -1078,7 +1074,7 @@ pub async fn render_song(
             song.id,
             updated,
             "d",
-            if embed_images_effective { 1 } else { 0 },
+            i32::from(embed_images_effective),
             tpl_code,
             fmt_code,
             width_code,
@@ -1134,7 +1130,7 @@ pub async fn render_song(
     let parsed = provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone())
         .await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
-    for (sid, diffs) in parsed.game_record.iter() {
+    for (sid, diffs) in &parsed.game_record {
         let chart = state.chart_constants.get(sid);
         for rec in diffs {
             let cc = match rec.difficulty {
@@ -1144,7 +1140,7 @@ pub async fn render_song(
                 Difficulty::AT => chart.and_then(|c| c.at),
             };
             let Some(cc) = cc else { continue };
-            let mut acc_percent = rec.accuracy as f64;
+            let mut acc_percent = f64::from(rec.accuracy);
             if acc_percent <= 1.5 {
                 acc_percent *= 100.0;
             }
@@ -1153,8 +1149,8 @@ pub async fn render_song(
                 difficulty: rec.difficulty.clone(),
                 score: rec.score,
                 acc: acc_percent,
-                rks: crate::rks_contract::engine::calculate_chart_rks(acc_percent, cc as f64),
-                chart_constant: cc as f64,
+                rks: crate::rks_contract::engine::calculate_chart_rks(acc_percent, f64::from(cc)),
+                chart_constant: f64::from(cc),
             });
         }
     }
@@ -1182,7 +1178,7 @@ pub async fn render_song(
             "AT" => levels.at,
             _ => None,
         }
-        .map(|v| v as f64)
+        .map(f64::from)
     };
     for diff in ["EZ", "HD", "IN", "AT"] {
         let dv = map_level(diff);
@@ -1196,12 +1192,12 @@ pub async fn render_song(
             )
         });
         let (score, acc, rks, is_fc) = if let Some(r) = rec {
-            let mut ap = r.accuracy as f64;
+            let mut ap = f64::from(r.accuracy);
             if ap <= 1.5 {
                 ap *= 100.0;
             }
             let rks = dv.map(|v| crate::rks_contract::engine::calculate_chart_rks(ap, v));
-            (Some(r.score as f64), Some(ap), rks, Some(r.is_full_combo))
+            (Some(f64::from(r.score)), Some(ap), rks, Some(r.is_full_combo))
         } else {
             (None, None, None, None)
         };
@@ -1259,9 +1255,7 @@ pub async fn render_song(
     let update_time: DateTime<Utc> = parsed
         .updated_at
         .as_deref()
-        .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-        .map(|dt| dt.with_timezone(&Utc))
-        .unwrap_or_else(Utc::now);
+        .and_then(|s| DateTime::parse_from_rfc3339(s).ok()).map_or_else(Utc::now, |dt| dt.with_timezone(&Utc));
 
     // 优先级：请求体昵称 > users/me 昵称 > 默认
     let display_name = if let Some(n) = req.nickname.clone() {
@@ -1295,7 +1289,7 @@ pub async fn render_song(
     let wait_ms2 = t_wait2.elapsed().as_millis() as i64;
     let t_render2 = Instant::now();
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
-    let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let public_base_url = public_illustration_base_url.map(std::string::ToString::to_string);
     let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
         renderer::generate_song_svg_string(
@@ -1361,7 +1355,7 @@ pub async fn render_song(
                 song.id,
                 updated,
                 "d",
-                if embed_images_effective { 1 } else { 0 },
+                i32::from(embed_images_effective),
                 tpl_code,
                 fmt_code,
                 width_code,
@@ -1376,7 +1370,7 @@ pub async fn render_song(
     if let Some(h) = state.stats.as_ref() {
         let total_ms = t_total.elapsed().as_millis() as i64;
         let fmt_str = match q.format.as_deref() {
-            Some("jpeg") | Some("jpg") => "jpg",
+            Some("jpeg" | "jpg") => "jpg",
             Some("webp") => "webp",
             _ => "png",
         };
@@ -1576,7 +1570,7 @@ pub async fn render_bn_user(
                     "AT" | "at" => info.chart_constants.at,
                     _ => None,
                 };
-                let Some(dv) = dv_opt.map(|v| v as f64) else {
+                let Some(dv) = dv_opt.map(f64::from) else {
                     return Err(AppError::ImageRendererError(format!(
                         "第{}条成绩难度无效或无定数: {} {}",
                         idx + 1,
@@ -1592,7 +1586,7 @@ pub async fn render_bn_user(
                     song_id: info.id.clone(),
                     song_name: info.name.clone(),
                     difficulty: item.difficulty.to_uppercase(),
-                    score: item.score.map(|v| v as f64),
+                    score: item.score.map(f64::from),
                     acc,
                     rks,
                     difficulty_value: dv,
@@ -1738,7 +1732,7 @@ pub async fn render_bn_user(
         .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
 
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
-    let public_base_url = public_illustration_base_url.map(|s| s.to_string());
+    let public_base_url = public_illustration_base_url.map(std::string::ToString::to_string);
     let template_id = q.template.clone();
     let svg = tokio::task::spawn_blocking(move || {
         renderer::generate_svg_string(

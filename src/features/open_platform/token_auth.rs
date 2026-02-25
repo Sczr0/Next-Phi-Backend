@@ -33,6 +33,7 @@ pub struct OpenApiRoutePolicy {
 }
 
 impl OpenApiRoutePolicy {
+    #[must_use] 
     pub const fn new(required_scopes: &'static [&'static str]) -> Self {
         Self { required_scopes }
     }
@@ -176,8 +177,7 @@ fn resolve_route_bucket(req: &Request) -> String {
     let path = req
         .extensions()
         .get::<MatchedPath>()
-        .map(MatchedPath::as_str)
-        .unwrap_or(req.uri().path());
+        .map_or(req.uri().path(), MatchedPath::as_str);
     format!("{method} {path}")
 }
 
@@ -213,7 +213,7 @@ pub async fn snapshot_rate_limit_by_key(
         });
         let total_request_count = buckets
             .iter()
-            .fold(0_u64, |acc, b| acc.saturating_add(b.request_count as u64));
+            .fold(0_u64, |acc, b| acc.saturating_add(u64::from(b.request_count)));
         let bucket_count = buckets.len();
         buckets.truncate(limit);
         return OpenApiRateLimitSnapshot {
@@ -230,7 +230,7 @@ pub async fn snapshot_rate_limit_by_key(
         if bucket.key_id != key_id || window.minute_slot != minute_slot {
             continue;
         }
-        total_request_count = total_request_count.saturating_add(window.count as u64);
+        total_request_count = total_request_count.saturating_add(u64::from(window.count));
         let route_counter = per_route.entry(bucket.route.clone()).or_insert(0);
         *route_counter = route_counter.saturating_add(window.count);
     }

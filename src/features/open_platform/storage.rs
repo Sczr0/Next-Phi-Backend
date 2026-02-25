@@ -214,7 +214,7 @@ impl OpenPlatformStorage {
     }
 
     pub async fn init_schema(&self) -> Result<(), AppError> {
-        let ddl = r#"
+        let ddl = r"
         CREATE TABLE IF NOT EXISTS developers (
           id TEXT PRIMARY KEY,
           github_user_id TEXT NOT NULL UNIQUE,
@@ -266,7 +266,7 @@ impl OpenPlatformStorage {
         CREATE INDEX IF NOT EXISTS idx_api_key_events_key_id ON api_key_events(key_id);
         CREATE INDEX IF NOT EXISTS idx_api_key_events_created_at ON api_key_events(created_at);
         CREATE INDEX IF NOT EXISTS idx_api_key_events_developer_id ON api_key_events(developer_id);
-        "#;
+        ";
 
         sqlx::query(ddl)
             .execute(&self.pool)

@@ -65,6 +65,7 @@ pub struct SaveResponse {
 
 // 示例保留：若后续需要可用于生成示例 JSON
 #[allow(dead_code)]
+#[must_use] 
 pub fn save_response_example() -> serde_json::Value {
     serde_json::json!({
         "data": {

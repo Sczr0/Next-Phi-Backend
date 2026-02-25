@@ -441,7 +441,7 @@ fn url_encode_path_segment(input: &str) -> String {
             out.push(ch);
         } else {
             use std::fmt::Write;
-            let _ = write!(&mut out, "%{:02X}", b);
+            let _ = write!(&mut out, "%{b:02X}");
         }
     }
     out
@@ -786,7 +786,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
 
     // Text content positioning
     let text_x = cover_x + cover_size_w + 15.0; // Padding between cover and text
-    let text_width = (card_width as f64) - text_x - card_padding; // Available width for text
+    let text_width = f64::from(card_width) - text_x - card_padding; // Available width for text
 
     // 新增一个垂直偏移量，用于微调文本块的整体位置
     // 可以调整这个值，直到视觉效果满意为止。数值越大，文本越往下。
@@ -859,10 +859,10 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         // 我们将 U 标签放在序号左边，并留出一些间距
         let rank_text_approx_width = 30.0; // 估算 "#10" 这种文本的宽度
         let u_badge_x =
-            (card_width as f64) - card_padding - rank_text_approx_width - u_badge_width - 5.0;
+            f64::from(card_width) - card_padding - rank_text_approx_width - u_badge_width - 5.0;
         let u_badge_y = level_y - u_badge_height + 4.0; // 与序号的基线对齐 (向下微调2px)
 
-        writeln!(svg, r#"<rect x='{u_badge_x}' y='{u_badge_y}' width='{u_badge_width}' height='{u_badge_height}' rx='{u_badge_radius}' ry='{u_badge_radius}' fill='#888888' />"#).map_err(fmt_err)?;
+        writeln!(svg, r"<rect x='{u_badge_x}' y='{u_badge_y}' width='{u_badge_width}' height='{u_badge_height}' rx='{u_badge_radius}' ry='{u_badge_radius}' fill='#888888' />").map_err(fmt_err)?;
         writeln!(svg, r#"<text x="{}" y="{}" class="text-fc-ap-badge" text-anchor="middle" fill="white">U</text>"#, u_badge_x + u_badge_width / 2.0, u_badge_y + u_badge_height / 2.0 + 4.0).map_err(fmt_err)?;
     }
 
@@ -992,7 +992,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         writeln!(
             svg,
             r#"<text x="{}" y="{:.1}" class="text-rank">{}</text>"#,
-            (card_width as f64) - card_padding,
+            f64::from(card_width) - card_padding,
             level_y + 2.0,
             rank_text
         )
@@ -1051,10 +1051,10 @@ pub fn generate_svg_string(
         + text_block_spacing * 3.0;
     let calculated_card_height = (text_block_height + card_padding_inner * 2.0) as u32;
     let ap_card_start_y = ap_card_padding_outer;
-    let ap_section_height = if !stats.ap_top_3_scores.is_empty() {
-        ap_card_start_y + calculated_card_height + ap_card_padding_outer
-    } else {
+    let ap_section_height = if stats.ap_top_3_scores.is_empty() {
         0
+    } else {
+        ap_card_start_y + calculated_card_height + ap_card_padding_outer
     };
     let rows = (scores.len() as u32).div_ceil(columns);
     let content_height = (calculated_card_height + main_card_padding_outer) * rows.max(1);
@@ -1112,7 +1112,10 @@ pub fn generate_svg_string(
     let _background_fill = "url(#bg-gradient)".to_string(); // Prefix unused variable
 
     let filtered_background_files = get_blur_background_files();
-    if !filtered_background_files.is_empty() {
+    if filtered_background_files.is_empty() {
+        tracing::warn!("找不到任何背景文件用于随机背景");
+        // Fallback to gradient if directory is empty or read failed
+    } else {
         let mut rng = rand::thread_rng();
         if let Some(random_path) = filtered_background_files.choose(&mut rng) {
             // 随机选择一个路径
@@ -1147,9 +1150,6 @@ pub fn generate_svg_string(
             tracing::warn!("无法从背景文件列表中随机选择一个");
             // Fallback to gradient if choose fails (shouldn't happen with non-empty list)
         }
-    } else {
-        tracing::warn!("找不到任何背景文件用于随机背景");
-        // Fallback to gradient if directory is empty or read failed
     }
     // --- 背景图获取结束 ---
 
@@ -1185,7 +1185,7 @@ pub fn generate_svg_string(
     writeln!(svg, r#"<filter id="bg-blur">"#).map_err(fmt_err)?;
     // 调整 stdDeviation 控制模糊程度, 10 是一个比较强的模糊效果
     writeln!(svg, r#"<feGaussianBlur stdDeviation="10" />"#).map_err(fmt_err)?;
-    writeln!(svg, r#"</filter>"#).map_err(fmt_err)?;
+    writeln!(svg, r"</filter>").map_err(fmt_err)?;
 
     // Font style ... (保持不变) ...
     writeln!(svg, "<style>").map_err(fmt_err)?;
@@ -1246,7 +1246,7 @@ pub fn generate_svg_string(
     .map_err(fmt_err)?;
     writeln!(svg, "<stop offset=\"0%\" style=\"stop-color:#555868\" />").map_err(fmt_err)?; // 深灰色
     writeln!(svg, "<stop offset=\"100%\" style=\"stop-color:#333848\" />").map_err(fmt_err)?; // 更深的灰色
-    writeln!(svg, r#"</linearGradient>"#).map_err(fmt_err)?;
+    writeln!(svg, r"</linearGradient>").map_err(fmt_err)?;
 
     // Define AP card stroke gradient
     writeln!(
@@ -1256,7 +1256,7 @@ pub fn generate_svg_string(
     .map_err(fmt_err)?;
     writeln!(svg, "<stop offset=\"0%\" style=\"stop-color:#FFDA63\" />").map_err(fmt_err)?;
     writeln!(svg, "<stop offset=\"100%\" style=\"stop-color:#D1913C\" />").map_err(fmt_err)?;
-    writeln!(svg, r#"</linearGradient>"#).map_err(fmt_err)?;
+    writeln!(svg, r"</linearGradient>").map_err(fmt_err)?;
 
     // 暂时不为白色主题定义更暗的AP渐变
     writeln!(
@@ -1266,7 +1266,7 @@ pub fn generate_svg_string(
     .map_err(fmt_err)?;
     writeln!(svg, "<stop offset=\"0%\" style=\"stop-color:#D4A017\" />").map_err(fmt_err)?; // 更暗的金色
     writeln!(svg, "<stop offset=\"100%\" style=\"stop-color:#B8860B\" />").map_err(fmt_err)?; // 更暗的金色
-    writeln!(svg, r#"</linearGradient>"#).map_err(fmt_err)?;
+    writeln!(svg, r"</linearGradient>").map_err(fmt_err)?;
 
     // Gradients for white theme are now solid colors.
 
@@ -1432,9 +1432,9 @@ pub fn generate_svg_string(
                 is_user_generated: stats.is_user_generated,
                 embed_images,
                 public_illustration_base_url,
-            })?
+            })?;
         }
-        writeln!(svg, r#"</g>"#).map_err(fmt_err)?;
+        writeln!(svg, r"</g>").map_err(fmt_err)?;
     }
     let t_after_ap = t0.elapsed();
 
@@ -1470,12 +1470,12 @@ pub fn generate_svg_string(
             is_user_generated: stats.is_user_generated,
             embed_images,
             public_illustration_base_url,
-        })?
+        })?;
     }
     let t_after_main = t0.elapsed();
 
     // --- Footer ---
-    let footer_y = (total_height - footer_height / 2 + 10) as f64;
+    let footer_y = f64::from(total_height - footer_height / 2 + 10);
     let footer_padding = 40.0;
 
     // 左下角文本
@@ -1495,7 +1495,7 @@ pub fn generate_svg_string(
         writeln!(
             svg,
             r#"<text x="{}" y="{:.1}" class="text-footer" text-anchor="end">{}</text>"#,
-            width as f64 - footer_padding,
+            f64::from(width) - footer_padding,
             footer_y,
             escape_xml(custom_text)
         )
@@ -1770,10 +1770,10 @@ pub fn render_svg_to_jpeg(
     let mut rgb: Vec<u8> = Vec::with_capacity((dst_w as usize) * (dst_h as usize) * 3);
     let mut i = 0;
     while i + 3 < rgba.len() {
-        let r = rgba[i] as u16;
-        let g = rgba[i + 1] as u16;
-        let b = rgba[i + 2] as u16;
-        let a = rgba[i + 3] as u16; // 0..255
+        let r = u16::from(rgba[i]);
+        let g = u16::from(rgba[i + 1]);
+        let b = u16::from(rgba[i + 2]);
+        let a = u16::from(rgba[i + 3]); // 0..255
         // 过黑底合成：c' = c * a/255
         let r_out = ((r * a) / 255) as u8;
         let g_out = ((g * a) / 255) as u8;
@@ -1878,7 +1878,7 @@ pub fn render_svg_to_webp(
     let memory = if lossless {
         encoder.encode_lossless()
     } else {
-        encoder.encode(quality.clamp(1, 100) as f32)
+        encoder.encode(f32::from(quality.clamp(1, 100)))
     };
     Ok(memory.to_vec())
 }
@@ -1929,7 +1929,7 @@ pub async fn render_svg_unified_async(
     webp_quality: Option<u8>,
     webp_lossless: Option<bool>,
 ) -> Result<(Vec<u8>, &'static str), AppError> {
-    let format_owned = format.map(|s| s.to_string());
+    let format_owned = format.map(std::string::ToString::to_string);
     let handle = spawn_blocking(move || {
         render_svg_unified(
             svg,
@@ -2049,11 +2049,11 @@ pub fn generate_song_svg_string(
     let player_info_height = 78.0; // 原来是70.0，增加8px (上下各4px)
 
     // 曲绘尺寸 - 保持2048x1080的比例，但整体缩小
-    let illust_height = height as f64 - padding * 3.0 - player_info_height - 80.0; // 给标题、页脚和曲目名称留出空间
+    let illust_height = f64::from(height) - padding * 3.0 - player_info_height - 80.0; // 给标题、页脚和曲目名称留出空间
     let illust_width = illust_height * (2048.0 / 1080.0); // 保持2048x1080的比例
 
     // 确保曲绘不会超过整体宽度的60%
-    let illust_width = (illust_width).min(width as f64 * 0.60);
+    let illust_width = (illust_width).min(f64::from(width) * 0.60);
 
     // 曲目名称区域高度
     let song_name_height = 50.0;
@@ -2061,7 +2061,7 @@ pub fn generate_song_svg_string(
     let _difficulty_info_height = 40.0; // Prefix unused variable
 
     // 成绩卡尺寸 - 调整为与曲绘总高度一致
-    let card_area_width = width as f64 - illust_width - padding * 3.0;
+    let card_area_width = f64::from(width) - illust_width - padding * 3.0;
     let difficulty_card_width = card_area_width;
     // 总共4张卡片，高度加上3个间距等于曲绘高度
     let difficulty_spacing_total = padding * 0.8 * 3.0; // 3个间距，增加间距
@@ -2088,7 +2088,9 @@ pub fn generate_song_svg_string(
 
     if background_image_href.is_none() {
         // 如果找不到当前曲目的曲绘，则随机选一个
-        if !cover_files.is_empty() {
+        if cover_files.is_empty() {
+            tracing::warn!("找不到任何封面文件用于随机背景");
+        } else {
             let mut rng = rand::thread_rng();
             if let Some(random_path) = cover_files.choose(&mut rng) {
                 if let Some(image_href) =
@@ -2103,8 +2105,6 @@ pub fn generate_song_svg_string(
             } else {
                 tracing::warn!("无法从封面文件列表中随机选择一个");
             }
-        } else {
-            tracing::warn!("找不到任何封面文件用于随机背景");
         }
     }
 
@@ -2113,7 +2113,7 @@ pub fn generate_song_svg_string(
     writeln!(svg, "<defs>").map_err(fmt_err)?;
     // Style
     writeln!(svg, "<style>").map_err(fmt_err)?;
-    writeln!(svg, r#"
+    writeln!(svg, r"
         /* 基本文本样式 */
         .text {{ font-family: '{MAIN_FONT_NAME}', sans-serif; fill: #E0E0E0; }}
         .text-title {{ font-size: 32px; font-weight: bold; fill: #FFFFFF; }}
@@ -2143,7 +2143,7 @@ pub fn generate_song_svg_string(
         .rank-phi {{ fill: gold; }}
         .rank-v {{ fill: silver; }}
         .rank-s {{ fill: #FF6B6B; }}
-    "#).map_err(fmt_err)?;
+    ").map_err(fmt_err)?;
     writeln!(svg, "</style>").map_err(fmt_err)?;
 
     // ... existing gradient and filter definitions ...
@@ -2183,7 +2183,7 @@ pub fn generate_song_svg_string(
     // --- 玩家信息区域（顶部） ---
     let player_info_x = padding;
     let player_info_y = padding;
-    let player_info_width = width as f64 - padding * 2.0;
+    let player_info_width = f64::from(width) - padding * 2.0;
 
     // 玩家信息卡片
     writeln!(svg, r#"<rect x="{player_info_x}" y="{player_info_y}" width="{player_info_width}" height="{player_info_height}" rx="8" ry="8" class="player-info-card" filter="url(#card-shadow)" />"#).map_err(fmt_err)?;
@@ -2206,7 +2206,7 @@ pub fn generate_song_svg_string(
     writeln!(
         svg,
         r#"<text x="{}" y="{}" class="text text-subtitle" text-anchor="end">{}</text>"#,
-        width as f64 - padding - 20.0,
+        f64::from(width) - padding - 20.0,
         player_info_y + 49.0,
         time_str
     )
@@ -2379,7 +2379,7 @@ pub fn generate_song_svg_string(
                 } else if let Some(hint) = score_data.player_push_acc {
                     let push_text = match hint {
                         engine::PushAccHint::TargetAcc { acc } => format!(
-                            r#"<tspan class='text-push-acc' fill='url(#rks-gradient-push)'> -> {acc:.2}%</tspan>"#
+                            r"<tspan class='text-push-acc' fill='url(#rks-gradient-push)'> -> {acc:.2}%</tspan>"
                         ),
                         engine::PushAccHint::PhiOnly => {
                             "<tspan class='text-push-acc' fill='gold'> -> 100.00%</tspan>"
@@ -2417,14 +2417,14 @@ pub fn generate_song_svg_string(
 
     // --- Footer ---
     let t_body_song = t0.elapsed();
-    let footer_y = height as f64 - padding / 2.0;
-    let footer_x = width as f64 - padding;
+    let footer_y = f64::from(height) - padding / 2.0;
+    let footer_x = f64::from(width) - padding;
     let time_str = local_time.format("%Y-%m-%d %H:%M:%S UTC+8").to_string(); // 使用UTC+8表示时区
     let right_text = if let Some(txt) = &data.custom_footer_text {
-        if !txt.is_empty() {
-            escape_xml(txt)
-        } else {
+        if txt.is_empty() {
             format!("Generated by Phi-Backend | {time_str}")
+        } else {
+            escape_xml(txt)
         }
     } else {
         format!("Generated by Phi-Backend | {time_str}")
@@ -2543,7 +2543,7 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
         // 绘制排名
         write!(
             svg,
-            r##"<text x="60" y="{}" class="rank-text">#{}</text>"##,
+            r#"<text x="60" y="{}" class="rank-text">#{}</text>"#,
             y_pos + (row_height / 2) + 10,
             i + 1
         )
@@ -2557,7 +2557,7 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
         };
         write!(
             svg,
-            r##"<text x="120" y="{}" class="name-text">{}</text>"##,
+            r#"<text x="120" y="{}" class="name-text">{}</text>"#,
             y_pos + (row_height / 2) + 10,
             name_display
         )
@@ -2566,7 +2566,7 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
         // 绘制RKS
         write!(
             svg,
-            r##"<text x="{}" y="{}" class="rks-text">{:.2}</text>"##,
+            r#"<text x="{}" y="{}" class="rks-text">{:.2}</text>"#,
             width - 60,
             y_pos + (row_height / 2) + 10,
             entry.rks
