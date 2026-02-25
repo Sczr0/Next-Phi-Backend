@@ -23,6 +23,7 @@ pub struct HealthResponse {
     responses((status = 200, description = "服务健康", body = HealthResponse)),
     tag = "Health"
 )]
+#[allow(clippy::unused_async)]
 pub async fn health_check() -> (StatusCode, Json<HealthResponse>) {
     (
         StatusCode::OK,

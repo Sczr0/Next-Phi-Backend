@@ -1,3 +1,5 @@
+#![allow(clippy::needless_for_each)]
+
 use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
 use utoipa::openapi::server::{ServerBuilder, ServerVariableBuilder};
 use utoipa::{Modify, OpenApi};
@@ -42,6 +44,7 @@ impl Modify for ApiServers {
     }
 }
 
+#[allow(clippy::needless_for_each)]
 #[derive(OpenApi)]
 #[openapi(
     paths(

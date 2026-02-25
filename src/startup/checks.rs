@@ -50,7 +50,7 @@ pub async fn run_startup_checks(config: &AppConfig) -> Result<(), AppError> {
     }
 
     // 检查字体资源（仅告警，不阻断启动）
-    ensure_font_resources()?;
+    ensure_font_resources();
 
     // 预热曲绘索引（目录扫描 + 白主题背景反色预计算），降低首个 SVG 请求的长尾延迟。
     let t_prewarm = std::time::Instant::now();
@@ -120,7 +120,8 @@ fn clone_repository(url: &str, path: &Path) -> Result<(), AppError> {
         let current = progress.received_objects();
         let total = progress.total_objects();
         let percentage = if total > 0 {
-            (current as f64 / total as f64 * 100.0) as u32
+            let pct = current.saturating_mul(100).checked_div(total).unwrap_or(0);
+            u32::try_from(pct).unwrap_or(100)
         } else {
             0
         };
@@ -163,7 +164,8 @@ fn update_repository(path: &Path) -> Result<(), AppError> {
         let current = progress.received_objects();
         let total = progress.total_objects();
         if total > 0 {
-            let percentage = (current as f64 / total as f64 * 100.0) as u32;
+            let pct = current.saturating_mul(100).checked_div(total).unwrap_or(0);
+            let percentage = u32::try_from(pct).unwrap_or(100);
             if percentage > 0 && percentage.is_multiple_of(20) {
                 tracing::debug!("⏫ 更新进度: {}%", percentage);
             }
@@ -223,7 +225,7 @@ fn update_repository(path: &Path) -> Result<(), AppError> {
 }
 
 /// 确保字体文件存在（必要时仅告警）
-fn ensure_font_resources() -> Result<(), AppError> {
+fn ensure_font_resources() {
     use std::path::PathBuf;
     let font_dir = PathBuf::from("resources/fonts");
     let required_font = "Source Han Sans & Saira Hybrid-Regular #5446.ttf";
@@ -232,5 +234,4 @@ fn ensure_font_resources() -> Result<(), AppError> {
     } else {
         tracing::warn!("未找到必需字体文件: {}", required_font);
     }
-    Ok(())
 }

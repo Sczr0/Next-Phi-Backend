@@ -28,7 +28,8 @@ pub type ChartConstantsMap = HashMap<String, ChartConstants>;
 pub fn load_chart_constants(file_path: &Path) -> Result<ChartConstantsMap, AppError> {
     if !file_path.exists() {
         return Err(AppError::Internal(format!(
-            "未找到难度常量文件: {file_path:?}"
+            "未找到难度常量文件: {}",
+            file_path.display()
         )));
     }
 

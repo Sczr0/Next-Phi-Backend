@@ -20,7 +20,7 @@ pub struct TapTapClient {
     config: TapTapMultiConfig,
 }
 
-fn map_reqwest_error(context: &'static str, err: reqwest::Error) -> AppError {
+fn map_reqwest_error(context: &'static str, err: &reqwest::Error) -> AppError {
     if err.is_timeout() {
         AppError::Timeout(format!("{context}: {err}"))
     } else {
@@ -134,10 +134,6 @@ impl TapTapClient {
         match version {
             Some("global") => &self.config.global,
             Some("cn") => &self.config.cn,
-            None => match self.config.default_version {
-                TapTapVersion::CN => &self.config.cn,
-                TapTapVersion::Global => &self.config.global,
-            },
             _ => match self.config.default_version {
                 TapTapVersion::CN => &self.config.cn,
                 TapTapVersion::Global => &self.config.global,
@@ -169,13 +165,13 @@ impl TapTapClient {
             .form(&form)
             .send()
             .await
-            .map_err(|e| map_reqwest_error("设备码请求失败", e))?;
+            .map_err(|e| map_reqwest_error("设备码请求失败", &e))?;
 
         let status = resp.status();
         let body_text = resp
             .text()
             .await
-            .map_err(|e| map_reqwest_error("读取设备码响应体失败", e))?;
+            .map_err(|e| map_reqwest_error("读取设备码响应体失败", &e))?;
 
         if !status.is_success() {
             tracing::warn!("TapTap 设备码请求失败：HTTP {status}");
@@ -255,13 +251,13 @@ impl TapTapClient {
             .form(&form)
             .send()
             .await
-            .map_err(|e| map_reqwest_error("获取 Token 失败", e))?;
+            .map_err(|e| map_reqwest_error("获取 Token 失败", &e))?;
 
         let status = resp.status();
         let body_text = resp
             .text()
             .await
-            .map_err(|e| map_reqwest_error("读取 Token 响应体失败", e))?;
+            .map_err(|e| map_reqwest_error("读取 Token 响应体失败", &e))?;
 
         let parsed_body = serde_json::from_str::<Value>(&body_text);
         if let Ok(body) = &parsed_body
@@ -285,7 +281,7 @@ impl TapTapClient {
             .map_err(|e| AppError::Network(format!("TapTap token 数据解析失败: {e}")))?;
 
         // 查询基本信息
-        let auth_header = self.build_mac_authorization(&token, config.leancloud_app_id.as_str())?;
+        let auth_header = Self::build_mac_authorization(&token, config.leancloud_app_id.as_str())?;
         let account_resp = self
             .client
             .get(format!(
@@ -296,13 +292,13 @@ impl TapTapClient {
             .header("Authorization", auth_header)
             .send()
             .await
-            .map_err(|e| map_reqwest_error("获取账号信息失败", e))?;
+            .map_err(|e| map_reqwest_error("获取账号信息失败", &e))?;
 
         let status = account_resp.status();
         let body_text = account_resp
             .text()
             .await
-            .map_err(|e| map_reqwest_error("读取账号信息响应体失败", e))?;
+            .map_err(|e| map_reqwest_error("读取账号信息响应体失败", &e))?;
         if !status.is_success() {
             tracing::warn!("TapTap 账号信息请求失败：HTTP {status}");
             return Err(AppError::Network(format!(
@@ -351,7 +347,7 @@ impl TapTapClient {
             .json(&auth_data)
             .send()
             .await
-            .map_err(|e| map_reqwest_error("请求 LeanCloud 失败", e))?;
+            .map_err(|e| map_reqwest_error("请求 LeanCloud 失败", &e))?;
 
         let status = lc_resp.status();
         if !status.is_success() {
@@ -368,18 +364,14 @@ impl TapTapClient {
         let user: LcUserResp = lc_resp
             .json()
             .await
-            .map_err(|e| map_reqwest_error("解析 LeanCloud 响应失败", e))?;
+            .map_err(|e| map_reqwest_error("解析 LeanCloud 响应失败", &e))?;
 
         Ok(SessionData {
             session_token: user.session_token,
         })
     }
 
-    fn build_mac_authorization(
-        &self,
-        token: &Token,
-        leancloud_app_id: &str,
-    ) -> Result<String, AppError> {
+    fn build_mac_authorization(token: &Token, leancloud_app_id: &str) -> Result<String, AppError> {
         let ts = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| AppError::Internal(format!("时间计算失败: {e}")))?
@@ -459,9 +451,8 @@ mod tests {
 
         tokio::spawn(async move {
             loop {
-                let (socket, _) = match listener.accept().await {
-                    Ok(v) => v,
-                    Err(_) => break,
+                let Ok((socket, _)) = listener.accept().await else {
+                    break;
                 };
                 tokio::spawn(async move {
                     // 不返回任何 HTTP 响应，触发客户端 read timeout。
@@ -489,7 +480,7 @@ mod tests {
             .expect_err("expected timeout");
         assert!(err.is_timeout(), "expected reqwest timeout, got: {err}");
 
-        let app_err = super::map_reqwest_error("test", err);
+        let app_err = super::map_reqwest_error("test", &err);
         assert!(
             matches!(app_err, AppError::Timeout(_)),
             "expected AppError::Timeout, got: {app_err:?}"
@@ -514,7 +505,7 @@ mod tests {
             .expect_err("expected connect error");
         assert!(!err.is_timeout(), "unexpected timeout: {err}");
 
-        let app_err = super::map_reqwest_error("test", err);
+        let app_err = super::map_reqwest_error("test", &err);
         assert!(
             matches!(app_err, AppError::Network(_)),
             "expected AppError::Network, got: {app_err:?}"

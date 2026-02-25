@@ -5,6 +5,7 @@ use super::client::ExternalApiCredentials;
 mod float_serialize {
     use serde::Serializer;
 
+    #[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
     pub fn serialize_f32_option<S>(value: &Option<f32>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -20,6 +21,7 @@ mod float_serialize {
         }
     }
 
+    #[allow(clippy::ref_option, clippy::trivially_copy_pass_by_ref)]
     pub fn serialize_f64_option_3<S>(value: &Option<f64>, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,

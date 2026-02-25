@@ -101,6 +101,49 @@ const COVER_ASPECT_RATIO: f64 = 512.0 / 270.0;
 #[allow(dead_code)]
 const SONG_ILLUST_ASPECT_RATIO: f64 = 1.0; // 假设单曲图的插画是方形的
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn round_non_negative_to_u32(value: f64) -> u32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn f32_from_f64(value: f64) -> f32 {
+    value as f32
+}
+
+fn u32_from_usize(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn i32_from_usize(value: usize) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
+}
+
+fn f64_from_usize(value: usize) -> f64 {
+    f64::from(u32_from_usize(value))
+}
+
+fn usize_from_u32(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn scaled_dimensions(src_w: u32, src_h: u32, target_w: Option<u32>) -> (u32, u32, f32) {
+    if let Some(tw) = target_w
+        && tw > 0
+        && tw != src_w
+    {
+        let scale_f64 = f64::from(tw) / f64::from(src_w);
+        let dst_w = round_non_negative_to_u32(f64::from(src_w) * scale_f64).max(1);
+        let dst_h = round_non_negative_to_u32(f64::from(src_h) * scale_f64).max(1);
+        let scale = f32_from_f64(scale_f64);
+        return (dst_w, dst_h, scale);
+    }
+    (src_w, src_h, 1.0)
+}
+
 // 全局字体数据库单例
 static GLOBAL_FONT_DB: OnceLock<Arc<fontdb::Database>> = OnceLock::new();
 
@@ -466,7 +509,6 @@ fn normalize_external_illustration_dir_mode(input: &str) -> ExternalIllustration
 
 fn normalize_external_illustration_ext(input: &str) -> &'static str {
     match input.trim().to_ascii_lowercase().as_str() {
-        "png" => "png",
         "webp" => "webp",
         "avif" => "avif",
         "jpg" | "jpeg" => "jpg",
@@ -623,7 +665,7 @@ fn to_engine_record(record: &RenderRecord) -> Option<engine::RksRecord> {
     let difficulty = to_engine_difficulty(&record.difficulty)?;
     let score = record
         .score
-        .map(|s| s.max(0.0).round() as u32)
+        .map(round_non_negative_to_u32)
         .unwrap_or_default();
     Some(engine::RksRecord {
         song_id: record.song_id.clone(),
@@ -720,7 +762,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
 
     let cover_size_h = text_block_height;
     let cover_size_w = cover_size_h * COVER_ASPECT_RATIO;
-    let card_height = (cover_size_h + card_padding * 2.0) as u32;
+    let card_height = round_non_negative_to_u32(cover_size_h + card_padding * 2.0);
     let card_radius = 8;
 
     let cover_x = card_padding;
@@ -756,8 +798,8 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
     if let Some(href) = cover_href {
         let final_href = if embed_images {
             let pb = PathBuf::from(&href);
-            let w = cover_size_w.max(1.0).round() as u32;
-            let h = cover_size_h.max(1.0).round() as u32;
+            let w = round_non_negative_to_u32(cover_size_w.max(1.0));
+            let h = round_non_negative_to_u32(cover_size_h.max(1.0));
             get_scaled_image_data_uri(&pb, w, h).unwrap_or(href)
         } else {
             href
@@ -897,16 +939,14 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
                     )
                 }
             }
-            Some(engine::PushAccHint::PhiOnly) => format!(
-                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%</tspan>",
-                score.acc
-            ),
+            Some(engine::PushAccHint::PhiOnly | engine::PushAccHint::AlreadyPhi) => {
+                format!(
+                    "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%</tspan>",
+                    score.acc
+                )
+            }
             Some(engine::PushAccHint::Unreachable) => format!(
                 "Acc: {:.2}% <tspan class='push-acc push-acc-unreachable'>-> 无法推分</tspan>",
-                score.acc
-            ),
-            Some(engine::PushAccHint::AlreadyPhi) => format!(
-                "Acc: {:.2}% <tspan class='push-acc push-acc-phi-only'>-> 100.00%</tspan>",
                 score.acc
             ),
             None => format!("Acc: {:.2}%", score.acc),
@@ -957,7 +997,7 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
         Theme::Black => ("url(#ap-gradient)", "#87CEEB", "white", "white"),
     };
 
-    if score.acc == 100.0 {
+    if (score.acc - 100.0).abs() < f64::EPSILON {
         // 仅显示 AP
         let ap_badge_x = badge_x + badge_width + fc_ap_badge_spacing;
         let ap_badge_y = badge_y;
@@ -1005,23 +1045,26 @@ fn generate_card_svg(info: CardRenderInfo) -> Result<(), AppError> {
 
 // --- SVG 生成函数 ---
 
-pub fn generate_svg_string(
+pub fn generate_svg_string<S>(
     scores: &[RenderRecord],
     stats: &PlayerStats,
-    push_acc_map: Option<&HashMap<String, engine::PushAccHint>>, // 新增：预先计算的推分提示映射，键为"曲目ID-难度"
+    push_acc_map: Option<&HashMap<String, engine::PushAccHint, S>>, // 新增：预先计算的推分提示映射，键为"曲目ID-难度"
     theme: &Theme,                                               // 新增：主题参数
     embed_images: bool,
     // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
     public_illustration_base_url: Option<&str>,
     // 外部模板 ID：对应 `resources/templates/image/bn/{id}.svg.jinja`（为空则使用内置手写 SVG 实现）。
     template_id: Option<&str>,
-) -> Result<String, AppError> {
+) -> Result<String, AppError>
+where
+    S: std::hash::BuildHasher,
+{
     if template_id.is_some() {
         return svg_templates::generate_bn_svg_with_template(
             scores,
             stats,
             push_acc_map,
-            theme,
+            *theme,
             embed_images,
             public_illustration_base_url,
             template_id,
@@ -1031,7 +1074,6 @@ pub fn generate_svg_string(
     // ... (width, height calculations etc. - keep these as they were) ...
     let width = 1200;
     let header_height = 120;
-    let _ap_title_height = 50; // Prefix unused variable
     let footer_height = 50;
     let main_card_padding_outer = 12;
     let ap_card_padding_outer = 12;
@@ -1049,14 +1091,14 @@ pub fn generate_svg_string(
         + text_line_height_acc
         + text_line_height_level
         + text_block_spacing * 3.0;
-    let calculated_card_height = (text_block_height + card_padding_inner * 2.0) as u32;
+    let calculated_card_height = round_non_negative_to_u32(text_block_height + card_padding_inner * 2.0);
     let ap_card_start_y = ap_card_padding_outer;
     let ap_section_height = if stats.ap_top_3_scores.is_empty() {
         0
     } else {
         ap_card_start_y + calculated_card_height + ap_card_padding_outer
     };
-    let rows = (scores.len() as u32).div_ceil(columns);
+    let rows = u32_from_usize(scores.len()).div_ceil(columns);
     let content_height = (calculated_card_height + main_card_padding_outer) * rows.max(1);
     let total_height = header_height + ap_section_height + content_height + footer_height + 10;
 
@@ -1408,8 +1450,8 @@ pub fn generate_svg_string(
         )
         .map_err(fmt_err)?;
         for (idx, score) in stats.ap_top_3_scores.iter().take(3).enumerate() {
-            let x_pos =
-                ap_card_padding_outer + idx as u32 * (main_card_width + ap_card_padding_outer);
+            let x_pos = ap_card_padding_outer
+                + u32_from_usize(idx) * (main_card_width + ap_card_padding_outer);
 
             // AP Top 3 卡片可能不需要推分ACC（因为已经是100%），但为了统一处理，也获取一下
             let push_acc = push_acc_map.and_then(|map| {
@@ -1441,8 +1483,9 @@ pub fn generate_svg_string(
     // --- Main Score Cards Section --- (保持不变) ...
     let main_content_start_y = header_height + ap_section_height + 15;
     for (index, score) in scores.iter().enumerate() {
-        let row = index as u32 / columns;
-        let col = index as u32 % columns;
+        let idx_u32 = u32_from_usize(index);
+        let row = idx_u32 / columns;
+        let col = idx_u32 % columns;
         let x = main_card_padding_outer + col * (main_card_width + main_card_padding_outer);
         let y = main_content_start_y
             + main_card_padding_outer
@@ -1517,7 +1560,7 @@ pub fn generate_svg_string(
 }
 
 // ... (render_svg_to_png function - unchanged) ...
-pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Vec<u8>, AppError> {
+pub fn render_svg_to_png(svg_data: &str, is_user_generated: bool) -> Result<Vec<u8>, AppError> {
     // 分段计时，定位瓶颈
     let t0 = std::time::Instant::now();
 
@@ -1568,7 +1611,9 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
     }
 
     // 使用 png crate 进行快速编码
-    let mut out = Vec::with_capacity((pixmap_size.width() * pixmap_size.height() * 4) as usize);
+    let px_count = usize_from_u32(pixmap_size.width())
+        .saturating_mul(usize_from_u32(pixmap_size.height()));
+    let mut out = Vec::with_capacity(px_count.saturating_mul(4));
     {
         let mut encoder = png::Encoder::new(&mut out, pixmap_size.width(), pixmap_size.height());
         encoder.set_color(png::ColorType::Rgba);
@@ -1606,7 +1651,7 @@ pub fn render_svg_to_png(svg_data: String, is_user_generated: bool) -> Result<Ve
 
 /// 按目标宽度下采样后编码为 PNG（未提供则使用 SVG 原始宽度）
 pub fn render_svg_to_png_scaled(
-    svg_data: String,
+    svg_data: &str,
     is_user_generated: bool,
     target_width: Option<u32>,
 ) -> Result<Vec<u8>, AppError> {
@@ -1643,20 +1688,8 @@ pub fn render_svg_to_png_scaled(
         .map_err(|e| AppError::ImageRendererError(format!("Failed to parse SVG: {e}")))?;
 
     let src_size = tree.size().to_int_size();
-    let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
-        if tw > 0 && tw != src_size.width() {
-            let s = tw as f32 / src_size.width() as f32;
-            (
-                (src_size.width() as f32 * s).round() as u32,
-                (src_size.height() as f32 * s).round() as u32,
-                s,
-            )
-        } else {
-            (src_size.width(), src_size.height(), 1.0)
-        }
-    } else {
-        (src_size.width(), src_size.height(), 1.0)
-    };
+    let (dst_w, dst_h, scale) =
+        scaled_dimensions(src_size.width(), src_size.height(), target_width);
 
     let mut pixmap = Pixmap::new(dst_w, dst_h)
         .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
@@ -1672,7 +1705,10 @@ pub fn render_svg_to_png_scaled(
     }
 
     // 编码 PNG
-    let mut out = Vec::with_capacity((dst_w * dst_h * 4) as usize);
+    let out_cap = usize_from_u32(dst_w)
+        .saturating_mul(usize_from_u32(dst_h))
+        .saturating_mul(4);
+    let mut out = Vec::with_capacity(out_cap);
     {
         let mut encoder = png::Encoder::new(&mut out, dst_w, dst_h);
         encoder.set_color(png::ColorType::Rgba);
@@ -1699,7 +1735,7 @@ pub fn render_svg_to_png_scaled(
 
 /// 按目标宽度下采样后编码为 JPEG（quality 1-100，建议 80-90）
 pub fn render_svg_to_jpeg(
-    svg_data: String,
+    svg_data: &str,
     is_user_generated: bool,
     target_width: Option<u32>,
     quality: u8,
@@ -1737,20 +1773,8 @@ pub fn render_svg_to_jpeg(
         .map_err(|e| AppError::ImageRendererError(format!("Failed to parse SVG: {e}")))?;
 
     let src_size = tree.size().to_int_size();
-    let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
-        if tw > 0 && tw != src_size.width() {
-            let s = tw as f32 / src_size.width() as f32;
-            (
-                (src_size.width() as f32 * s).round() as u32,
-                (src_size.height() as f32 * s).round() as u32,
-                s,
-            )
-        } else {
-            (src_size.width(), src_size.height(), 1.0)
-        }
-    } else {
-        (src_size.width(), src_size.height(), 1.0)
-    };
+    let (dst_w, dst_h, scale) =
+        scaled_dimensions(src_size.width(), src_size.height(), target_width);
 
     let mut pixmap = Pixmap::new(dst_w, dst_h)
         .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
@@ -1767,21 +1791,24 @@ pub fn render_svg_to_jpeg(
 
     // 将 RGBA 像素扁平化到黑色背景（JPEG 无透明通道）
     let rgba = pixmap.data();
-    let mut rgb: Vec<u8> = Vec::with_capacity((dst_w as usize) * (dst_h as usize) * 3);
-    let mut i = 0;
-    while i + 3 < rgba.len() {
-        let r = u16::from(rgba[i]);
-        let g = u16::from(rgba[i + 1]);
-        let b = u16::from(rgba[i + 2]);
-        let a = u16::from(rgba[i + 3]); // 0..255
+    let rgb_cap = usize_from_u32(dst_w)
+        .saturating_mul(usize_from_u32(dst_h))
+        .saturating_mul(3);
+    let mut rgb: Vec<u8> = Vec::with_capacity(rgb_cap);
+    let mut rgba_index = 0;
+    while rgba_index + 3 < rgba.len() {
+        let red = u16::from(rgba[rgba_index]);
+        let green = u16::from(rgba[rgba_index + 1]);
+        let blue = u16::from(rgba[rgba_index + 2]);
+        let alpha = u16::from(rgba[rgba_index + 3]); // 0..255
         // 过黑底合成：c' = c * a/255
-        let r_out = ((r * a) / 255) as u8;
-        let g_out = ((g * a) / 255) as u8;
-        let b_out = ((b * a) / 255) as u8;
-        rgb.push(r_out);
-        rgb.push(g_out);
-        rgb.push(b_out);
-        i += 4;
+        let red_out = u8::try_from((red * alpha) / 255).unwrap_or(u8::MAX);
+        let green_out = u8::try_from((green * alpha) / 255).unwrap_or(u8::MAX);
+        let blue_out = u8::try_from((blue * alpha) / 255).unwrap_or(u8::MAX);
+        rgb.push(red_out);
+        rgb.push(green_out);
+        rgb.push(blue_out);
+        rgba_index += 4;
     }
 
     let mut out = Vec::new();
@@ -1801,7 +1828,7 @@ pub fn render_svg_to_jpeg(
 /// # 返回
 /// WebP 格式的图片字节数据
 pub fn render_svg_to_webp(
-    svg_data: String,
+    svg_data: &str,
     is_user_generated: bool,
     target_width: Option<u32>,
     quality: u8,
@@ -1840,20 +1867,8 @@ pub fn render_svg_to_webp(
         .map_err(|e| AppError::ImageRendererError(format!("Failed to parse SVG: {e}")))?;
 
     let src_size = tree.size().to_int_size();
-    let (dst_w, dst_h, scale) = if let Some(tw) = target_width {
-        if tw > 0 && tw != src_size.width() {
-            let s = tw as f32 / src_size.width() as f32;
-            (
-                (src_size.width() as f32 * s).round() as u32,
-                (src_size.height() as f32 * s).round() as u32,
-                s,
-            )
-        } else {
-            (src_size.width(), src_size.height(), 1.0)
-        }
-    } else {
-        (src_size.width(), src_size.height(), 1.0)
-    };
+    let (dst_w, dst_h, scale) =
+        scaled_dimensions(src_size.width(), src_size.height(), target_width);
 
     let mut pixmap = Pixmap::new(dst_w, dst_h)
         .ok_or_else(|| AppError::ImageRendererError("Failed to create pixmap".to_string()))?;
@@ -1892,7 +1907,7 @@ pub fn render_svg_to_webp(
 /// - webp_quality: WebP 质量（1-100，缺省 80）
 /// - webp_lossless: WebP 无损（缺省 false）
 pub fn render_svg_unified(
-    svg: String,
+    svg: &str,
     is_user_generated: bool,
     format: Option<&str>,
     width: Option<u32>,
@@ -1932,7 +1947,7 @@ pub async fn render_svg_unified_async(
     let format_owned = format.map(std::string::ToString::to_string);
     let handle = spawn_blocking(move || {
         render_svg_unified(
-            svg,
+            &svg,
             is_user_generated,
             format_owned.as_deref(),
             width,
@@ -1981,14 +1996,14 @@ fn calculate_inverse_color_from_path(path: &Path) -> Option<String> {
         total_b += u64::from(chunk[2]);
     }
 
-    let num_pixels = (pixels.len() / 4) as u64;
+    let num_pixels = u64::try_from(pixels.len() / 4).unwrap_or(u64::MAX);
     if num_pixels == 0 {
         return None;
     }
 
-    let avg_r = (total_r / num_pixels) as u8;
-    let avg_g = (total_g / num_pixels) as u8;
-    let avg_b = (total_b / num_pixels) as u8;
+    let avg_r = u8::try_from(total_r / num_pixels).unwrap_or(u8::MAX);
+    let avg_g = u8::try_from(total_g / num_pixels).unwrap_or(u8::MAX);
+    let avg_b = u8::try_from(total_b / num_pixels).unwrap_or(u8::MAX);
 
     // 计算反色
     let inv_r = 255 - avg_r;
@@ -2057,8 +2072,6 @@ pub fn generate_song_svg_string(
 
     // 曲目名称区域高度
     let song_name_height = 50.0;
-
-    let _difficulty_info_height = 40.0; // Prefix unused variable
 
     // 成绩卡尺寸 - 调整为与曲绘总高度一致
     let card_area_width = f64::from(width) - illust_width - padding * 3.0;
@@ -2230,11 +2243,6 @@ pub fn generate_song_svg_string(
     let song_name_width = illust_width;
 
     // --- 方案: 使用 <g> 包裹并应用滤镜 ---
-    let _left_card_x = illust_x;
-    let _left_card_y = illust_y;
-    let _left_card_width = illust_width;
-    let _left_card_height = illust_height + padding / 2.0 + song_name_height;
-
     // 开始一个组，并对组应用阴影
     writeln!(svg, r#"<g filter="url(#illust-shadow)">"#).map_err(fmt_err)?;
 
@@ -2247,7 +2255,11 @@ pub fn generate_song_svg_string(
         // 预缩放并内嵌曲绘，减少 resvg 的解码与缩放开销
         let final_href = if embed_images && !href.starts_with("data:") {
             let pb = PathBuf::from(&href);
-            get_scaled_image_data_uri(&pb, illust_width as u32, illust_height as u32)
+            get_scaled_image_data_uri(
+                &pb,
+                round_non_negative_to_u32(illust_width),
+                round_non_negative_to_u32(illust_height),
+            )
                 .unwrap_or(href)
         } else {
             href
@@ -2285,7 +2297,8 @@ pub fn generate_song_svg_string(
     // 渲染四个难度卡片
     for (i, &diff_key) in difficulties.iter().enumerate() {
         let pos_x = cards_start_x;
-        let pos_y = cards_start_y + (difficulty_card_height + difficulty_card_spacing) * i as f64;
+        let pos_y =
+            cards_start_y + (difficulty_card_height + difficulty_card_spacing) * f64_from_usize(i);
 
         // 检查是否有该难度的数据，决定卡片样式
         let has_difficulty_data = data
@@ -2381,16 +2394,12 @@ pub fn generate_song_svg_string(
                         engine::PushAccHint::TargetAcc { acc } => format!(
                             r"<tspan class='text-push-acc' fill='url(#rks-gradient-push)'> -> {acc:.2}%</tspan>"
                         ),
-                        engine::PushAccHint::PhiOnly => {
+                        engine::PushAccHint::PhiOnly | engine::PushAccHint::AlreadyPhi => {
                             "<tspan class='text-push-acc' fill='gold'> -> 100.00%</tspan>"
                                 .to_string()
                         }
                         engine::PushAccHint::Unreachable => {
                             "<tspan class='text-push-acc' fill='#9E9E9E'> -> 无法推分</tspan>"
-                                .to_string()
-                        }
-                        engine::PushAccHint::AlreadyPhi => {
-                            "<tspan class='text-push-acc' fill='gold'> -> 100.00%</tspan>"
                                 .to_string()
                         }
                     };
@@ -2458,10 +2467,13 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
     let row_height = 60;
     let header_height = 120;
     let footer_height = 40;
-    let total_height = header_height + (data.entries.len() as i32 * row_height) + footer_height;
+    let total_height = header_height
+        + (i32_from_usize(data.entries.len()) * row_height)
+        + footer_height;
 
     let mut svg = String::with_capacity(20000);
-    svg.push_str(&format!(r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{total_height}" viewBox="0 0 {width} {total_height}">"#));
+    write!(svg, r#"<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{total_height}" viewBox="0 0 {width} {total_height}">"#)
+        .map_err(fmt_err)?;
 
     // 添加渐变背景和样式
     // 使用 r##"..."## 来避免 # 颜色值与原始字符串分隔符冲突
@@ -2514,17 +2526,21 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
 "##); // <--- 修正结束符的位置，紧跟在 </defs> 之后
 
     // 绘制背景
-    svg.push_str(&format!(
+    write!(
+        svg,
         r#"<rect width="{width}" height="{total_height}" fill="url(#bg-gradient)" />"#
-    ));
+    )
+    .map_err(fmt_err)?;
 
     // 绘制标题
-    svg.push_str(&format!(
+    write!(
+        svg,
         r#"<text x="{}" y="{}" class="header-text">{}</text>"#,
         width / 2,
         header_height / 2 + 16,
         data.title
-    ));
+    )
+    .map_err(fmt_err)?;
 
     // 绘制表头分隔线
     write!(
@@ -2538,7 +2554,7 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
 
     // 绘制排行榜条目
     for (i, entry) in data.entries.iter().enumerate() {
-        let y_pos = header_height + (i as i32 * row_height);
+        let y_pos = header_height + (i32_from_usize(i) * row_height);
 
         // 绘制排名
         write!(
@@ -2589,12 +2605,14 @@ pub fn generate_leaderboard_svg_string(data: &LeaderboardRenderData) -> Result<S
 
     // 绘制底部更新时间
     let time_str = data.update_time.format("%Y-%m-%d %H:%M:%S").to_string();
-    svg.push_str(&format!(
+    write!(
+        svg,
         r#"<text x="{}" y="{}" class="footer-text">更新时间: {} UTC</text>"#,
         width - 60,
         total_height - 15,
         time_str
-    ));
+    )
+    .map_err(fmt_err)?;
 
     svg.push_str("</svg>");
     Ok(svg)
@@ -2739,7 +2757,7 @@ mod tests {
             is_user_generated: false,
         };
 
-        let svg = generate_svg_string(
+        let svg = generate_svg_string::<std::collections::hash_map::RandomState>(
             &[record],
             &stats,
             None,
@@ -2762,7 +2780,7 @@ mod tests {
             song_id: "SONG REMOTE 456".to_string(),
             player_name: Some("Tester".to_string()),
             update_time: Utc::now(),
-            difficulty_scores: Default::default(),
+            difficulty_scores: std::collections::HashMap::default(),
             illustration_path: None,
             custom_footer_text: None,
         };
@@ -2789,7 +2807,7 @@ mod tests {
         let stats = PlayerStats {
             ap_top_3_avg: None,
             best_27_avg: Some(12.3456),
-            real_rks: Some(12.345678),
+            real_rks: Some(12.345_678),
             player_name: Some("Tester".to_string()),
             update_time: Utc::now(),
             n: 1,
@@ -2799,7 +2817,7 @@ mod tests {
             custom_footer_text: None,
             is_user_generated: false,
         };
-        let svg = generate_svg_string(
+        let svg = generate_svg_string::<std::collections::hash_map::RandomState>(
             &[record],
             &stats,
             None,
@@ -2829,7 +2847,7 @@ mod tests {
         let stats = PlayerStats {
             ap_top_3_avg: None,
             best_27_avg: Some(12.3456),
-            real_rks: Some(12.345678),
+            real_rks: Some(12.345_678),
             player_name: Some("Tester".to_string()),
             update_time: Utc::now(),
             n: 1,
@@ -2839,7 +2857,7 @@ mod tests {
             custom_footer_text: None,
             is_user_generated: false,
         };
-        let svg = generate_svg_string(
+        let svg = generate_svg_string::<std::collections::hash_map::RandomState>(
             &[record],
             &stats,
             None,
@@ -2869,7 +2887,7 @@ mod tests {
         let stats = PlayerStats {
             ap_top_3_avg: None,
             best_27_avg: Some(12.3456),
-            real_rks: Some(12.345678),
+            real_rks: Some(12.345_678),
             player_name: Some("Tester".to_string()),
             update_time: Utc::now(),
             n: 1,
@@ -2879,7 +2897,7 @@ mod tests {
             custom_footer_text: None,
             is_user_generated: false,
         };
-        let svg = generate_svg_string(
+        let svg = generate_svg_string::<std::collections::hash_map::RandomState>(
             &[record],
             &stats,
             None,
@@ -2903,7 +2921,7 @@ mod tests {
             song_id: "TEMPLATE_SONG_ID".to_string(),
             player_name: Some("Tester".to_string()),
             update_time: Utc::now(),
-            difficulty_scores: Default::default(),
+            difficulty_scores: std::collections::HashMap::default(),
             illustration_path: None,
             custom_footer_text: Some("Footer".to_string()),
         };
@@ -2930,7 +2948,7 @@ mod tests {
             .to_string();
 
         let (q20, ct20) = render_svg_unified(
-            svg.clone(),
+            &svg,
             false,
             Some("webp"),
             Some(64),
@@ -2941,7 +2959,7 @@ mod tests {
         assert_eq!(ct20, "image/webp");
 
         let (q90, _ct90) = render_svg_unified(
-            svg.clone(),
+            &svg,
             false,
             Some("webp"),
             Some(64),
@@ -2957,7 +2975,7 @@ mod tests {
         assert_eq!((img90.width(), img90.height()), (64, 64));
 
         let (lossless_q20, _ct1) = render_svg_unified(
-            svg.clone(),
+            &svg,
             false,
             Some("webp"),
             Some(64),
@@ -2965,8 +2983,15 @@ mod tests {
             Some(true),
         )
         .unwrap();
-        let (lossless_q90, _ct2) =
-            render_svg_unified(svg, false, Some("webp"), Some(64), Some(90), Some(true)).unwrap();
+        let (lossless_q90, _ct2) = render_svg_unified(
+            &svg,
+            false,
+            Some("webp"),
+            Some(64),
+            Some(90),
+            Some(true),
+        )
+        .unwrap();
 
         let img_l1 = image::load_from_memory(&lossless_q20).unwrap().to_rgba8();
         let img_l2 = image::load_from_memory(&lossless_q90).unwrap().to_rgba8();

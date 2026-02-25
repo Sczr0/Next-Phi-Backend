@@ -225,7 +225,7 @@ struct SessionTokenClaims<'a> {
     sae: String,
 }
 
-async fn parse_authorization_token(
+fn parse_authorization_token(
     headers: &axum::http::HeaderMap,
     cfg: &crate::config::SessionConfig,
 ) -> Result<AuthzToken, AppError> {
@@ -234,7 +234,7 @@ async fn parse_authorization_token(
     Ok(AuthzToken { token, claims })
 }
 
-async fn parse_authorization_token_allow_expired(
+fn parse_authorization_token_allow_expired(
     headers: &axum::http::HeaderMap,
     cfg: &crate::config::SessionConfig,
 ) -> Result<AuthzToken, AppError> {
@@ -263,6 +263,10 @@ fn resolve_refresh_window_secs(cfg: &crate::config::SessionConfig) -> u64 {
         .unwrap_or(cfg.revoke_ttl_secs)
 }
 
+fn saturating_u64_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
 fn issue_session_access_token(
     auth: &crate::auth_contract::UnifiedSaveRequest,
     sub: &str,
@@ -271,7 +275,8 @@ fn issue_session_access_token(
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<String, AppError> {
     let iat = now.timestamp();
-    let exp = (now + chrono::Duration::seconds(cfg.access_ttl_secs as i64)).timestamp();
+    let exp = (now + chrono::Duration::seconds(saturating_u64_to_i64(cfg.access_ttl_secs)))
+        .timestamp();
     let claims = SessionClaims {
         sub: sub.to_string(),
         jti: Uuid::new_v4().to_string(),
@@ -448,7 +453,7 @@ pub async fn post_session_refresh(
     let cfg = ensure_session_config()?;
     ensure_exchange_secret_valid(&headers, cfg)?;
     let jwt_secret = resolve_jwt_secret(cfg)?;
-    let authz = parse_authorization_token_allow_expired(&headers, cfg).await?;
+    let authz = parse_authorization_token_allow_expired(&headers, cfg)?;
 
     let storage = state
         .stats_storage
@@ -458,7 +463,7 @@ pub async fn post_session_refresh(
     let now = chrono::Utc::now();
     validate_bearer_not_revoked(Some(storage), &authz.claims).await?;
 
-    let refresh_window_secs = resolve_refresh_window_secs(cfg) as i64;
+    let refresh_window_secs = saturating_u64_to_i64(resolve_refresh_window_secs(cfg));
     let expired_for_secs = now.timestamp().saturating_sub(authz.claims.exp);
     if expired_for_secs > refresh_window_secs {
         return Err(AppError::Auth("会话令牌过期时间过长，无法刷新".into()));
@@ -516,7 +521,7 @@ pub async fn post_session_logout(
     let t_total = Instant::now();
     try_cleanup_expired_session_records(&state).await;
     let cfg = ensure_session_config()?;
-    let authz = parse_authorization_token(&headers, cfg).await?;
+    let authz = parse_authorization_token(&headers, cfg)?;
     let storage = state
         .stats_storage
         .as_ref()
@@ -526,10 +531,11 @@ pub async fn post_session_logout(
     validate_bearer_not_revoked(Some(storage), &authz.claims).await?;
     let mut logout_before = None;
     if req.scope == SessionLogoutScope::All {
-        let gate = now + chrono::Duration::seconds(cfg.revoke_all_grace_secs as i64);
+        let gate = now + chrono::Duration::seconds(saturating_u64_to_i64(cfg.revoke_all_grace_secs));
         let gate_rfc3339 = gate.to_rfc3339();
-        let gate_expire =
-            (gate + chrono::Duration::seconds(cfg.revoke_ttl_secs as i64)).to_rfc3339();
+        let gate_expire = (gate
+            + chrono::Duration::seconds(saturating_u64_to_i64(cfg.revoke_ttl_secs)))
+        .to_rfc3339();
         storage
             .upsert_logout_gate(&authz.claims.sub, &gate_rfc3339, &gate_expire, &now_rfc3339)
             .await?;
@@ -537,7 +543,7 @@ pub async fn post_session_logout(
     }
     let exp_ts = authz.claims.exp;
     let expires_at = chrono::DateTime::<chrono::Utc>::from_timestamp(exp_ts, 0)
-        .unwrap_or(now + chrono::Duration::seconds(cfg.access_ttl_secs as i64))
+        .unwrap_or(now + chrono::Duration::seconds(saturating_u64_to_i64(cfg.access_ttl_secs)))
         .to_rfc3339();
 
     let _embedded_auth = decode_embedded_auth_with_claims(&authz.token, &authz.claims)?;
@@ -1001,8 +1007,8 @@ pub async fn get_qrcode_status(
                         AppError::Json(_) => ("UPSTREAM_ERROR", "上游响应解析失败"),
                         AppError::Validation(_) => ("VALIDATION_FAILED", "请求参数错误"),
                         AppError::Conflict(_) => ("CONFLICT", "资源冲突"),
-                        AppError::Internal(_) => ("INTERNAL_ERROR", "服务器内部错误"),
-                        AppError::SaveProvider(_)
+                        AppError::Internal(_)
+                        | AppError::SaveProvider(_)
                         | AppError::Search(_)
                         | AppError::SaveHandlerError(_)
                         | AppError::ImageRendererError(_)

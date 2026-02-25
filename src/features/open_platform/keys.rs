@@ -294,6 +294,10 @@ fn mask_key(prefix: &str, last4: &str) -> String {
     format!("{prefix}****{last4}")
 }
 
+fn saturating_u64_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
 fn map_key_list_item(item: storage::ApiKeyRecord) -> ApiKeyListItem {
     ApiKeyListItem {
         id: item.id,
@@ -495,7 +499,7 @@ pub async fn post_rotate_api_key(
     let grace_expires_at = if grace_secs == 0 {
         None
     } else {
-        Some(now + grace_secs.min(7 * 24 * 3600) as i64)
+        Some(now + saturating_u64_to_i64(grace_secs.min(7 * 24 * 3600)))
     };
 
     let token = generate_api_key(&prefix, cfg.api_key.random_bytes);

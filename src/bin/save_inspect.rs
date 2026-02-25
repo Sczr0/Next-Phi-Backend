@@ -1,3 +1,14 @@
+#![allow(
+    clippy::similar_names,           // 允许 in_idx 和 id_idx 同时存在
+    clippy::missing_errors_doc,      // 不想为每个 Result 函数写文档
+    clippy::missing_panics_doc,      // 不想为每个 .expect() 写文档
+    clippy::too_many_lines,          // 允许长函数（特别是渲染逻辑）
+    clippy::doc_markdown,            // 不想在注释里给每个 OpenAPI 加反引号
+    clippy::struct_excessive_bools,  // 结构体里超过3个 bool 没啥大不了的
+    clippy::items_after_statements,  // 允许在函数中间写 use 或 struct
+    clippy::module_name_repetitions  // 允许 PlayerStats 在 player 模块里
+)]
+
 //! 本地诊断工具：拉取官方存档并输出“解密链路关键信息”。
 //!
 //! 安全原则：
@@ -5,6 +16,7 @@
 //! - 默认输出为“脱敏模式”，需要显式 flag 才会输出完整 URL / 原始 summary / 明文预览。
 
 use std::fs;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use phi_backend::AppConfig;
@@ -67,56 +79,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn render_text(report: &phi_backend::features::save::inspector::InspectReport) -> String {
     let mut out = String::new();
 
-    out.push_str(&format!("generated_at: {}\n", report.generated_at));
+    writeln!(out, "generated_at: {}", report.generated_at).expect("write inspect text");
     if let Some(v) = report.taptap_version.as_deref() {
-        out.push_str(&format!("taptap_version: {v}\n"));
+        writeln!(out, "taptap_version: {v}").expect("write inspect text");
     }
-    out.push_str(&format!("download_url: {}\n", report.meta.download_url));
+    writeln!(out, "download_url: {}", report.meta.download_url).expect("write inspect text");
     if let Some(u) = report.meta.updated_at.as_deref() {
-        out.push_str(&format!("updated_at: {u}\n"));
+        writeln!(out, "updated_at: {u}").expect("write inspect text");
     }
 
     if let Some(s) = report.meta.summary_b64.as_deref() {
-        out.push_str(&format!("summary_b64: {s}\n"));
+        writeln!(out, "summary_b64: {s}").expect("write inspect text");
     }
     if let Some(parsed) = report.meta.summary_parsed.as_ref() {
-        out.push_str(&format!(
-            "summary_parsed: save_version={} challenge_mode_rank={} ranking_score={} game_version={} avatar_len={} progress=[{}]\n",
+        writeln!(
+            out,
+            "summary_parsed: save_version={} challenge_mode_rank={} ranking_score={} game_version={} avatar_len={} progress=[{}]",
             parsed.save_version,
             parsed.challenge_mode_rank,
             parsed.ranking_score,
             parsed.game_version,
             parsed.avatar.len(),
             parsed.progress.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(",")
-        ));
+        )
+        .expect("write inspect text");
     }
     if let Some(e) = report.meta.summary_parse_error.as_deref() {
-        out.push_str(&format!("summary_parse_error: {e}\n"));
+        writeln!(out, "summary_parse_error: {e}").expect("write inspect text");
     }
 
-    out.push_str(&format!(
-        "download_bytes: {}\n",
-        report.transport.download_bytes
-    ));
-    out.push_str(&format!(
-        "decompress: detected={} input={} output={}\n",
+    writeln!(out, "download_bytes: {}", report.transport.download_bytes)
+        .expect("write inspect text");
+    writeln!(
+        out,
+        "decompress: detected={} input={} output={}",
         report.transport.decompress.detected,
         report.transport.decompress.input_bytes,
         report.transport.decompress.output_bytes
-    ));
+    )
+    .expect("write inspect text");
     for e in &report.transport.errors {
-        out.push_str(&format!("error: {e}\n"));
+        writeln!(out, "error: {e}").expect("write inspect text");
     }
 
     out.push_str("decrypt_meta:\n");
     match &report.decrypt_meta.cipher {
         phi_backend::features::save::inspector::CipherReport::Aes256CbcPkcs7 { iv_hex } => {
-            out.push_str(&format!("  cipher: aes-256-cbc-pkcs7 iv_hex={iv_hex}\n"));
+            writeln!(out, "  cipher: aes-256-cbc-pkcs7 iv_hex={iv_hex}")
+                .expect("write inspect text");
         }
         phi_backend::features::save::inspector::CipherReport::Aes128Gcm { nonce_hex, tag_len } => {
-            out.push_str(&format!(
-                "  cipher: aes-128-gcm nonce_hex={nonce_hex} tag_len={tag_len}\n"
-            ));
+            writeln!(out, "  cipher: aes-128-gcm nonce_hex={nonce_hex} tag_len={tag_len}")
+                .expect("write inspect text");
         }
     }
     match &report.decrypt_meta.kdf {
@@ -129,50 +143,59 @@ fn render_text(report: &phi_backend::features::save::inspector::InspectReport) -
             password_len,
             password_sha256_hex,
         } => {
-            out.push_str(&format!(
-                "  kdf: pbkdf2-sha1 salt_hex={salt_hex} rounds={rounds} password_len={password_len} password_sha256={password_sha256_hex}\n"
-            ));
+            writeln!(
+                out,
+                "  kdf: pbkdf2-sha1 salt_hex={salt_hex} rounds={rounds} password_len={password_len} password_sha256={password_sha256_hex}"
+            )
+            .expect("write inspect text");
         }
     }
-    out.push_str(&format!("  integrity: {}\n", report.decrypt_meta.integrity));
+    writeln!(out, "  integrity: {}", report.decrypt_meta.integrity).expect("write inspect text");
 
     if let Some(z) = report.zip.as_ref() {
-        out.push_str(&format!(
-            "zip: files={} names={}\n",
-            z.file_count,
-            z.names.join(",")
-        ));
+        writeln!(out, "zip: files={} names={}", z.file_count, z.names.join(","))
+            .expect("write inspect text");
     }
 
     out.push_str("entries:\n");
     for ent in &report.entries {
-        out.push_str(&format!(
-            "- {} present={} parser_handling=\"{}\"\n",
-            ent.name, ent.present, ent.parser_handling
-        ));
+        writeln!(
+            out,
+            "- {} present={} parser_handling=\"{}\"",
+            ent.name,
+            ent.present,
+            ent.parser_handling
+        )
+        .expect("write inspect text");
         if let Some(len) = ent.encrypted_len {
-            out.push_str(&format!(
-                "  encrypted_len={} encrypted_prefix={:?}\n",
-                len, ent.encrypted_prefix_u8
-            ));
+            writeln!(
+                out,
+                "  encrypted_len={} encrypted_prefix={:?}",
+                len,
+                ent.encrypted_prefix_u8
+            )
+            .expect("write inspect text");
         }
-        out.push_str(&format!(
-            "  decrypted_ok={} error={:?}\n",
-            ent.decrypted.ok, ent.decrypted.error
-        ));
+        writeln!(
+            out,
+            "  decrypted_ok={} error={:?}",
+            ent.decrypted.ok,
+            ent.decrypted.error
+        )
+        .expect("write inspect text");
         if ent.decrypted.ok {
-            out.push_str(&format!(
-                "  decrypted_len={:?} decrypted_prefix={:?} plain_len={:?}\n",
+            writeln!(
+                out,
+                "  decrypted_len={:?} decrypted_prefix={:?} plain_len={:?}",
                 ent.decrypted.decrypted_len,
                 ent.decrypted.decrypted_prefix_u8,
                 ent.decrypted.plain_len
-            ));
-            out.push_str(&format!(
-                "  plain_sha256={:?}\n",
-                ent.decrypted.plain_sha256_hex
-            ));
+            )
+            .expect("write inspect text");
+            writeln!(out, "  plain_sha256={:?}", ent.decrypted.plain_sha256_hex)
+                .expect("write inspect text");
             if let Some(p) = ent.decrypted.plain_preview_hex.as_deref() {
-                out.push_str(&format!("  plain_preview_hex={p}\n"));
+                writeln!(out, "  plain_preview_hex={p}").expect("write inspect text");
             }
         }
     }
@@ -180,7 +203,7 @@ fn render_text(report: &phi_backend::features::save::inspector::InspectReport) -
     if !report.notes.is_empty() {
         out.push_str("notes:\n");
         for n in &report.notes {
-            out.push_str(&format!("- {n}\n"));
+            writeln!(out, "- {n}").expect("write inspect text");
         }
     }
 
@@ -222,7 +245,6 @@ impl Args {
                     let v = it.next().unwrap_or_else(|| "text".to_string());
                     args.format = match v.as_str() {
                         "json" => OutputFormat::Json,
-                        "text" => OutputFormat::Text,
                         _ => OutputFormat::Text,
                     };
                 }

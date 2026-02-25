@@ -141,7 +141,7 @@ pub struct LogoutResponse {
     pub ok: bool,
 }
 
-fn map_reqwest_error(context: &'static str, err: reqwest::Error) -> AppError {
+fn map_reqwest_error(context: &'static str, err: &reqwest::Error) -> AppError {
     if err.is_timeout() {
         AppError::Timeout(format!("{context}: {err}"))
     } else {
@@ -171,6 +171,10 @@ fn resolve_session_secret(cfg: &OpenPlatformConfig) -> Result<String, AppError> 
     ))
 }
 
+fn saturating_u64_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
 fn issue_developer_session_token(
     cfg: &OpenPlatformConfig,
     developer: &storage::DeveloperRecord,
@@ -184,7 +188,7 @@ fn issue_developer_session_token(
         iss: cfg.session.jwt_issuer.clone(),
         aud: cfg.session.jwt_audience.clone(),
         iat: now,
-        exp: now + cfg.session.ttl_secs.max(300) as i64,
+        exp: now + saturating_u64_to_i64(cfg.session.ttl_secs.max(300)),
     };
     let secret = resolve_session_secret(cfg)?;
     jsonwebtoken::encode(
@@ -296,7 +300,7 @@ async fn exchange_github_access_token(
                 let body = resp
                     .text()
                     .await
-                    .map_err(|e| map_reqwest_error("读取 GitHub token 响应失败", e))?;
+                    .map_err(|e| map_reqwest_error("读取 GitHub token 响应失败", &e))?;
 
                 if !status.is_success() {
                     if status.is_server_error() && attempt < retry_count {
@@ -327,7 +331,7 @@ async fn exchange_github_access_token(
                     sleep(Duration::from_millis(250 * (u64::from(attempt) + 1))).await;
                     continue;
                 }
-                return Err(map_reqwest_error("请求 GitHub token 失败", e));
+                return Err(map_reqwest_error("请求 GitHub token 失败", &e));
             }
         }
     }
@@ -353,7 +357,7 @@ async fn fetch_github_user(
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| map_reqwest_error("请求 GitHub /user 失败", e))?;
+        .map_err(|e| map_reqwest_error("请求 GitHub /user 失败", &e))?;
 
     let status = resp.status();
     if !status.is_success() {
@@ -384,7 +388,7 @@ async fn fetch_github_user_email(
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| map_reqwest_error("请求 GitHub /user/emails 失败", e))?;
+        .map_err(|e| map_reqwest_error("请求 GitHub /user/emails 失败", &e))?;
     if !resp.status().is_success() {
         return Ok(None);
     }

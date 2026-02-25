@@ -23,6 +23,7 @@ const ZIP_ENTRY_PREALLOC_CAP: usize = 16 * 1024 * 1024;
 const DECOMPRESS_PREALLOC_CAP: usize = 8 * 1024 * 1024;
 
 #[derive(Clone, Copy)]
+#[allow(clippy::struct_field_names)]
 struct SaveLimits {
     max_download_bytes: usize,
     max_decompress_bytes: usize,
@@ -154,7 +155,7 @@ pub async fn get_decrypted_save_from_meta(
     // 注意：解压/解密/解析属于 CPU/内存密集型同步任务，为避免阻塞 Tokio worker，这里 offload 到 blocking 线程池。
     let join = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let zip_bytes = try_decompress(encrypted_bytes, limits.max_decompress_bytes)?;
+        let zip_bytes = try_decompress(encrypted_bytes, limits.max_decompress_bytes);
         let mut archive = zip::ZipArchive::new(Cursor::new(zip_bytes))?;
 
         // P1：PBKDF2 key 在单份 save 内只派生一次并复用，避免按 entry 重复派生。
@@ -295,7 +296,7 @@ async fn download_encrypted_save(url: &str, max_bytes: usize) -> Result<Bytes, S
 
     // 先按 Content-Length 快速拒绝（缺失或不可信时仍由流式累计兜底）
     if let Some(content_len) = response.content_length()
-        && content_len as usize > max_bytes
+        && usize::try_from(content_len).map_or(true, |len| len > max_bytes)
     {
         return Err(SaveProviderError::Io(format!(
             "download too large: content-length={content_len} exceeds limit={max_bytes}"
@@ -318,7 +319,7 @@ async fn download_encrypted_save(url: &str, max_bytes: usize) -> Result<Bytes, S
     Ok(Bytes::from(out))
 }
 
-fn try_decompress(bytes: Bytes, max_decompress_bytes: usize) -> Result<Bytes, SaveProviderError> {
+fn try_decompress(bytes: Bytes, max_decompress_bytes: usize) -> Bytes {
     // 快速识别：ZIP（PK..）/GZIP（1F 8B），避免不必要的解压尝试。
     // 决策：保留“回退机制”。即：识别失败或解压失败时，不报错，直接按 Raw Bytes 处理（保持现有行为）。
 
@@ -330,7 +331,7 @@ fn try_decompress(bytes: Bytes, max_decompress_bytes: usize) -> Result<Bytes, Sa
         && raw[1] == b'K'
         && matches!((raw[2], raw[3]), (3, 4) | (5, 6) | (7, 8))
     {
-        return Ok(bytes);
+        return bytes;
     }
 
     // GZIP 魔数：1F 8B
@@ -339,17 +340,17 @@ fn try_decompress(bytes: Bytes, max_decompress_bytes: usize) -> Result<Bytes, Sa
         let mut out = Vec::with_capacity(raw.len().min(DECOMPRESS_PREALLOC_CAP));
         if read_to_end_limited(&mut gz, &mut out, max_decompress_bytes, "gzip 解压输出超限").is_ok()
         {
-            return Ok(Bytes::from(out));
+            return Bytes::from(out);
         }
-        return Ok(bytes);
+        return bytes;
     }
 
     // 其他：尝试 Zlib，失败则回退 Raw Bytes。
     let mut z = ZlibDecoder::new(raw);
     let mut out = Vec::with_capacity(raw.len().min(DECOMPRESS_PREALLOC_CAP));
     match read_to_end_limited(&mut z, &mut out, max_decompress_bytes, "zlib 解压输出超限") {
-        Ok(()) => Ok(Bytes::from(out)),
-        Err(_) => Ok(bytes),
+        Ok(()) => Bytes::from(out),
+        Err(_) => bytes,
     }
 }
 
@@ -387,7 +388,7 @@ mod tests {
     #[test]
     fn try_decompress_zip_magic_returns_raw() {
         let raw = Bytes::from_static(b"PK\x03\x04this-is-zip");
-        let out = try_decompress(raw.clone(), usize::MAX).unwrap();
+        let out = try_decompress(raw.clone(), usize::MAX);
         assert_eq!(out, raw);
     }
 
@@ -399,7 +400,7 @@ mod tests {
         let gz = Bytes::from(enc.finish().unwrap());
         assert_ne!(gz.as_ref(), payload);
 
-        let out = try_decompress(gz, usize::MAX).unwrap();
+        let out = try_decompress(gz, usize::MAX);
         assert_eq!(out.as_ref(), payload);
     }
 
@@ -407,7 +408,7 @@ mod tests {
     fn try_decompress_gzip_failure_falls_back_to_raw() {
         // 伪造 gzip 魔数但内容非法，必须回退为原 bytes（不报错）。
         let raw = Bytes::from_static(b"\x1f\x8b\x00\x00\x00\x00\x00");
-        let out = try_decompress(raw.clone(), usize::MAX).unwrap();
+        let out = try_decompress(raw.clone(), usize::MAX);
         assert_eq!(out, raw);
     }
 
@@ -419,14 +420,14 @@ mod tests {
         let z = Bytes::from(enc.finish().unwrap());
         assert_ne!(z.as_ref(), payload);
 
-        let out = try_decompress(z, usize::MAX).unwrap();
+        let out = try_decompress(z, usize::MAX);
         assert_eq!(out.as_ref(), payload);
     }
 
     #[test]
     fn try_decompress_unknown_header_falls_back_to_raw() {
         let raw = Bytes::from_static(b"not-gzip-not-zip-not-zlib");
-        let out = try_decompress(raw.clone(), usize::MAX).unwrap();
+        let out = try_decompress(raw.clone(), usize::MAX);
         assert_eq!(out, raw);
     }
 
@@ -437,7 +438,7 @@ mod tests {
         enc.write_all(&payload).unwrap();
         let gz = Bytes::from(enc.finish().unwrap());
 
-        let out = try_decompress(gz.clone(), 16).unwrap();
+        let out = try_decompress(gz.clone(), 16);
         assert_eq!(out, gz);
     }
 

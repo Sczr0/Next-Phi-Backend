@@ -49,10 +49,13 @@ pub struct PlayerRksResult {
 
 /// 根据玩家成绩与定数表计算 B30 与总 RKS（简化口径：Best27 + AP3，允许重叠）
 #[must_use] 
-pub fn calculate_player_rks(
-    records: &HashMap<String, Vec<DifficultyRecord>>,
+pub fn calculate_player_rks<S>(
+    records: &HashMap<String, Vec<DifficultyRecord>, S>,
     chart_constants: &ChartConstantsMap,
-) -> PlayerRksResult {
+) -> PlayerRksResult
+where
+    S: std::hash::BuildHasher,
+{
     const TOP_GENERAL: usize = 27;
     const TOP_PHI: usize = 3;
     let mut best27 = TopKChartScores::new(TOP_GENERAL);
@@ -139,8 +142,37 @@ fn normalize_accuracy(acc: f32) -> (f64, f32) {
     if raw <= 1.5 {
         (raw * 100.0, acc)
     } else {
-        (raw, (raw / 100.0) as f32)
+        (raw, f64_to_f32_lossy(raw / 100.0))
     }
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn f64_to_f32_lossy(value: f64) -> f32 {
+    value as f32
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn ceil_f64_to_i64_saturating(value: f64) -> i64 {
+    if !value.is_finite() {
+        return if value.is_sign_negative() {
+            i64::MIN
+        } else {
+            i64::MAX
+        };
+    }
+    let ceil = value.ceil();
+    if ceil < i64::MIN as f64 {
+        i64::MIN
+    } else if ceil > i64::MAX as f64 {
+        i64::MAX
+    } else {
+        ceil as i64
+    }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn i64_to_f64_lossy(value: i64) -> f64 {
+    value as f64
 }
 
 #[derive(Clone)]
@@ -246,7 +278,7 @@ pub struct RksRecord {
     /// 难度枚举
     pub difficulty: Difficulty,
     /// 实际得分（如无可填 0）
-    #[schema(example = 998765)]
+    #[schema(example = 998_765)]
     pub score: u32,
     /// ACC 百分比（例：98.50 表示 98.5%）
     #[schema(example = 98.73)]
@@ -461,7 +493,7 @@ impl<'a> PushAccBatchSolver<'a> {
         }
 
         // 结果最终只展示到 0.001 精度：用千分位整数二分可显著减少迭代次数。
-        let mut low_i = (target.acc * 1000.0).ceil() as i64;
+        let mut low_i = ceil_f64_to_i64_saturating(target.acc * 1000.0);
         if low_i < 0 {
             low_i = 0;
         }
@@ -472,7 +504,7 @@ impl<'a> PushAccBatchSolver<'a> {
 
         // 若低边界本身已可达，仍按“最小千分位”返回（避免浮点二分抖动）。
         let meets = |acc_thousand: i64| -> bool {
-            let acc = (acc_thousand as f64) / 1000.0;
+            let acc = i64_to_f64_lossy(acc_thousand) / 1000.0;
             simulate(acc) >= self.target_rks_threshold
         };
 
@@ -491,7 +523,7 @@ impl<'a> PushAccBatchSolver<'a> {
             Some(PushAccHint::PhiOnly)
         } else {
             Some(PushAccHint::TargetAcc {
-                acc: (lo as f64) / 1000.0,
+                acc: i64_to_f64_lossy(lo) / 1000.0,
             })
         }
     }
@@ -501,7 +533,10 @@ impl<'a> PushAccBatchSolver<'a> {
 ///
 /// - 仅建议在需要返回/展示推分信息的场景调用（例如 /save?calculate_rks=true）。
 /// - 结果使用 legacy 语义：无法推分/只能推到 100% 推分/已满 ACC 等场景统一回填 100.0。
-pub fn fill_push_acc_for_game_record(game_record: &mut HashMap<String, Vec<DifficultyRecord>>) {
+pub fn fill_push_acc_for_game_record<S>(game_record: &mut HashMap<String, Vec<DifficultyRecord>, S>)
+where
+    S: std::hash::BuildHasher,
+{
     // 1) 扁平化为引擎记录并按 rks 降序排序（PushAccBatchSolver 依赖排序）。
     let mut all: Vec<RksRecord> = Vec::new();
     for (song_id, diffs) in game_record.iter() {
@@ -813,6 +848,12 @@ pub fn calculate_all_push_hints(sorted_records: &[RksRecord]) -> HashMap<String,
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::float_cmp,
+    clippy::unreadable_literal
+)]
 mod tests {
     use super::*;
     use rand::{Rng, SeedableRng};

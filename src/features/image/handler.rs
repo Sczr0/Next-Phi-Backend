@@ -65,6 +65,30 @@ impl ImageQueryOpts {
 /// SVG 返回时，曲绘资源的同源访问前缀（由 `src/main.rs` 提供静态目录服务）。
 const ILLUSTRATION_PUBLIC_BASE_URL: &str = "/_ill";
 
+fn duration_ms_i64(duration: std::time::Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
+
+fn usize_from_u32(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn u32_from_usize(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn i64_from_usize(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn round_non_negative_to_u32(value: f64) -> u32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
 fn is_svg_format(q: &ImageQueryOpts) -> bool {
     q.format
         .as_deref()
@@ -132,6 +156,7 @@ fn normalized_template_cache_code(q: &ImageQueryOpts) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod tests {
     use super::{ImageQueryOpts, content_type_from_fmt_code, format_code};
     use axum::Json;
@@ -261,7 +286,7 @@ mod tests {
         let _ = crate::config::AppConfig::init_global();
 
         let cfg = crate::config::AppConfig::global();
-        let max_scores = cfg.image.max_user_scores as usize;
+        let max_scores = super::usize_from_u32(cfg.image.max_user_scores);
         assert!(max_scores > 0, "测试需要 max_user_scores > 0");
 
         let over = max_scores + 1;
@@ -443,7 +468,7 @@ pub async fn render_bn(
             tracing::info!(target: "bestn_performance", "缓存命中，缓存键: {}", key);
 
             if let Some(h) = state.stats.as_ref() {
-                let total_ms = t_total.elapsed().as_millis() as i64;
+                let total_ms = duration_ms_i64(t_total.elapsed());
                 let evt = crate::stats_contract::EventInsert {
                     ts_utc: chrono::Utc::now(),
                     route: Some("/image/bn".into()),
@@ -482,10 +507,9 @@ pub async fn render_bn(
             let total_duration = t_total.elapsed();
             tracing::info!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
             return Ok((StatusCode::OK, headers, p));
-        } else {
-            let _cache_duration = Instant::now().elapsed();
-            tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
         }
+        let _cache_duration = Instant::now().elapsed();
+        tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
         if let Some(h) = state.stats.as_ref() {
             let evt = crate::stats_contract::EventInsert {
                 ts_utc: chrono::Utc::now(),
@@ -510,7 +534,7 @@ pub async fn render_bn(
     let parsed = provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone())
         .await
         .map_err(|e| AppError::Internal(format!("获取存档失败: {e}")))?;
-    let save_ms = t_save.elapsed().as_millis() as i64;
+    let save_ms = duration_ms_i64(t_save.elapsed());
 
     // 扁平化为渲染记录 + 排序与推分预计算耗时
     let n = req.n.max(1);
@@ -580,7 +604,7 @@ pub async fn render_bn(
     });
     let sort_duration = t_sort_start.elapsed();
 
-    let top_len = (n as usize).min(all.len());
+    let top_len = usize_from_u32(n).min(all.len());
     tracing::info!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
 
     let t_push_start = Instant::now();
@@ -602,7 +626,7 @@ pub async fn render_bn(
     let push_acc_duration = t_push_start.elapsed();
     tracing::info!(target: "bestn_performance", "推分ACC计算完成，计算数量: {}, 耗时: {:?}ms", push_acc_map.len(), push_acc_duration.as_millis());
 
-    let flatten_ms = t_flatten.elapsed().as_millis() as i64;
+    let flatten_ms = duration_ms_i64(t_flatten.elapsed());
     let t_stats_start = Instant::now();
 
     // 统计计算：RKS 详情与平均值
@@ -617,7 +641,10 @@ pub async fn render_bn(
     let best_27_avg = if all.is_empty() {
         None
     } else {
-        Some(all.iter().take(27).map(|r| r.rks).sum::<f64>() / (all.len().min(27) as f64))
+        Some(
+            all.iter().take(27).map(|r| r.rks).sum::<f64>()
+                / f64::from(u32_from_usize(all.len().min(27))),
+        )
     };
     let stats_duration = t_stats_start.elapsed();
     tracing::info!(target: "bestn_performance", "统计数据计算完成，精确RKS: {:?}, AP Top3: {:?}, Best27: {:?}, 耗时: {:?}ms", 
@@ -737,7 +764,7 @@ pub async fn render_bn(
         let name = fetch_nickname(&token)
             .await
             .unwrap_or_else(|| "Phigros Player".into());
-        nickname_ms = t_nick.elapsed().as_millis() as i64;
+        nickname_ms = duration_ms_i64(t_nick.elapsed());
         name
     } else {
         "Phigros Player".into()
@@ -765,13 +792,13 @@ pub async fn render_bn(
 
     let t_semaphore_start = Instant::now();
     let sem = state.render_semaphore.clone();
-    let permits_avail = sem.available_permits() as i64;
+    let permits_avail = i64_from_usize(sem.available_permits());
     let t_wait = Instant::now();
     let _permit = sem
         .acquire_owned()
         .await
         .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
-    let wait_ms = t_wait.elapsed().as_millis() as i64;
+    let wait_ms = duration_ms_i64(t_wait.elapsed());
     let semaphore_duration = t_semaphore_start.elapsed();
     tracing::info!(target: "bestn_performance", "信号量获取完成，可用许可: {}, 等待时间: {:?}ms, 总获取时间: {:?}ms", 
                    permits_avail, wait_ms, semaphore_duration.as_millis());
@@ -818,7 +845,7 @@ pub async fn render_bn(
         (Bytes::from(v), ct)
     };
     let render_duration = t_render_start.elapsed();
-    let render_ms = render_duration.as_millis() as i64;
+    let render_ms = duration_ms_i64(render_duration);
     let bytes_len = bytes.len();
     tracing::info!(target: "bestn_performance", "图片渲染完成，输出格式: {}, 字节大小: {}, 耗时: {:?}ms", 
                    content_type, bytes_len, render_duration.as_millis());
@@ -883,7 +910,7 @@ pub async fn render_bn(
 
     // Basic render metrics (total time and key阶段耗时)
     if let Some(h) = state.stats.as_ref() {
-        let total_ms = t_total.elapsed().as_millis() as i64;
+        let total_ms = duration_ms_i64(t_total.elapsed());
         let logic_ms = total_ms.saturating_sub(save_ms).saturating_sub(render_ms);
         let fmt_str = match q.format.as_deref() {
             Some("jpeg" | "jpg") => "jpg",
@@ -1280,13 +1307,13 @@ pub async fn render_song(
 
     // 等待许可与渲染分段计时
     let sem2 = state.render_semaphore.clone();
-    let permits_avail2 = sem2.available_permits() as i64;
+    let permits_avail2 = i64_from_usize(sem2.available_permits());
     let t_wait2 = Instant::now();
     let _permit2 = sem2
         .acquire_owned()
         .await
         .map_err(|e| AppError::Internal(format!("获取渲染信号量失败: {e}")))?;
-    let wait_ms2 = t_wait2.elapsed().as_millis() as i64;
+    let wait_ms2 = duration_ms_i64(t_wait2.elapsed());
     let t_render2 = Instant::now();
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
     let public_base_url = public_illustration_base_url.map(std::string::ToString::to_string);
@@ -1318,7 +1345,7 @@ pub async fn render_song(
         .await?;
         (Bytes::from(v), ct)
     };
-    let render_ms2 = t_render2.elapsed().as_millis() as i64;
+    let render_ms2 = duration_ms_i64(t_render2.elapsed());
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {
         let salt = crate::config::AppConfig::global()
@@ -1368,7 +1395,7 @@ pub async fn render_song(
 
     // Basic render metrics (total)
     if let Some(h) = state.stats.as_ref() {
-        let total_ms = t_total.elapsed().as_millis() as i64;
+        let total_ms = duration_ms_i64(t_total.elapsed());
         let fmt_str = match q.format.as_deref() {
             Some("jpeg" | "jpg") => "jpg",
             Some("webp") => "webp",
@@ -1405,7 +1432,7 @@ fn to_engine_record(r: &RenderRecord) -> Option<crate::rks_contract::engine::Rks
     Some(crate::rks_contract::engine::RksRecord {
         song_id: r.song_id.clone(),
         difficulty: diff,
-        score: r.score.unwrap_or(0.0) as u32,
+        score: round_non_negative_to_u32(r.score.unwrap_or(0.0)),
         acc: r.acc,
         rks: r.rks,
         chart_constant: r.difficulty_value,
@@ -1538,7 +1565,7 @@ pub async fn render_bn_user(
 
     // 限制 user 自报成绩条数，避免大输入放大 CPU/内存（排序/推分求解均会随条数线性/超线性增长）。
     let cfg = AppConfig::global();
-    let max_scores = cfg.image.max_user_scores as usize;
+    let max_scores = usize_from_u32(cfg.image.max_user_scores);
     if max_scores > 0 && scores.len() > max_scores {
         return Err(AppError::Validation(format!(
             "scores 条数超过上限: {} > {}",
@@ -1617,7 +1644,7 @@ pub async fn render_bn_user(
                     Some(crate::rks_contract::engine::RksRecord {
                         song_id: r.song_id.clone(),
                         difficulty: diff,
-                        score: r.score.unwrap_or(0.0) as u32,
+                        score: round_non_negative_to_u32(r.score.unwrap_or(0.0)),
                         acc: r.acc,
                         rks: r.rks,
                         chart_constant: r.difficulty_value,
@@ -1649,7 +1676,7 @@ pub async fn render_bn_user(
             } else {
                 Some(
                     records.iter().take(27).map(|r| r.rks).sum::<f64>()
-                        / (records.len().min(27) as f64),
+                        / f64::from(u32_from_usize(records.len().min(27))),
                 )
             };
             let ap_top_3_scores: Vec<RenderRecord> = records
@@ -1705,7 +1732,7 @@ pub async fn render_bn_user(
         real_rks: Some(exact_rks),
         player_name: Some(display_name),
         update_time: Utc::now(),
-        n: n as u32,
+        n: u32_from_usize(n),
         ap_top_3_scores,
         challenge_rank: None,
         data_string: None,

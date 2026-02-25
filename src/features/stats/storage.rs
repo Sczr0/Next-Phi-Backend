@@ -16,6 +16,14 @@ use super::models::{DailyAggRow, EventInsert};
 const SESSION_CLEANUP_INTERVAL_SECS: i64 = 300;
 static LAST_SESSION_CLEANUP_TS: AtomicI64 = AtomicI64::new(0);
 
+fn saturating_u64_to_i64(value: u64) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn saturating_usize_to_i64(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
 /// 保存提交入库参数，减少函数参数数量
 pub struct SubmissionRecord<'a> {
     pub user_hash: &'a str,
@@ -519,7 +527,7 @@ impl StatsStorage {
         .execute(&self.pool)
         .await
         .map_err(|e| AppError::Internal(format!("delete events range: {e}")))?;
-        Ok(res.rows_affected() as i64)
+        Ok(saturating_u64_to_i64(res.rows_affected()))
     }
 
     pub async fn count_events_in_range(
@@ -1224,7 +1232,7 @@ impl StatsStorage {
                 if rows.is_empty() {
                     break;
                 }
-                let row_len = rows.len() as i64;
+                let row_len = saturating_usize_to_i64(rows.len());
                 for r in rows {
                     let id: i64 = match r.try_get("id") {
                         Ok(v) => v,
@@ -1445,8 +1453,9 @@ impl StatsStorage {
             let max_ms: Option<i64> = row.try_get("max").ok();
 
             let (p50_ms, p95_ms) = if n > 0 {
-                let p50_idx = (((n - 1) as f64) * 0.50).round() as i64;
-                let p95_idx = (((n - 1) as f64) * 0.95).round() as i64;
+                let span = n - 1;
+                let p50_idx = (span.saturating_mul(50) + 50) / 100;
+                let p95_idx = (span.saturating_mul(95) + 50) / 100;
 
                 let mut p50_qb = QueryBuilder::<Sqlite>::new(
                     "SELECT duration_ms as v FROM events WHERE route IS NOT NULL AND duration_ms IS NOT NULL",

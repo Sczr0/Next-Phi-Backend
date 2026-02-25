@@ -61,10 +61,12 @@ fn make_state(storage: Arc<StatsStorage>) -> AppState {
     let song_image_cache: Cache<String, Bytes> = Cache::builder().max_capacity(16).build();
 
     AppState {
-        chart_constants: Arc::new(Default::default()),
+        chart_constants: Arc::new(std::collections::HashMap::default()),
         song_catalog: Arc::new(SongCatalog::default()),
         taptap_client,
-        qrcode_service: Arc::new(Default::default()),
+        qrcode_service: Arc::new(
+            phi_backend::features::auth::qrcode_service::QrCodeService::default(),
+        ),
         stats: None,
         stats_storage: Some(storage),
         render_semaphore: Arc::new(Semaphore::new(1)),

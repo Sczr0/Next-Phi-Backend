@@ -52,7 +52,7 @@ pub async fn stats_middleware(
         action: None,
         method: Some(method),
         status: Some(status),
-        duration_ms: Some(dur.as_millis() as i64),
+        duration_ms: Some(i64::try_from(dur.as_millis()).unwrap_or(i64::MAX)),
         user_hash: None,
         client_ip_hash,
         instance: Some(crate::features::stats::hostname().into()),

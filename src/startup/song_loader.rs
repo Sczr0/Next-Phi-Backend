@@ -10,7 +10,8 @@ use crate::{
 pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
     if !info_path.exists() {
         return Err(AppError::Internal(format!(
-            "info 目录不存在: {info_path:?}"
+            "info 目录不存在: {}",
+            info_path.display()
         )));
     }
 
@@ -19,12 +20,14 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
 
     if !info_csv.exists() {
         return Err(AppError::Internal(format!(
-            "未找到歌曲信息文件 info.csv: {info_csv:?}"
+            "未找到歌曲信息文件 info.csv: {}",
+            info_csv.display()
         )));
     }
     if !nicklist_yaml.exists() {
         return Err(AppError::Internal(format!(
-            "未找到别名文件 nicklist.yaml: {nicklist_yaml:?}"
+            "未找到别名文件 nicklist.yaml: {}",
+            nicklist_yaml.display()
         )));
     }
 

@@ -195,7 +195,7 @@ pub async fn inspect_official_save(
     let (download_url, decrypt_meta, summary_b64, updated_at) =
         client::fetch_from_official(session_token, taptap_config, taptap_version).await?;
 
-    let summary_report = build_summary_report(&summary_b64, options.show_summary_raw);
+    let summary_report = build_summary_report(summary_b64.as_deref(), options.show_summary_raw);
     let url_report = if options.show_full_url {
         download_url.clone()
     } else {
@@ -252,19 +252,20 @@ pub async fn inspect_official_save(
     })
 }
 
+#[allow(clippy::struct_field_names)]
 struct SummaryReportParts {
     summary_b64: Option<String>,
     summary_parsed: Option<SummaryParsed>,
     summary_parse_error: Option<String>,
 }
 
-fn build_summary_report(summary_b64: &Option<String>, show_raw: bool) -> SummaryReportParts {
+fn build_summary_report(summary_b64: Option<&str>, show_raw: bool) -> SummaryReportParts {
     let mut out = SummaryReportParts {
         summary_b64: None,
         summary_parsed: None,
         summary_parse_error: None,
     };
-    let Some(b64) = summary_b64.as_deref() else {
+    let Some(b64) = summary_b64 else {
         return out;
     };
 
@@ -328,7 +329,7 @@ async fn download_bytes_limited(url: &str, max_bytes: usize) -> Result<Vec<u8>, 
 
     // 优先用 Content-Length 进行粗判（可能没有或不可信，但对“异常大响应”有帮助）。
     if let Some(len) = resp.content_length()
-        && len as usize > max_bytes
+        && usize::try_from(len).map_or(true, |size| size > max_bytes)
     {
         return Err(SaveProviderError::Io(format!(
             "download too large: content-length={len} exceeds limit={max_bytes}"

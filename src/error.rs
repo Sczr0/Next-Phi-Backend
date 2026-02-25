@@ -206,13 +206,15 @@ impl AppError {
             AppError::AuthPending(_) => StatusCode::ACCEPTED,
             AppError::Network(_) => StatusCode::BAD_GATEWAY,
             AppError::Timeout(_) => StatusCode::GATEWAY_TIMEOUT,
-            AppError::Json(_) => StatusCode::BAD_REQUEST,
+            AppError::Json(_) | AppError::SaveHandlerError(_) => StatusCode::BAD_REQUEST,
             AppError::Auth(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
-            AppError::SaveHandlerError(_) => StatusCode::BAD_REQUEST,
-            AppError::ImageRendererError(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            AppError::Validation(_) => StatusCode::UNPROCESSABLE_ENTITY,
-            AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::ImageRendererError(_) | AppError::Validation(_) => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
+            AppError::Conflict(_) | AppError::Search(SearchError::NotUnique { .. }) => {
+                StatusCode::CONFLICT
+            }
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::SaveProvider(e) => match e {
                 SaveProviderError::Auth(_) | SaveProviderError::InvalidCredentials(_) => {
@@ -224,7 +226,6 @@ impl AppError {
                 _ => StatusCode::UNPROCESSABLE_ENTITY,
             },
             AppError::Search(SearchError::NotFound) => StatusCode::NOT_FOUND,
-            AppError::Search(SearchError::NotUnique { .. }) => StatusCode::CONFLICT,
         }
     }
 
@@ -364,9 +365,8 @@ mod tests {
 
         tokio::spawn(async move {
             loop {
-                let (socket, _) = match listener.accept().await {
-                    Ok(v) => v,
-                    Err(_) => break,
+                let Ok((socket, _)) = listener.accept().await else {
+                    break;
                 };
                 tokio::spawn(async move {
                     // 不返回任何 HTTP 响应，触发客户端 read timeout。

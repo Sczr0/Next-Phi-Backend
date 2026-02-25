@@ -362,7 +362,7 @@ pub async fn archive_one_day(
         append_opt_string(&mut action_b, r.action);
         append_opt_string(&mut method_b, r.method);
 
-        match r.status.map(|v| v as u16) {
+        match r.status.and_then(|v| u16::try_from(v).ok()) {
             Some(v) => status_b.append_value(v),
             None => status_b.append_null(),
         }

@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use axum::{
     Router,
     extract::{Path, Query, Request, State},
@@ -112,7 +110,7 @@ pub(crate) async fn open_auth_qrcode_status(
 )]
 pub async fn open_save_data(
     State(state): State<AppState>,
-    Query(params): Query<HashMap<String, String>>,
+    Query(params): Query<std::collections::BTreeMap<String, String>>,
     req: Request,
 ) -> Result<Response, AppError> {
     crate::save_api::get_save_data(State(state), Query(params), req).await

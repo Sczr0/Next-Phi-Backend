@@ -856,8 +856,8 @@ pub async fn get_stats_summary(
                 if !(0..=i64::from(u16::MAX)).contains(&r.status) {
                     return None;
                 }
-                Some(StatusCodeSummary {
-                    status: r.status as u16,
+                u16::try_from(r.status).ok().map(|status| StatusCodeSummary {
+                    status,
                     count: r.count,
                 })
             })
@@ -1022,7 +1022,21 @@ fn fixed_offset_minutes_for_range(
 }
 
 fn rate(n: i64, d: i64) -> f64 {
-    if d <= 0 { 0.0 } else { (n as f64) / (d as f64) }
+    fn i64_to_f64_lossy(value: i64) -> f64 {
+        value.to_string().parse::<f64>().unwrap_or_else(|_| {
+            if value.is_negative() {
+                f64::MIN
+            } else {
+                f64::MAX
+            }
+        })
+    }
+
+    if d <= 0 {
+        0.0
+    } else {
+        i64_to_f64_lossy(n) / i64_to_f64_lossy(d)
+    }
 }
 
 fn normalize_top_per_day(top: Option<i64>) -> Result<i64, AppError> {
@@ -1043,7 +1057,7 @@ enum LatencyBucket {
 }
 
 impl LatencyBucket {
-    fn as_str(&self) -> &'static str {
+    fn as_str(self) -> &'static str {
         match self {
             LatencyBucket::Day => "day",
             LatencyBucket::Week => "week",
@@ -1586,7 +1600,8 @@ async fn query_daily_http(
                         .then(a.route.cmp(&b.route))
                         .then(a.method.cmp(&b.method))
                 });
-                v.truncate(top_per_day as usize);
+                let top_limit = usize::try_from(top_per_day).unwrap_or(usize::MAX);
+                v.truncate(top_limit);
                 // 保持输出按 date ASC，再按排序 key
                 out_routes.extend(v);
             }

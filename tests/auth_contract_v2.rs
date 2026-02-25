@@ -57,7 +57,7 @@ fn make_state() -> AppState {
     let song_image_cache: Cache<String, Bytes> = Cache::builder().max_capacity(16).build();
 
     AppState {
-        chart_constants: Arc::new(Default::default()),
+        chart_constants: Arc::new(std::collections::HashMap::default()),
         song_catalog: Arc::new(SongCatalog::default()),
         taptap_client,
         qrcode_service,
@@ -581,7 +581,8 @@ async fn session_refresh_rejects_token_expired_too_long() {
         .expect("decode embedded auth");
 
     let now_ts = chrono::Utc::now().timestamp();
-    let refresh_window = AppConfig::global().session.revoke_ttl_secs as i64;
+    let refresh_window = i64::try_from(AppConfig::global().session.revoke_ttl_secs)
+        .expect("revoke_ttl_secs fits i64");
     let expired_too_long_token = mint_session_token_from_auth(
         &auth,
         sub,

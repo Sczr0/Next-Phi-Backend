@@ -1,3 +1,15 @@
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    clippy::doc_markdown,
+    clippy::ignore_without_reason,
+    clippy::items_after_statements,
+    clippy::redundant_closure,
+    clippy::similar_names,
+    clippy::too_many_lines
+)]
+
 /// B27图片生成性能测试
 ///
 /// 使用方式:
@@ -318,7 +330,8 @@ async fn test_b27_generation_with_flamegraph() {
     let phase8_start = std::time::Instant::now();
 
     // 渲染为 PNG
-    let png = phi_backend::features::image::render_svg_to_png(svg, false).expect("渲染 PNG 失败");
+    let png =
+        phi_backend::features::image::render_svg_to_png(&svg, false).expect("渲染 PNG 失败");
 
     let phase8_elapsed = phase8_start.elapsed();
     println!("  PNG 大小: {} bytes", png.len());

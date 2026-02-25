@@ -1,3 +1,14 @@
+#![allow(
+    clippy::similar_names,           // 允许 in_idx 和 id_idx 同时存在
+    clippy::missing_errors_doc,      // 不想为每个 Result 函数写文档
+    clippy::missing_panics_doc,      // 不想为每个 .expect() 写文档
+    clippy::too_many_lines,          // 允许长函数（特别是渲染逻辑）
+    clippy::doc_markdown,            // 不想在注释里给每个 OpenAPI 加反引号
+    clippy::struct_excessive_bools,  // 结构体里超过3个 bool 没啥大不了的
+    clippy::items_after_statements,  // 允许在函数中间写 use 或 struct
+    clippy::module_name_repetitions  // 允许 PlayerStats 在 player 模块里
+)]
+
 use axum::body::Bytes;
 use axum::extract::Request;
 use axum::http::{HeaderValue, header};
@@ -126,7 +137,7 @@ async fn main() {
                 ticker.tick().await;
                 if let Some(code) = wm.current_dynamic_code() {
                     if code != last {
-                        last = code.clone();
+                        last.clone_from(&code);
                         tracing::info!(
                             "watermark_unlock_code = {} (valid for ~{}s)",
                             code,
@@ -221,7 +232,7 @@ async fn main() {
     let bn_image_cache: Cache<String, Bytes> = {
         let img = &config.image;
         Cache::builder()
-            .weigher(|_k, v: &Bytes| v.len() as u32)
+            .weigher(|_k, v: &Bytes| u32::try_from(v.len()).unwrap_or(u32::MAX))
             .max_capacity(img.cache_max_bytes)
             .time_to_live(Duration::from_secs(img.cache_ttl_secs))
             .time_to_idle(Duration::from_secs(img.cache_tti_secs))
@@ -230,7 +241,7 @@ async fn main() {
     let song_image_cache: Cache<String, Bytes> = {
         let img = &config.image;
         Cache::builder()
-            .weigher(|_k, v: &Bytes| v.len() as u32)
+            .weigher(|_k, v: &Bytes| u32::try_from(v.len()).unwrap_or(u32::MAX))
             .max_capacity(img.cache_max_bytes)
             .time_to_live(Duration::from_secs(img.cache_ttl_secs))
             .time_to_idle(Duration::from_secs(img.cache_tti_secs))
@@ -312,7 +323,7 @@ async fn main() {
     ));
 
     // 启动看门狗任务
-    if let Err(e) = watchdog.start_watchdog_task().await {
+    if let Err(e) = watchdog.start_watchdog_task() {
         tracing::warn!("看门狗任务启动失败: {}", e);
     }
 
@@ -353,7 +364,7 @@ async fn main() {
         }
 
         // 设置优雅退出超时
-        match tokio::time::timeout(shutdown_timeout, async move {
+        if let Ok(()) = tokio::time::timeout(shutdown_timeout, async move {
             tracing::info!("优雅退出超时时间: {}秒", shutdown_config.timeout_secs);
 
             // 清理统计服务
@@ -372,17 +383,13 @@ async fn main() {
             // 等待一小段时间确保其他资源清理完成
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         })
-        .await
-        {
-            Ok(()) => {
-                tracing::info!("优雅退出完成");
-            }
-            Err(_) => {
-                tracing::warn!("优雅退出超时，强制退出");
-                if shutdown_config.force_quit {
-                    tracing::info!("等待 {} 秒后强制退出", shutdown_config.force_delay_secs);
-                    tokio::time::sleep(shutdown_config.force_delay_duration()).await;
-                }
+        .await {
+            tracing::info!("优雅退出完成");
+        } else {
+            tracing::warn!("优雅退出超时，强制退出");
+            if shutdown_config.force_quit {
+                tracing::info!("等待 {} 秒后强制退出", shutdown_config.force_delay_secs);
+                tokio::time::sleep(shutdown_config.force_delay_duration()).await;
             }
         }
     };

@@ -57,6 +57,10 @@ enum SearchMatchKind {
 }
 
 impl SongCatalog {
+    fn usize_to_i32_saturating(value: usize) -> i32 {
+        i32::try_from(value).unwrap_or(i32::MAX)
+    }
+
     fn score_match(
         kind: SearchMatchKind,
         q_lower: &str,
@@ -68,11 +72,11 @@ impl SongCatalog {
         // - 基础分严格遵循 search() 的合并顺序：官方名 > 别名；等于 > 前缀 > 子串。
         // - 额外分用于在同一匹配类型内做更友好的排序（更短、更靠前的命中更优）。
 
-        let q_len = q_lower.len() as i32;
-        let hay_len = hay_lower.len() as i32;
+        let q_len = Self::usize_to_i32_saturating(q_lower.len());
+        let hay_len = Self::usize_to_i32_saturating(hay_lower.len());
         let extra_len_penalty = (hay_len - q_len).clamp(0, 200); // 越长越不相关（上限避免过度影响）
         let pos_bonus = pos
-            .map_or(0, |p| (200_i32 - (p as i32).min(200)).max(0)); // 命中越靠前越优
+            .map_or(0, |p| (200_i32 - Self::usize_to_i32_saturating(p).min(200)).max(0)); // 命中越靠前越优
 
         match kind {
             SearchMatchKind::NameEquals => 6000,
@@ -395,7 +399,7 @@ impl SongCatalog {
         mode: SearchMode,
         options: SearchOptions,
     ) -> Vec<Arc<SongInfo>> {
-        let tokens = parse_tokens(query, &options);
+        let tokens = parse_tokens(query, options);
         if tokens.is_empty() {
             return Vec::new();
         }
@@ -408,7 +412,7 @@ impl SongCatalog {
         let mut negatives: Vec<HashSet<&str>> = Vec::new();
 
         for t in &tokens {
-            let matched = self.match_token(&t.text, &options);
+            let matched = self.match_token(&t.text, options);
             if t.is_exclude {
                 negatives.push(matched);
             } else {
@@ -449,8 +453,8 @@ impl SongCatalog {
             .collect();
 
         results.sort_by(|a, b| {
-            score_song(a, &tokens, &options, self)
-                .cmp(&score_song(b, &tokens, &options, self))
+            score_song(a, &tokens, options, self)
+                .cmp(&score_song(b, &tokens, options, self))
                 .reverse()
         });
 
@@ -458,7 +462,7 @@ impl SongCatalog {
     }
 
     /// 针对单个 token 生成命中的歌曲 ID 集合（按任意字段）
-    fn match_token<'a>(&'a self, token: &str, options: &SearchOptions) -> HashSet<&'a str> {
+    fn match_token<'a>(&'a self, token: &str, options: SearchOptions) -> HashSet<&'a str> {
         let mut set: HashSet<&str> = HashSet::new();
 
         // 遍历所有歌曲：ID / 官方名 / 作曲者
@@ -523,7 +527,7 @@ struct Token {
 }
 
 /// 将原始查询串解析为 tokens：支持双引号短语与负号排除
-fn parse_tokens(input: &str, options: &SearchOptions) -> Vec<Token> {
+fn parse_tokens(input: &str, options: SearchOptions) -> Vec<Token> {
     let s = input.trim();
     if s.is_empty() {
         return Vec::new();
@@ -582,7 +586,7 @@ fn parse_tokens(input: &str, options: &SearchOptions) -> Vec<Token> {
 }
 
 /// 字段匹配：等于（忽略大小写）/ 前缀 / 子串
-fn field_match(field: &str, token: &str, options: &SearchOptions) -> bool {
+fn field_match(field: &str, token: &str, options: SearchOptions) -> bool {
     if field.is_empty() || token.is_empty() {
         return false;
     }
@@ -617,7 +621,7 @@ fn field_match(field: &str, token: &str, options: &SearchOptions) -> bool {
 fn score_song(
     song: &Arc<SongInfo>,
     tokens: &[Token],
-    options: &SearchOptions,
+    options: SearchOptions,
     catalog: &SongCatalog,
 ) -> i32 {
     let mut score = 0i32;
@@ -648,7 +652,7 @@ fn score_song(
 fn score_field(
     field: &str,
     token: &str,
-    options: &SearchOptions,
+    options: SearchOptions,
     eq_w: i32,
     pre_w: i32,
     sub_w: i32,

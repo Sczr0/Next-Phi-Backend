@@ -148,7 +148,6 @@ fn extract_partition_day(path: &Path) -> Option<NaiveDate> {
         }
         if let Some(v) = seg.strip_prefix("day=") {
             day = v.parse::<u32>().ok();
-            continue;
         }
     }
 
@@ -268,6 +267,7 @@ async fn main() {
     }
 }
 
+#[allow(clippy::cast_precision_loss, clippy::too_many_lines)]
 async fn run() -> Result<(), AppError> {
     let args = CliArgs::parse().map_err(AppError::Validation)?;
     let cfg = AppConfig::load().map_err(|e| AppError::Internal(format!("load config: {e}")))?;

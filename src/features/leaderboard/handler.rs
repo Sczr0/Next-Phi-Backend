@@ -166,6 +166,20 @@ fn mask_user_prefix(hash: &str) -> String {
     out
 }
 
+fn usize_to_i64_saturating(value: usize) -> i64 {
+    i64::try_from(value).unwrap_or(i64::MAX)
+}
+
+fn i64_to_f64_lossy(value: i64) -> f64 {
+    value.to_string().parse::<f64>().unwrap_or_else(|_| {
+        if value.is_negative() {
+            f64::MIN
+        } else {
+            f64::MAX
+        }
+    })
+}
+
 /// 批量查询 BestTop3/APTop3 文本详情，避免 N+1 往返。
 ///
 /// 行为保持：详情查询失败时，仍然返回排行榜主数据（详情字段为 None）。
@@ -247,9 +261,9 @@ pub async fn get_top(
     // capture last row tokens if has more
     let has_more = if q.after_score.is_some() && q.after_updated.is_some() && q.after_user.is_some()
     {
-        (rows.len() as i64) == limit
+        usize_to_i64_saturating(rows.len()) == limit
     } else {
-        (offset + rows.len() as i64) < total
+        (offset + usize_to_i64_saturating(rows.len())) < total
     };
     let (mut last_score, mut last_updated, mut last_user_hash) =
         (None::<f64>, None::<String>, None::<String>);
@@ -302,7 +316,7 @@ pub async fn get_top(
         }
 
         items.push(LeaderboardTopItem {
-            rank: (offset + idx as i64 + 1),
+            rank: offset + usize_to_i64_saturating(idx) + 1,
             alias,
             user: mask_user_prefix(&user_hash),
             score,
@@ -400,7 +414,7 @@ pub async fn get_by_rank(
     let rows = storage.query_leaderboard_by_rank(limit, offset).await?;
 
     let mut items: Vec<LeaderboardTopItem> = Vec::with_capacity(rows.len());
-    let has_more = ((start_rank - 1) + rows.len() as i64) < total;
+    let has_more = ((start_rank - 1) + usize_to_i64_saturating(rows.len())) < total;
     let (mut last_score, mut last_updated, mut last_user_hash) =
         (None::<f64>, None::<String>, None::<String>);
     if has_more && let Some(r) = rows.last() {
@@ -452,7 +466,7 @@ pub async fn get_by_rank(
         }
 
         items.push(LeaderboardTopItem {
-            rank: start_rank + i as i64,
+            rank: start_rank + usize_to_i64_saturating(i),
             alias,
             user: mask_user_prefix(&user_hash),
             score,
@@ -554,7 +568,7 @@ pub async fn post_me(
         .count_public_leaderboard_higher(my_score, &my_updated, &user_hash)
         .await?;
     let rank = higher + 1;
-    let percentile = 100.0 * (1.0 - ((rank - 1) as f64 / total as f64));
+    let percentile = 100.0 * (1.0 - (i64_to_f64_lossy(rank - 1) / i64_to_f64_lossy(total)));
     Ok(Json(MeResponse {
         rank,
         score: my_score,
@@ -896,7 +910,7 @@ pub struct SuspiciousItem {
 pub async fn get_suspicious(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(p): Query<std::collections::HashMap<String, String>>,
+    Query(p): Query<std::collections::BTreeMap<String, String>>,
 ) -> Result<Json<Vec<SuspiciousItem>>, AppError> {
     require_admin(&headers)?;
     let storage = state

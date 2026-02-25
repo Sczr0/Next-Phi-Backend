@@ -5,6 +5,16 @@ use serde_json::Value;
 use super::models::{Difficulty, DifficultyRecord};
 use crate::startup::chart_loader::ChartConstantsMap;
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
+fn f64_to_f32_lossy(value: f64) -> f32 {
+    value as f32
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn i64_to_f32_lossy(value: i64) -> f32 {
+    value as f32
+}
+
 struct Reader<'a> {
     data: &'a [u8],
     off: usize,
@@ -120,9 +130,9 @@ pub fn parse_game_record(
 
             // accuracy: 浮点数
             let accuracy_f32 = if let Some(v) = chunk[1].as_f64() {
-                v as f32
+                f64_to_f32_lossy(v)
             } else if let Some(v) = chunk[1].as_i64() {
-                v as f32
+                i64_to_f32_lossy(v)
             } else {
                 return Err(format!("accuracy at '{song_id}'[{idx}] is not a number"));
             };
@@ -248,10 +258,10 @@ mod tests {
 
     fn push_varshort(buf: &mut Vec<u8>, v: usize) {
         if v < 0x80 {
-            buf.push(v as u8);
+            buf.push(u8::try_from(v).expect("v < 0x80"));
         } else {
-            let b0 = ((v & 0x7F) as u8) | 0x80;
-            let b1 = ((v >> 7) & 0xFF) as u8;
+            let b0 = u8::try_from(v & 0x7F).expect("low 7 bits always fit in u8") | 0x80;
+            let b1 = u8::try_from((v >> 7) & 0xFF).expect("masked high byte always fits in u8");
             buf.push(b0);
             buf.push(b1);
         }

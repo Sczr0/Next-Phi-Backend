@@ -49,10 +49,12 @@ fn new_test_state(storage: Arc<StatsStorage>) -> AppState {
     let song_image_cache: Cache<String, Bytes> = Cache::builder().max_capacity(1024).build();
 
     AppState {
-        chart_constants: Arc::new(Default::default()),
+        chart_constants: Arc::new(std::collections::HashMap::default()),
         song_catalog: Arc::new(SongCatalog::default()),
         taptap_client: Arc::new(taptap_client),
-        qrcode_service: Arc::new(Default::default()),
+        qrcode_service: Arc::new(
+            phi_backend::features::auth::qrcode_service::QrCodeService::default(),
+        ),
         stats: None,
         stats_storage: Some(storage),
         render_semaphore: Arc::new(Semaphore::new(1)),
@@ -125,7 +127,7 @@ async fn seed_many_public_users(storage: &StatsStorage, n: usize) {
     for i in 0..n {
         let user_hash = format!("u{i:04}");
         let alias = format!("User{i:04}");
-        let score = 1000.0 - i as f64;
+        let score = 1000.0 - f64::from(u32::try_from(i).expect("index in test fits u32"));
 
         sqlx::query(
             "INSERT INTO user_profile(user_hash, alias, is_public, show_rks_composition, show_best_top3, show_ap_top3, user_kind, created_at, updated_at)

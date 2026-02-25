@@ -69,6 +69,7 @@ mod systemd_impl {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(clippy::unnecessary_wraps)]
 mod systemd_impl {
     use tracing::debug;
     /// 发送ready信号（非Linux平台）
@@ -126,7 +127,7 @@ impl SystemdWatchdog {
     /// 启动看门狗心跳任务
     ///
     /// 如果启用了看门狗，将定期发送心跳信号到systemd
-    pub async fn start_watchdog_task(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn start_watchdog_task(&self) -> Result<(), Box<dyn std::error::Error>> {
         if !self.config.enabled {
             info!("看门狗功能已禁用");
             return Ok(());

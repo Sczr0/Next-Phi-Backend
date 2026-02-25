@@ -16,6 +16,26 @@ use crate::error::AppError;
 use super::engine;
 use super::{COVER_ASPECT_RATIO, MAIN_FONT_NAME, PlayerStats, RenderRecord, SongRenderData, Theme};
 
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn round_non_negative_to_u32(value: f64) -> u32 {
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().clamp(0.0, f64::from(u32::MAX)) as u32
+}
+
+fn u32_from_usize(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
+}
+
+fn usize_from_u32(value: u32) -> usize {
+    usize::try_from(value).unwrap_or(usize::MAX)
+}
+
+fn f64_from_usize(value: usize) -> f64 {
+    f64::from(u32_from_usize(value))
+}
+
 /// SVG 外部模板渲染入口（BestN / Song）。
 ///
 /// 设计原则：
@@ -321,8 +341,8 @@ fn resolve_cover_href_for_card(
         let mut href = path.clone();
         if embed_images {
             let pb = PathBuf::from(&href);
-            let w = cover_w.max(1.0).round() as u32;
-            let h = cover_h.max(1.0).round() as u32;
+            let w = round_non_negative_to_u32(cover_w.max(1.0));
+            let h = round_non_negative_to_u32(cover_h.max(1.0));
             href = super::get_scaled_image_data_uri(&pb, w, h).unwrap_or(href);
         }
         if let Some(base) = public_illustration_base_url
@@ -339,24 +359,30 @@ fn resolve_cover_href_for_card(
         .map(|base| super::build_remote_illustration_low_res_url(base, song_id))
 }
 
-struct BnCardBuildCtx<'a> {
+struct BnCardBuildCtx<'a, S>
+where
+    S: std::hash::BuildHasher,
+{
     theme: &'a Theme,
     embed_images: bool,
     public_illustration_base_url: Option<&'a str>,
     engine_records: &'a [engine::RksRecord],
-    push_acc_map: Option<&'a HashMap<String, engine::PushAccHint>>,
+    push_acc_map: Option<&'a HashMap<String, engine::PushAccHint, S>>,
     layout: &'a BnTemplateLayout,
 }
 
-fn build_bn_card(
+fn build_bn_card<S>(
     score: &RenderRecord,
     index: usize,
     card_x: u32,
     card_y: u32,
     card_w: u32,
     is_ap_card: bool,
-    ctx: &BnCardBuildCtx<'_>,
-) -> CardCtx {
+    ctx: &BnCardBuildCtx<'_, S>,
+) -> CardCtx
+where
+    S: std::hash::BuildHasher,
+{
     // 内边距与行高：沿用原实现的尺度，便于在模板中替换字段排列时保持可读。
     let card_padding = 10.0;
     let text_line_height_song = 22.0;
@@ -378,7 +404,7 @@ fn build_bn_card(
         song_lines.join("\n")
     };
 
-    let song_lines_count = song_lines.len().max(1) as f64;
+    let song_lines_count = f64_from_usize(song_lines.len().max(1));
     let text_block_height = text_line_height_song * song_lines_count
         + text_line_height_score
         + text_line_height_acc
@@ -387,7 +413,7 @@ fn build_bn_card(
 
     let cover_h = text_block_height;
     let cover_w = cover_h * COVER_ASPECT_RATIO;
-    let card_h = (cover_h + card_padding * 2.0).round().max(1.0) as u32;
+    let card_h = round_non_negative_to_u32((cover_h + card_padding * 2.0).max(1.0));
     let card_radius = 8u32;
 
     let cover_x = card_padding;
@@ -477,9 +503,10 @@ fn build_bn_card(
     if let Some(hint) = push_hint {
         let suffix = match hint {
             engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
-            engine::PushAccHint::PhiOnly => " -> 100.00%".to_string(),
+            engine::PushAccHint::PhiOnly | engine::PushAccHint::AlreadyPhi => {
+                " -> 100.00%".to_string()
+            }
             engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
-            engine::PushAccHint::AlreadyPhi => " -> 100.00%".to_string(),
         };
         acc_text.push_str(&suffix);
     }
@@ -597,7 +624,7 @@ fn read_json_override_cached<T>(
 where
     T: DeserializeOwned + Clone,
 {
-    let meta = if let Ok(v) = std::fs::metadata(cfg_path) { v } else {
+    let Ok(meta) = std::fs::metadata(cfg_path) else {
         let mut map = cache.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         map.remove(cfg_path);
         return None;
@@ -620,7 +647,7 @@ where
         }
     }
 
-    let s = if let Ok(v) = std::fs::read_to_string(cfg_path) { v } else {
+    let Ok(s) = std::fs::read_to_string(cfg_path) else {
         let mut map = cache.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         map.insert(
             cfg_path.to_path_buf(),
@@ -664,15 +691,18 @@ fn read_song_template_layout_override(cfg_path: &Path) -> Option<SongTemplateLay
     read_json_override_cached(cache, cfg_path)
 }
 
-pub(super) fn generate_bn_svg_with_template(
+pub(super) fn generate_bn_svg_with_template<S>(
     scores: &[RenderRecord],
     stats: &PlayerStats,
-    push_acc_map: Option<&HashMap<String, engine::PushAccHint>>,
-    theme: &Theme,
+    push_acc_map: Option<&HashMap<String, engine::PushAccHint, S>>,
+    theme: Theme,
     embed_images: bool,
     public_illustration_base_url: Option<&str>,
     template_id: Option<&str>,
-) -> Result<String, AppError> {
+) -> Result<String, AppError>
+where
+    S: std::hash::BuildHasher,
+{
     let template_id = clamp_template_id(template_id);
     let template_name = format!("bn/{template_id}.svg.jinja");
 
@@ -779,7 +809,7 @@ pub(super) fn generate_bn_svg_with_template(
     });
 
     let card_ctx = BnCardBuildCtx {
-        theme,
+        theme: &theme,
         embed_images,
         public_illustration_base_url,
         engine_records: engine_records_for_scores.as_slice(),
@@ -793,7 +823,7 @@ pub(super) fn generate_bn_svg_with_template(
     let mut ap_cards = Vec::<CardCtx>::new();
     let mut ap_row_max_h = 0u32;
     for (idx, score) in stats.ap_top_3_scores.iter().take(3).enumerate() {
-        let x_pos = card_gap + idx as u32 * (main_card_width + card_gap);
+        let x_pos = card_gap + u32_from_usize(idx) * (main_card_width + card_gap);
         let c = build_bn_card(
             score,
             idx,
@@ -820,10 +850,10 @@ pub(super) fn generate_bn_svg_with_template(
     while index < scores.len() {
         let mut row_cards = Vec::<CardCtx>::new();
         let mut row_max_h = 0u32;
-        for col in 0..columns as usize {
+        for col in 0..usize_from_u32(columns) {
             let idx = index + col;
             let Some(score) = scores.get(idx) else { break };
-            let x = card_gap + (col as u32) * (main_card_width + card_gap);
+            let x = card_gap + u32_from_usize(col) * (main_card_width + card_gap);
             let c = build_bn_card(score, idx, x, 0, main_card_width, false, &card_ctx);
             row_max_h = row_max_h.max(c.h);
             row_cards.push(c);
@@ -833,7 +863,7 @@ pub(super) fn generate_bn_svg_with_template(
         }
         cards.extend(row_cards);
         next_y = next_y.saturating_add(row_max_h).saturating_add(card_gap);
-        index += columns as usize;
+        index += usize_from_u32(columns);
     }
 
     let total_height = (next_y + layout.footer_height + 10).max(layout.header_height + 200);
@@ -1046,8 +1076,8 @@ pub(super) fn generate_song_svg_with_template(
     let illust_x = padding;
     let illust_y = padding + player_info_height + padding;
     let illust_r = 18.0;
-    let illust_target_w = illust_width.max(1.0).round() as u32;
-    let illust_target_h = illust_height.max(1.0).round() as u32;
+    let illust_target_w = round_non_negative_to_u32(illust_width.max(1.0));
+    let illust_target_h = round_non_negative_to_u32(illust_height.max(1.0));
     let illust_href = resolve_song_illust_href(
         data,
         embed_images,
@@ -1080,7 +1110,7 @@ pub(super) fn generate_song_svg_with_template(
     let mut difficulty_cards = Vec::<SongDiffCardCtx>::new();
     for (idx, key) in ["EZ", "HD", "IN", "AT"].into_iter().enumerate() {
         let pos_x = cards_start_x;
-        let pos_y = cards_start_y + idx as f64 * (card_h + card_spacing);
+        let pos_y = cards_start_y + f64_from_usize(idx) * (card_h + card_spacing);
         let r = 18.0;
 
         let content_padding = 18.0;
@@ -1109,9 +1139,9 @@ pub(super) fn generate_song_svg_with_template(
                     } else if let Some(hint) = score_data.player_push_acc {
                         let suffix = match hint {
                             engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
-                            engine::PushAccHint::PhiOnly => " -> 100.00%".to_string(),
+                            engine::PushAccHint::PhiOnly
+                            | engine::PushAccHint::AlreadyPhi => " -> 100.00%".to_string(),
                             engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
-                            engine::PushAccHint::AlreadyPhi => " -> 100.00%".to_string(),
                         };
                         acc_text.push_str(&suffix);
                     }
@@ -1230,6 +1260,7 @@ pub(super) fn generate_song_svg_with_template(
 }
 
 #[cfg(test)]
+#[allow(clippy::float_cmp)]
 mod json_override_cache_tests {
     use super::*;
 

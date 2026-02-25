@@ -1,3 +1,14 @@
+#![allow(
+    clippy::similar_names,           // 允许 in_idx 和 id_idx 同时存在
+    clippy::missing_errors_doc,      // 不想为每个 Result 函数写文档
+    clippy::missing_panics_doc,      // 不想为每个 .expect() 写文档
+    clippy::too_many_lines,          // 允许长函数（特别是渲染逻辑）
+    clippy::doc_markdown,            // 不想在注释里给每个 OpenAPI 加反引号
+    clippy::struct_excessive_bools,  // 结构体里超过3个 bool 没啥大不了的
+    clippy::items_after_statements,  // 允许在函数中间写 use 或 struct
+    clippy::module_name_repetitions  // 允许 PlayerStats 在 player 模块里
+)]
+
 //! 本地管理员命令行工具：
 //! - 查看排行榜完整 user_hash
 //! - 扫描可疑用户（返回完整 user_hash，便于直接封禁）
@@ -206,7 +217,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .try_init();
 
-    let args = Args::parse(env::args().skip(1).collect())?;
+    let argv: Vec<String> = env::args().skip(1).collect();
+    let args = Args::parse(&argv)?;
     if args.help || args.cmd.is_none() {
         print_help();
         return Ok(());
@@ -259,7 +271,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 impl Args {
-    fn parse(argv: Vec<String>) -> Result<Self, CliError> {
+    fn parse(argv: &[String]) -> Result<Self, CliError> {
         let mut help = false;
         let mut json = false;
         let mut base_url = None;
@@ -297,9 +309,10 @@ impl Args {
                 }
                 "--token-env" => {
                     idx += 1;
-                    token_env = argv
-                        .get(idx)
-                        .ok_or_else(|| CliError::Args("缺少 --token-env 的值".to_string()))?.clone();
+                    token_env.clone_from(
+                        argv.get(idx)
+                            .ok_or_else(|| CliError::Args("缺少 --token-env 的值".to_string()))?,
+                    );
                     idx += 1;
                 }
                 "--timeout-secs" => {

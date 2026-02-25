@@ -130,10 +130,6 @@ pub async fn fetch_from_official(
     let tap_config = match version {
         Some("global") => &config.global,
         Some("cn") => &config.cn,
-        None => match config.default_version {
-            TapTapVersion::CN => &config.cn,
-            TapTapVersion::Global => &config.global,
-        },
         _ => match config.default_version {
             TapTapVersion::CN => &config.cn,
             TapTapVersion::Global => &config.global,
@@ -426,6 +422,6 @@ mod tests {
         let high = clamp_pbkdf2_rounds(1_000_000);
         assert!(low >= 1000);
         assert_eq!(ok, 5000);
-        assert!(high <= 100000);
+        assert!(high <= 100_000);
     }
 }

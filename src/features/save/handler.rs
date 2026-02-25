@@ -59,6 +59,10 @@ fn json_bytes_response(body: Bytes) -> Response {
     (StatusCode::OK, [(CONTENT_TYPE, "application/json")], body).into_response()
 }
 
+fn duration_ms_i64(duration: Duration) -> i64 {
+    i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+}
+
 /// /save 缓存 key：同一用户 + 同一 updatedAt + 同一认证版本视为同一份存档结果。
 fn build_save_cache_key(
     user_hash: Option<&str>,
@@ -139,7 +143,7 @@ fn save_cache() -> &'static Cache<String, SaveCacheEntry> {
 )]
 pub async fn get_save_data(
     State(state): State<AppState>,
-    Query(params): Query<HashMap<String, String>>,
+    Query(params): Query<std::collections::BTreeMap<String, String>>,
     req: axum::extract::Request,
 ) -> Result<Response, AppError> {
     let t_total = Instant::now();
@@ -205,7 +209,7 @@ pub async fn get_save_data(
         .is_some_and(|v| v == "true");
     // 排行榜写入需要：统计存储开启 + 能识别到用户身份
     let need_leaderboard = state.stats_storage.is_some() && user_hash.is_some();
-    let auth_ms = t_auth.elapsed().as_millis() as i64;
+    let auth_ms = duration_ms_i64(t_auth.elapsed());
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -231,7 +235,7 @@ pub async fn get_save_data(
             return Err(e);
         }
     };
-    let source_ms = t_source.elapsed().as_millis() as i64;
+    let source_ms = duration_ms_i64(t_source.elapsed());
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -265,7 +269,7 @@ pub async fn get_save_data(
             return Err(e.into());
         }
     };
-    let meta_ms = t_meta.elapsed().as_millis() as i64;
+    let meta_ms = duration_ms_i64(t_meta.elapsed());
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -296,7 +300,7 @@ pub async fn get_save_data(
         if let Some(key) = cache_key.as_ref() {
             let t_cache = Instant::now();
             if let Some(entry) = save_cache().get(key).await {
-                let cache_lookup_ms = t_cache.elapsed().as_millis() as i64;
+                let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
                 if let Some(stats) = state.stats.as_ref() {
                     let extra = serde_json::json!({
                         "status": "hit",
@@ -308,7 +312,7 @@ pub async fn get_save_data(
                 let t_decode = Instant::now();
                 let parsed = entry.parsed.clone();
                 let data_body_bytes = entry.data_body_bytes.clone();
-                let save_decode_ms = t_decode.elapsed().as_millis() as i64;
+                let save_decode_ms = duration_ms_i64(t_decode.elapsed());
                 (
                     parsed,
                     data_body_bytes,
@@ -317,7 +321,7 @@ pub async fn get_save_data(
                     "hit",
                 )
             } else {
-                let cache_lookup_ms = t_cache.elapsed().as_millis() as i64;
+                let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
                 if let Some(stats) = state.stats.as_ref() {
                     let extra = serde_json::json!({
                         "status": "miss",
@@ -332,7 +336,7 @@ pub async fn get_save_data(
                         .await?;
                 let parsed = Arc::new(parsed);
                 let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
-                let save_decode_ms = t_decode.elapsed().as_millis() as i64;
+                let save_decode_ms = duration_ms_i64(t_decode.elapsed());
                 save_cache()
                     .insert(
                         key.clone(),
@@ -365,7 +369,7 @@ pub async fn get_save_data(
                 provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone()).await?;
             let parsed = Arc::new(parsed);
             let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
-            let save_decode_ms = t_decode.elapsed().as_millis() as i64;
+            let save_decode_ms = duration_ms_i64(t_decode.elapsed());
             (parsed, data_body_bytes, 0_i64, save_decode_ms, "skipped")
         };
     let cache_lookup_status = if cache_status == "skipped" {
@@ -403,7 +407,7 @@ pub async fn get_save_data(
     if !need_calc {
         let t_serialize = Instant::now();
         let body = data_body_bytes.clone();
-        let serialize_ms = t_serialize.elapsed().as_millis() as i64;
+        let serialize_ms = duration_ms_i64(t_serialize.elapsed());
         tracing::info!(
             target: "phi_backend::save::performance",
             route = "/save",
@@ -433,7 +437,7 @@ pub async fn get_save_data(
                 "meta_ms": meta_ms,
                 "calc_ms": 0_i64,
                 "serialize_ms": serialize_ms,
-                "total_ms": t_total.elapsed().as_millis() as i64,
+                "total_ms": duration_ms_i64(t_total.elapsed()),
                 "calculate_rks": false,
                 "version": taptap_version.unwrap_or("default")
             });
@@ -522,7 +526,7 @@ pub async fn get_save_data(
             )));
         }
     };
-    let calc_ms = t_calc.elapsed().as_millis() as i64;
+    let calc_ms = duration_ms_i64(t_calc.elapsed());
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -669,7 +673,7 @@ pub async fn get_save_data(
     if !calc_rks {
         let t_serialize = Instant::now();
         let body = data_body_bytes.clone();
-        let serialize_ms = t_serialize.elapsed().as_millis() as i64;
+        let serialize_ms = duration_ms_i64(t_serialize.elapsed());
         tracing::info!(
             target: "phi_backend::save::performance",
             route = "/save",
@@ -699,7 +703,7 @@ pub async fn get_save_data(
                 "meta_ms": meta_ms,
                 "calc_ms": calc_ms,
                 "serialize_ms": serialize_ms,
-                "total_ms": t_total.elapsed().as_millis() as i64,
+                "total_ms": duration_ms_i64(t_total.elapsed()),
                 "calculate_rks": false,
                 "version": taptap_version.unwrap_or("default")
             });
@@ -736,7 +740,7 @@ pub async fn get_save_data(
     };
     let t_serialize = Instant::now();
     let body = serialize_json_bytes(&resp, "save+rks response")?;
-    let serialize_ms = t_serialize.elapsed().as_millis() as i64;
+    let serialize_ms = duration_ms_i64(t_serialize.elapsed());
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -757,7 +761,7 @@ pub async fn get_save_data(
             "meta_ms": meta_ms,
             "calc_ms": calc_ms,
             "serialize_ms": serialize_ms,
-            "total_ms": t_total.elapsed().as_millis() as i64,
+            "total_ms": duration_ms_i64(t_total.elapsed()),
             "calculate_rks": true,
             "version": taptap_version.unwrap_or("default")
         });

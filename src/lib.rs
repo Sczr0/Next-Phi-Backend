@@ -1,3 +1,14 @@
+#![allow(
+    clippy::similar_names,           // 允许 in_idx 和 id_idx 同时存在
+    clippy::missing_errors_doc,      // 不想为每个 Result 函数写文档
+    clippy::missing_panics_doc,      // 不想为每个 .expect() 写文档
+    clippy::too_many_lines,          // 允许长函数（特别是渲染逻辑）
+    clippy::doc_markdown,            // 不想在注释里给每个 OpenAPI 加反引号
+    clippy::struct_excessive_bools,  // 结构体里超过3个 bool 没啥大不了的
+    clippy::items_after_statements,  // 允许在函数中间写 use 或 struct
+    clippy::module_name_repetitions  // 允许 PlayerStats 在 player 模块里
+)]
+
 /// 统一错误处理模块
 pub mod error;
 

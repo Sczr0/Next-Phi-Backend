@@ -67,7 +67,8 @@ impl<'a> Reader<'a> {
         }
     }
     fn read_string(&mut self, end: usize) -> Result<String, SaveProviderError> {
-        let len = self.read_varshort()? as usize;
+        let len = usize::try_from(self.read_varshort()?)
+            .map_err(|_| SaveProviderError::Decrypt("invalid string length".into()))?;
         if self.remain() < len {
             return Err(SaveProviderError::Decrypt("EOF string".into()));
         }
@@ -389,7 +390,12 @@ pub fn parse_single_save_entry_to_json(
     }
 }
 
-pub fn parse_save_to_json(entries: &HashMap<String, Vec<u8>>) -> Result<Value, SaveProviderError> {
+pub fn parse_save_to_json<S>(
+    entries: &HashMap<String, Vec<u8>, S>,
+) -> Result<Value, SaveProviderError>
+where
+    S: std::hash::BuildHasher,
+{
     let mut root = serde_json::Map::with_capacity(entries.len().min(5));
     for name in ["gameRecord", "gameKey", "gameProgress", "user", "settings"] {
         if let Some(entry) = entries.get(name) {

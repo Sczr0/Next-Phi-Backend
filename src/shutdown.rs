@@ -158,6 +158,7 @@ impl ShutdownManager {
     ///
     /// 在Linux/macOS上监听SIGINT和SIGTERM
     /// 在Windows上监听Ctrl+C
+    #[allow(clippy::unused_async)]
     pub async fn start_signal_handler(&self) -> Result<(), ShutdownError> {
         #[cfg(unix)]
         {
@@ -166,7 +167,8 @@ impl ShutdownManager {
 
         #[cfg(windows)]
         {
-            self.start_windows_signal_handler().await
+            self.start_windows_signal_handler();
+            Ok(())
         }
     }
 
@@ -206,7 +208,7 @@ impl ShutdownManager {
     }
 
     #[cfg(windows)]
-    async fn start_windows_signal_handler(&self) -> Result<(), ShutdownError> {
+    fn start_windows_signal_handler(&self) {
         info!("启动Windows信号处理器");
 
         let manager = self.clone();
@@ -222,7 +224,6 @@ impl ShutdownManager {
             manager.trigger_shutdown(ShutdownReason::Interrupt);
         });
 
-        Ok(())
     }
 }
 
