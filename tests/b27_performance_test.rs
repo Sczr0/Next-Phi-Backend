@@ -49,7 +49,7 @@ async fn test_b27_generation_with_flamegraph() {
 
     // 启动性能分析（仅 Unix 系统）
     #[cfg(unix)]
-    let _guard = {
+    let guard = {
         println!("启动性能分析器...");
         ProfilerGuardBuilder::default()
             .frequency(1000) // 采样频率 1000Hz
@@ -370,7 +370,7 @@ async fn test_b27_generation_with_flamegraph() {
     #[cfg(unix)]
     {
         println!("\n生成火焰图...");
-        if let Ok(report) = _guard.report().build() {
+        if let Ok(report) = guard.report().build() {
             let flamegraph_path = output_dir.join("flamegraph.svg");
             let flamegraph_file = File::create(&flamegraph_path).expect("创建火焰图文件失败");
             report.flamegraph(flamegraph_file).expect("生成火焰图失败");
