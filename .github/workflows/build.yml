@@ -34,7 +34,7 @@ jobs:
       run: cargo fmt --all -- --check
 
     - name: 运行 Clippy
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
 
     - name: 运行测试
       run: cargo test --all-targets --all-features
