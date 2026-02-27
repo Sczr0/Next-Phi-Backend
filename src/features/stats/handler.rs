@@ -303,7 +303,7 @@ pub struct DailyHttpRouteRow {
     server_error_rate: f64,
 }
 
-#[derive(Serialize, utoipa::ToSchema)]
+#[derive(Serialize, utoipa::ToSchema, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct DailyHttpResponse {
     timezone: String,
@@ -365,6 +365,19 @@ pub async fn get_daily_http(
         .as_ref()
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
 
+    let cache_key = build_daily_http_cache_key(
+        storage,
+        tz_name.as_str(),
+        &q.start,
+        &q.end,
+        q.route.as_deref(),
+        q.method.as_deref(),
+        top,
+    );
+    if let Some(cached) = daily_http_cache().get(&cache_key).await {
+        return Ok(Json((*cached).clone()));
+    }
+
     let (totals, routes) = query_daily_http(
         storage,
         tz,
@@ -376,7 +389,7 @@ pub async fn get_daily_http(
     )
     .await?;
 
-    Ok(Json(DailyHttpResponse {
+    let resp = DailyHttpResponse {
         timezone: tz_name,
         start: q.start,
         end: q.end,
@@ -384,7 +397,11 @@ pub async fn get_daily_http(
         method_filter: q.method,
         totals,
         routes,
-    }))
+    };
+    daily_http_cache()
+        .insert(cache_key, Arc::new(resp.clone()))
+        .await;
+    Ok(Json(resp))
 }
 
 #[derive(Deserialize)]
@@ -930,8 +947,11 @@ fn convert_tz(ts_rfc3339: &str, tz: chrono_tz::Tz) -> Option<String> {
 }
 
 const STATS_SUMMARY_CACHE_MAX_ENTRIES: u64 = 256;
-const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 15;
-const STATS_SUMMARY_CACHE_TTI_SECS: u64 = 10;
+const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 60;
+const STATS_SUMMARY_CACHE_TTI_SECS: u64 = 30;
+const DAILY_HTTP_CACHE_MAX_ENTRIES: u64 = 256;
+const DAILY_HTTP_CACHE_TTL_SECS: u64 = 20;
+const DAILY_HTTP_CACHE_TTI_SECS: u64 = 10;
 
 fn stats_summary_cache() -> &'static Cache<String, Arc<StatsSummaryResponse>> {
     static CACHE: OnceLock<Cache<String, Arc<StatsSummaryResponse>>> = OnceLock::new();
@@ -969,6 +989,34 @@ fn build_stats_summary_cache_key(
         u8::from(include.latency),
         u8::from(include.unique_ips),
         u8::from(include.user_kinds),
+    )
+}
+
+fn daily_http_cache() -> &'static Cache<String, Arc<DailyHttpResponse>> {
+    static CACHE: OnceLock<Cache<String, Arc<DailyHttpResponse>>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        Cache::builder()
+            .max_capacity(DAILY_HTTP_CACHE_MAX_ENTRIES)
+            .time_to_live(Duration::from_secs(DAILY_HTTP_CACHE_TTL_SECS))
+            .time_to_idle(Duration::from_secs(DAILY_HTTP_CACHE_TTI_SECS))
+            .build()
+    })
+}
+
+fn build_daily_http_cache_key(
+    storage: &Arc<crate::features::stats::storage::StatsStorage>,
+    tz_name: &str,
+    start: &str,
+    end: &str,
+    route: Option<&str>,
+    method: Option<&str>,
+    top: i64,
+) -> String {
+    let storage_key = Arc::as_ptr(storage) as usize;
+    format!(
+        "{storage_key}|{tz_name}|{start}|{end}|{}|{}|{top}",
+        route.unwrap_or(""),
+        method.unwrap_or("")
     )
 }
 
@@ -1466,17 +1514,32 @@ async fn query_daily_http(
     if let Some(off_min) = fixed_offset {
         let modifier = sqlite_minutes_modifier(off_min);
         let modifier_ref = modifier.as_str();
-        let rows = storage
-            .query_daily_http_routes_with_offset(
-                modifier_ref,
-                &start_utc,
-                &end_utc,
-                route,
-                method,
-                top_per_day,
-            )
-            .await
-            .map_err(|e| AppError::Internal(format!("daily http: {e}")))?;
+        let routes_fut = async {
+            storage
+                .query_daily_http_routes_with_offset(
+                    modifier_ref,
+                    &start_utc,
+                    &end_utc,
+                    route,
+                    method,
+                    top_per_day,
+                )
+                .await
+                .map_err(|e| AppError::Internal(format!("daily http routes: {e}")))
+        };
+        let totals_fut = async {
+            storage
+                .query_daily_http_totals_with_offset(
+                    modifier_ref,
+                    &start_utc,
+                    &end_utc,
+                    route,
+                    method,
+                )
+                .await
+                .map_err(|e| AppError::Internal(format!("daily http totals: {e}")))
+        };
+        let (rows, total_rows) = tokio::try_join!(routes_fut, totals_fut)?;
 
         route_rows.reserve(rows.len());
         for r in rows {
@@ -1500,11 +1563,6 @@ async fn query_daily_http(
                 server_error_rate: rate(server_errors, total),
             });
         }
-
-        let total_rows = storage
-            .query_daily_http_totals_with_offset(modifier_ref, &start_utc, &end_utc, route, method)
-            .await
-            .map_err(|e| AppError::Internal(format!("daily http totals: {e}")))?;
 
         for r in total_rows {
             let date = r.date;
@@ -2488,6 +2546,74 @@ mod tests {
         assert_eq!(resp.routes[0].method, "GET");
         assert_eq!(resp.routes[0].errors, 1);
         assert_eq!(resp.routes[0].total, 2);
+    }
+
+    #[tokio::test]
+    async fn daily_http_cache_returns_stale_within_ttl() {
+        let sqlite_path = tmp_sqlite_path("stats_daily_http_cache_hit");
+        let state = build_test_state(&sqlite_path).await;
+        let storage = state.stats_storage.as_ref().unwrap().clone();
+
+        storage
+            .insert_events(&[EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 1, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip1".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            }])
+            .await
+            .unwrap();
+
+        let q = DailyHttpQuery {
+            start: "2025-12-24".into(),
+            end: "2025-12-24".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            route: None,
+            method: None,
+            top: Some(200),
+        };
+        let Json(first) = get_daily_http(State(state.clone()), Query(q))
+            .await
+            .unwrap();
+        assert_eq!(first.totals.len(), 1);
+        assert_eq!(first.totals[0].total, 1);
+
+        storage
+            .insert_events(&[EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 1, 0, 1),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(500),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip2".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            }])
+            .await
+            .unwrap();
+
+        let q = DailyHttpQuery {
+            start: "2025-12-24".into(),
+            end: "2025-12-24".into(),
+            timezone: Some("Asia/Shanghai".into()),
+            route: None,
+            method: None,
+            top: Some(200),
+        };
+        let Json(second) = get_daily_http(State(state), Query(q)).await.unwrap();
+        assert_eq!(second.totals.len(), 1);
+        assert_eq!(second.totals[0].total, 1);
+        assert_eq!(second.totals[0].errors, 0);
     }
 
     #[tokio::test]

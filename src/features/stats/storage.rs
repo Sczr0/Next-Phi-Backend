@@ -4,6 +4,7 @@ use std::{
 };
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use futures_util::TryStreamExt;
 use sqlx::{
     ConnectOptions, QueryBuilder, Row, Sqlite, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteRow},
@@ -17,10 +18,6 @@ const SESSION_CLEANUP_INTERVAL_SECS: i64 = 300;
 static LAST_SESSION_CLEANUP_TS: AtomicI64 = AtomicI64::new(0);
 
 fn saturating_u64_to_i64(value: u64) -> i64 {
-    i64::try_from(value).unwrap_or(i64::MAX)
-}
-
-fn saturating_usize_to_i64(value: usize) -> i64 {
     i64::try_from(value).unwrap_or(i64::MAX)
 }
 
@@ -1164,97 +1161,102 @@ impl StatsStorage {
         top: i64,
         want_meta: bool,
     ) -> Result<StatsSummaryData, AppError> {
-        let mut overall_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT MIN(ts_utc) as min_ts, MAX(ts_utc) as max_ts FROM events WHERE 1=1",
-        );
-        push_stats_ts_range_filters(&mut overall_qb, start_utc, end_utc);
-        let row = overall_qb
-            .build()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary overall: {e}")))?;
-        let first_event_ts = row.try_get::<String, _>("min_ts").ok();
-        let last_event_ts = row.try_get::<String, _>("max_ts").ok();
+        let overall_fut = async {
+            let mut overall_qb = QueryBuilder::<Sqlite>::new(
+                "SELECT MIN(ts_utc) as min_ts, MAX(ts_utc) as max_ts FROM events WHERE 1=1",
+            );
+            push_stats_ts_range_filters(&mut overall_qb, start_utc, end_utc);
+            let row = overall_qb
+                .build()
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("summary overall: {e}")))?;
+            Ok::<(Option<String>, Option<String>), AppError>((
+                row.try_get::<String, _>("min_ts").ok(),
+                row.try_get::<String, _>("max_ts").ok(),
+            ))
+        };
 
-        let mut features_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT feature, COUNT(1) as cnt, MAX(ts_utc) as last_ts FROM events WHERE feature IS NOT NULL",
-        );
-        push_stats_ts_range_filters(&mut features_qb, start_utc, end_utc);
-        push_stats_feature_filter(&mut features_qb, feature);
-        features_qb.push(" GROUP BY feature");
-        let feat_rows = features_qb
-            .build()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary features: {e}")))?;
-        let mut features = Vec::with_capacity(feat_rows.len());
-        for r in feat_rows {
-            let f: String = r.try_get("feature").unwrap_or_else(|_| String::new());
-            let c: i64 = r.try_get("cnt").unwrap_or(0);
-            let last_ts: Option<String> = r.try_get("last_ts").ok();
-            features.push(SummaryFeatureRow {
-                feature: f,
-                count: c,
-                last_ts,
-            });
-        }
+        let features_fut = async {
+            let mut features_qb = QueryBuilder::<Sqlite>::new(
+                "SELECT feature, COUNT(1) as cnt, MAX(ts_utc) as last_ts FROM events WHERE feature IS NOT NULL",
+            );
+            push_stats_ts_range_filters(&mut features_qb, start_utc, end_utc);
+            push_stats_feature_filter(&mut features_qb, feature);
+            features_qb.push(" GROUP BY feature");
+            let feat_rows = features_qb
+                .build()
+                .fetch_all(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("summary features: {e}")))?;
 
-        let mut users_qb = QueryBuilder::<Sqlite>::new(
-            "SELECT COUNT(DISTINCT user_hash) as total FROM events WHERE user_hash IS NOT NULL",
-        );
-        push_stats_ts_range_filters(&mut users_qb, start_utc, end_utc);
-        push_stats_feature_filter(&mut users_qb, feature);
-        let row = users_qb
-            .build()
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
-        let unique_users_total: i64 = row.try_get("total").unwrap_or(0);
+            let mut features = Vec::with_capacity(feat_rows.len());
+            for r in feat_rows {
+                let f: String = r.try_get("feature").unwrap_or_else(|_| String::new());
+                let c: i64 = r.try_get("cnt").unwrap_or(0);
+                let last_ts: Option<String> = r.try_get("last_ts").ok();
+                features.push(SummaryFeatureRow {
+                    feature: f,
+                    count: c,
+                    last_ts,
+                });
+            }
+            Ok::<Vec<SummaryFeatureRow>, AppError>(features)
+        };
+
+        let users_fut = async {
+            let mut users_qb = QueryBuilder::<Sqlite>::new(
+                "SELECT COUNT(DISTINCT user_hash) as total FROM events WHERE user_hash IS NOT NULL",
+            );
+            push_stats_ts_range_filters(&mut users_qb, start_utc, end_utc);
+            push_stats_feature_filter(&mut users_qb, feature);
+            let row = users_qb
+                .build()
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("summary users: {e}")))?;
+            Ok::<i64, AppError>(row.try_get("total").unwrap_or(0))
+        };
+
+        let ((first_event_ts, last_event_ts), features, unique_users_total) =
+            tokio::try_join!(overall_fut, features_fut, users_fut)?;
 
         let by_kind = if include.user_kinds {
+            #[derive(serde::Deserialize)]
+            struct UserKindFromExtra {
+                user_kind: Option<String>,
+            }
+
             use std::collections::{HashMap, HashSet};
-            const BATCH: i64 = 5000;
-            let mut last_id: i64 = 0;
+            let mut by_kind_qb = QueryBuilder::<Sqlite>::new(
+                "SELECT user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL",
+            );
+            push_stats_ts_range_filters(&mut by_kind_qb, start_utc, end_utc);
+            push_stats_feature_filter(&mut by_kind_qb, feature);
+
+            let mut stream = by_kind_qb.build().fetch(&self.pool);
             let mut uniq: HashSet<(String, String)> = HashSet::new();
-            loop {
-                let mut by_kind_qb = QueryBuilder::<Sqlite>::new(
-                    "SELECT id, user_hash, extra_json FROM events WHERE user_hash IS NOT NULL AND extra_json IS NOT NULL",
-                );
-                by_kind_qb.push(" AND id > ").push_bind(last_id);
-                push_stats_ts_range_filters(&mut by_kind_qb, start_utc, end_utc);
-                push_stats_feature_filter(&mut by_kind_qb, feature);
-                by_kind_qb.push(" ORDER BY id ASC LIMIT ").push_bind(BATCH);
-                let rows = by_kind_qb
-                    .build()
-                    .fetch_all(&self.pool)
-                    .await
-                    .map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?;
-                if rows.is_empty() {
-                    break;
+            while let Some(r) = stream
+                .try_next()
+                .await
+                .map_err(|e| AppError::Internal(format!("summary by_kind: {e}")))?
+            {
+                let uh: String = match r.try_get("user_hash") {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                let ej: String = match r.try_get("extra_json") {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+                if !ej.contains("user_kind") {
+                    continue;
                 }
-                let row_len = saturating_usize_to_i64(rows.len());
-                for r in rows {
-                    let id: i64 = match r.try_get("id") {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    last_id = id.max(last_id);
-                    let uh: String = match r.try_get("user_hash") {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    let ej: String = match r.try_get("extra_json") {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&ej)
-                        && let Some(kind) = val.get("user_kind").and_then(|v| v.as_str())
-                    {
-                        uniq.insert((uh, kind.to_string()));
-                    }
-                }
-                if row_len < BATCH {
-                    break;
+                if let Ok(extra) = serde_json::from_str::<UserKindFromExtra>(&ej)
+                    && let Some(kind) = extra.user_kind
+                    && !kind.is_empty()
+                {
+                    uniq.insert((uh, kind));
                 }
             }
 
