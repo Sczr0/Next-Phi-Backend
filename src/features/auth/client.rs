@@ -21,10 +21,11 @@ pub struct TapTapClient {
 }
 
 fn map_reqwest_error(context: &'static str, err: &reqwest::Error) -> AppError {
+    let sanitized = crate::error::sanitize_reqwest_error(err);
     if err.is_timeout() {
-        AppError::Timeout(format!("{context}: {err}"))
+        AppError::Timeout(format!("{context}: {sanitized}"))
     } else {
-        AppError::Network(format!("{context}: {err}"))
+        AppError::Network(format!("{context}: {sanitized}"))
     }
 }
 

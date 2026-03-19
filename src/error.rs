@@ -200,6 +200,16 @@ pub struct ProblemFieldError {
     pub message: String,
 }
 
+/// 脱敏 reqwest 错误中的完整 URL，避免把上游地址直接暴露给前端。
+#[must_use]
+pub(crate) fn sanitize_reqwest_error(err: &reqwest::Error) -> String {
+    let mut message = err.to_string();
+    if let Some(url) = err.url() {
+        message = message.replace(url.as_str(), "[redacted-url]");
+    }
+    message
+}
+
 impl AppError {
     fn status_code(&self) -> StatusCode {
         match self {
@@ -327,7 +337,7 @@ impl From<reqwest::Error> for SaveProviderError {
         if err.is_timeout() {
             SaveProviderError::Timeout
         } else {
-            SaveProviderError::Network(err.to_string())
+            SaveProviderError::Network(sanitize_reqwest_error(&err))
         }
     }
 }
@@ -352,7 +362,7 @@ impl From<serde_json::Error> for SaveProviderError {
 
 #[cfg(test)]
 mod tests {
-    use super::SaveProviderError;
+    use super::{SaveProviderError, sanitize_reqwest_error};
     use std::time::Duration;
 
     async fn start_hanging_http_server() -> std::net::SocketAddr {
@@ -398,6 +408,34 @@ mod tests {
         assert!(
             matches!(sp, SaveProviderError::Timeout),
             "expected SaveProviderError::Timeout, got: {sp:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn sanitize_reqwest_error_redacts_full_url() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind tcp listener");
+        let addr = listener.local_addr().expect("local addr");
+        drop(listener);
+
+        let url = format!("http://{addr}/secret/path?token=123");
+        let err = reqwest::Client::new()
+            .get(&url)
+            .send()
+            .await
+            .expect_err("expected connect error");
+
+        let sanitized = sanitize_reqwest_error(&err);
+        assert!(
+            !sanitized.contains(&url),
+            "expected sanitized message to hide full url, got: {sanitized}"
+        );
+        assert!(
+            sanitized.contains("[redacted-url]"),
+            "expected sanitized message to contain redaction placeholder, got: {sanitized}"
         );
     }
 }
