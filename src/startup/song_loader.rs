@@ -42,10 +42,7 @@ fn push_song_nickname(catalog: &mut SongCatalog, nickname: &str, song: &Arc<Song
         return;
     }
 
-    let entry = catalog
-        .by_nickname
-        .entry(nickname.to_string())
-        .or_default();
+    let entry = catalog.by_nickname.entry(nickname.to_string()).or_default();
     if !entry.iter().any(|existing| existing.id == song.id) {
         entry.push(Arc::clone(song));
     }
