@@ -160,8 +160,10 @@ pub async fn search_songs(
     let unique = params.unique.as_deref().is_some_and(parse_bool);
     let multi_mode = match params.mode.as_deref() {
         None => None,
-        Some(raw) => parse_search_mode(raw)
-            .ok_or_else(|| AppError::Validation("mode 仅支持 and 或 or".into()))?,
+        Some(raw) => Some(
+            parse_search_mode(raw)
+                .ok_or_else(|| AppError::Validation("mode 仅支持 and 或 or".into()))?,
+        ),
     };
 
     let limit = match params.limit {
