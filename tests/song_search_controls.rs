@@ -113,7 +113,7 @@ fn song_catalog_search_is_stably_ordered_for_same_name() {
     catalog
         .by_name
         .entry("Alpha".to_string())
-        .or_insert_with(Vec::new)
+        .or_default()
         .extend([Arc::clone(&b), Arc::clone(&a)]);
 
     catalog.rebuild_search_cache();
@@ -597,7 +597,7 @@ async fn songs_search_mode_or_alias_score_only_affects_own_song() {
     catalog
         .by_nickname
         .entry("IS".to_string())
-        .or_insert_with(Vec::new)
+        .or_default()
         .push(Arc::clone(&alias_song));
     catalog.rebuild_search_cache();
 
@@ -652,7 +652,7 @@ async fn songs_search_exact_alias_is_ranked_before_name_contains() {
     catalog
         .by_nickname
         .entry("IS".to_string())
-        .or_insert_with(Vec::new)
+        .or_default()
         .push(Arc::clone(&alias_song));
     catalog.rebuild_search_cache();
 
@@ -759,7 +759,7 @@ async fn songs_search_unique_exact_alias_ignores_weaker_contains_matches() {
     catalog
         .by_nickname
         .entry("IS".to_string())
-        .or_insert_with(Vec::new)
+        .or_default()
         .push(Arc::clone(&alias_song));
     catalog.rebuild_search_cache();
 
@@ -812,7 +812,7 @@ async fn songs_search_unique_normalized_alias_beats_name_prefix() {
     catalog
         .by_nickname
         .entry("BurnSP".to_string())
-        .or_insert_with(Vec::new)
+        .or_default()
         .push(Arc::clone(&alias_song));
     catalog.rebuild_search_cache();
 
@@ -865,7 +865,7 @@ async fn songs_search_unique_fuzzy_alias_returns_target_when_no_regular_match_ex
     catalog
         .by_nickname
         .entry("BurnSP".to_string())
-        .or_insert_with(Vec::new)
+        .or_default()
         .push(Arc::clone(&alias_song));
     catalog.rebuild_search_cache();
 

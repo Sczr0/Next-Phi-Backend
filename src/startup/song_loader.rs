@@ -45,7 +45,7 @@ fn push_song_nickname(catalog: &mut SongCatalog, nickname: &str, song: &Arc<Song
     let entry = catalog
         .by_nickname
         .entry(nickname.to_string())
-        .or_insert_with(Vec::new);
+        .or_default();
     if !entry.iter().any(|existing| existing.id == song.id) {
         entry.push(Arc::clone(song));
     }
@@ -159,7 +159,7 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
         catalog
             .by_name
             .entry(name)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(Arc::clone(&info));
     }
 
