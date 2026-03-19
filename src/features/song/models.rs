@@ -102,7 +102,12 @@ impl SongCatalog {
         }
     }
 
-    fn score_fuzzy_match(kind: SearchMatchKind, q_normalized: &str, hay_normalized: &str, distance: usize) -> i32 {
+    fn score_fuzzy_match(
+        kind: SearchMatchKind,
+        q_normalized: &str,
+        hay_normalized: &str,
+        distance: usize,
+    ) -> i32 {
         let q_len = Self::usize_to_i32_saturating(q_normalized.len());
         let hay_len = Self::usize_to_i32_saturating(hay_normalized.len());
         let len_penalty = (hay_len - q_len).abs().min(120);
@@ -219,7 +224,8 @@ impl SongCatalog {
                 } else {
                     (&q_normalized, nick_normalized)
                 };
-                let score = Self::score_match(SearchMatchKind::NickEquals, query_key, hay_key, Some(0));
+                let score =
+                    Self::score_match(SearchMatchKind::NickEquals, query_key, hay_key, Some(0));
                 for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickEquals, score);
@@ -256,7 +262,8 @@ impl SongCatalog {
                 } else {
                     (&q_normalized, nick_normalized)
                 };
-                let score = Self::score_match(SearchMatchKind::NickPrefix, query_key, hay_key, Some(0));
+                let score =
+                    Self::score_match(SearchMatchKind::NickPrefix, query_key, hay_key, Some(0));
                 for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickPrefix, score);
