@@ -582,8 +582,8 @@ async fn songs_search_mode_or_alias_score_only_affects_own_song() {
     });
     let other_song = Arc::new(SongInfo {
         id: "other".to_string(),
-        name: "Noah Theme".to_string(),
-        composer: "Noah".to_string(),
+        name: "Theme".to_string(),
+        composer: "noa".to_string(),
         illustrator: "i".to_string(),
         chart_constants: chart_constants_none(),
     });
@@ -605,7 +605,7 @@ async fn songs_search_mode_or_alias_score_only_affects_own_song() {
     let resp = app
         .oneshot(
             Request::builder()
-                .uri("/api/v2/songs/search?q=IS%20Noah&mode=or&limit=2")
+                .uri("/api/v2/songs/search?q=IS%20noa&mode=or&limit=2")
                 .body(Body::empty())
                 .unwrap(),
         )
