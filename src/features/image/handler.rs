@@ -761,7 +761,7 @@ pub async fn render_bn(
         n
     } else if let Some(token) = req.auth.session_token.clone() {
         let t_nick = Instant::now();
-        let name = fetch_nickname(&token)
+        let name = fetch_nickname(&token, req.auth.taptap_version.as_deref())
             .await
             .unwrap_or_else(|| "Phigros Player".into());
         nickname_ms = duration_ms_i64(t_nick.elapsed());
@@ -1294,7 +1294,7 @@ pub async fn render_song(
     let display_name = if let Some(n) = req.nickname.clone() {
         n
     } else if let Some(token) = req.auth.session_token.clone() {
-        fetch_nickname(&token)
+        fetch_nickname(&token, req.auth.taptap_version.as_deref())
             .await
             .unwrap_or_else(|| "Phigros Player".into())
     } else {
@@ -1466,20 +1466,19 @@ pub fn create_image_router() -> Router<AppState> {
 }
 
 /// 从 LeanCloud users/me 获取昵称（复用 phigros.cxx 的请求头部）
-async fn fetch_nickname(session_token: &str) -> Option<String> {
+async fn fetch_nickname(session_token: &str, taptap_version: Option<&str>) -> Option<String> {
     #[derive(serde::Deserialize)]
     struct UserMe {
         nickname: Option<String>,
     }
-    const LC_ID: &str = "rAK3FfdieFob2Nn8Am";
-    const LC_KEY: &str = "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0";
-    let url = "https://rak3ffdi.cloud.tds1.tapapis.cn/1.1/users/me";
+    let tap_config = AppConfig::global().taptap.resolve(taptap_version);
+    let url = format!("{}/users/me", tap_config.leancloud_base_url);
     // 复用全局连接池，避免每次请求创建 Client。
     let client = crate::http::client_default().ok()?;
     let resp = client
         .get(url)
-        .header("X-LC-Id", LC_ID)
-        .header("X-LC-Key", LC_KEY)
+        .header("X-LC-Id", &tap_config.leancloud_app_id)
+        .header("X-LC-Key", &tap_config.leancloud_app_key)
         .header("X-LC-Session", session_token)
         .send()
         .await

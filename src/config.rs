@@ -479,6 +479,27 @@ pub struct TapTapMultiConfig {
     pub default_version: TapTapVersion,
 }
 
+impl TapTapMultiConfig {
+    /// 根据请求参数解析对应的 TapTap 配置，未指定时回落到默认版本。
+    #[must_use]
+    pub fn resolve(&self, version: Option<&str>) -> &TapTapConfig {
+        let version = version.map(str::trim);
+        if let Some(version) = version {
+            if version.eq_ignore_ascii_case("global") {
+                return &self.global;
+            }
+            if version.eq_ignore_ascii_case("cn") {
+                return &self.cn;
+            }
+        }
+
+        match self.default_version {
+            TapTapVersion::CN => &self.cn,
+            TapTapVersion::Global => &self.global,
+        }
+    }
+}
+
 /// 品牌/展示配置
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BrandingConfig {
@@ -628,9 +649,9 @@ impl Default for TapTapMultiConfig {
                 device_code_endpoint: "https://www.taptap.io/oauth2/v1/device/code".to_string(),
                 token_endpoint: "https://www.taptap.io/oauth2/v1/token".to_string(),
                 user_info_endpoint: "https://open.tapapis.io/account/basic-info/v1".to_string(),
-                leancloud_base_url: "https://rak3ffdi.cloud.tds1.tapapis.io/1.1".to_string(),
-                leancloud_app_id: "rAK3FfdieFob2Nn8Am".to_string(),
-                leancloud_app_key: "Qr9AEqtuoSVS3zeD6iVbM4ZC0AtkJcQ89tywVyi0".to_string(),
+                leancloud_base_url: "https://kviehlel.cloud.ap-sg.tapapis.com/1.1".to_string(),
+                leancloud_app_id: "kviehleldgxsagpozb".to_string(),
+                leancloud_app_key: "tG9CTm0LDD736k9HMM9lBZrbeBGRmUkjSfNLDNib".to_string(),
             },
             default_version: TapTapVersion::default(),
         }

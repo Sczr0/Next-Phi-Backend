@@ -4,7 +4,6 @@ use std::time::Instant;
 
 use super::decryptor::{CipherSuite, DEFAULT_IV, DecryptionMeta, KdfSpec};
 
-use crate::config::TapTapVersion;
 use crate::error::SaveProviderError;
 
 const USER_AGENT: &str = "LeanCloud-CSharp-SDK/1.0.3";
@@ -126,15 +125,7 @@ pub async fn fetch_from_official(
     let t_total = Instant::now();
     let client = crate::http::client_timeout_30s()?;
 
-    // 根据版本选择配置
-    let tap_config = match version {
-        Some("global") => &config.global,
-        Some("cn") => &config.cn,
-        _ => match config.default_version {
-            TapTapVersion::CN => &config.cn,
-            TapTapVersion::Global => &config.global,
-        },
-    };
+    let tap_config = config.resolve(version);
 
     let url = format!(
         "{}/classes/_GameSave?limit=1",
