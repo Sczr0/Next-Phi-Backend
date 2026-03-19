@@ -5,6 +5,14 @@ use std::{
 
 use crate::startup::chart_loader::ChartConstants;
 
+pub(crate) fn normalize_song_search_text(input: &str) -> String {
+    input
+        .chars()
+        .filter(|ch| ch.is_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
 /// 单曲信息（来源：info/info.csv）
 #[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,12 +46,14 @@ pub struct SongCandidatePreview {
 pub struct SongCatalog {
     /// 通过歌曲 ID 直接索引
     pub by_id: HashMap<String, Arc<SongInfo>>,
+    /// 通过歌曲 ID 的 ASCII 小写形式索引，用于大小写无关命中
+    by_id_lower: HashMap<String, Arc<SongInfo>>,
     /// 通过官方歌曲名索引（可能重名，值为 Vec）
     pub by_name: HashMap<String, Vec<Arc<SongInfo>>>,
     /// 通过别名索引（可能重名，值为 Vec）
     pub by_nickname: HashMap<String, Vec<Arc<SongInfo>>>,
-    search_cache_name_lower: Vec<(Arc<SongInfo>, String)>,
-    search_cache_nick_lower: Vec<(String, String, Vec<Arc<SongInfo>>)>,
+    search_cache_name_lower: Vec<(Arc<SongInfo>, String, String)>,
+    search_cache_nick_lower: Vec<(String, String, String, Vec<Arc<SongInfo>>)>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +64,8 @@ enum SearchMatchKind {
     NickEquals,
     NickPrefix,
     NickContains,
+    NameFuzzy,
+    NickFuzzy,
 }
 
 impl SongCatalog {
@@ -69,7 +81,7 @@ impl SongCatalog {
     ) -> i32 {
         // 说明：
         // - 这是“用于排序/挑选候选预览”的粗略匹配值（越大越相关）。
-        // - 基础分严格遵循 search() 的合并顺序：官方名 > 别名；等于 > 前缀 > 子串。
+        // - 基础分严格遵循 search() 的合并顺序：官方名精确 > 别名精确 > 前缀 > 子串。
         // - 额外分用于在同一匹配类型内做更友好的排序（更短、更靠前的命中更优）。
 
         let q_len = Self::usize_to_i32_saturating(q_lower.len());
@@ -81,12 +93,89 @@ impl SongCatalog {
 
         match kind {
             SearchMatchKind::NameEquals => 6000,
-            SearchMatchKind::NamePrefix => 5000 + q_len * 5 - extra_len_penalty,
-            SearchMatchKind::NameContains => 4000 + pos_bonus - extra_len_penalty,
-            SearchMatchKind::NickEquals => 3000,
-            SearchMatchKind::NickPrefix => 2000 + q_len * 5 - extra_len_penalty,
+            SearchMatchKind::NickEquals => 5000,
+            SearchMatchKind::NamePrefix => 4000 + q_len * 5 - extra_len_penalty,
+            SearchMatchKind::NickPrefix => 3000 + q_len * 5 - extra_len_penalty,
+            SearchMatchKind::NameContains => 2000 + pos_bonus - extra_len_penalty,
             SearchMatchKind::NickContains => 1000 + pos_bonus - extra_len_penalty,
+            SearchMatchKind::NameFuzzy | SearchMatchKind::NickFuzzy => 0,
         }
+    }
+
+    fn score_fuzzy_match(kind: SearchMatchKind, q_normalized: &str, hay_normalized: &str, distance: usize) -> i32 {
+        let q_len = Self::usize_to_i32_saturating(q_normalized.len());
+        let hay_len = Self::usize_to_i32_saturating(hay_normalized.len());
+        let len_penalty = (hay_len - q_len).abs().min(120);
+        let distance_penalty = Self::usize_to_i32_saturating(distance).min(8) * 140;
+
+        match kind {
+            SearchMatchKind::NameFuzzy => 900 - distance_penalty - len_penalty,
+            SearchMatchKind::NickFuzzy => 700 - distance_penalty - len_penalty,
+            _ => 0,
+        }
+    }
+
+    fn get_by_id_ascii_case_insensitive(&self, query: &str) -> Option<&Arc<SongInfo>> {
+        self.by_id_lower.get(query.to_ascii_lowercase().as_str())
+    }
+
+    fn match_priority(kind: SearchMatchKind) -> u8 {
+        match kind {
+            SearchMatchKind::NameEquals => 0,
+            SearchMatchKind::NickEquals => 1,
+            SearchMatchKind::NamePrefix => 2,
+            SearchMatchKind::NickPrefix => 3,
+            SearchMatchKind::NameContains => 4,
+            SearchMatchKind::NickContains => 5,
+            SearchMatchKind::NameFuzzy => 6,
+            SearchMatchKind::NickFuzzy => 7,
+        }
+    }
+
+    fn fuzzy_distance_limit(normalized_len: usize) -> usize {
+        match normalized_len {
+            0..=4 => 1,
+            5..=8 => 2,
+            _ => 3,
+        }
+    }
+
+    fn bounded_levenshtein(a: &str, b: &str, max_distance: usize) -> Option<usize> {
+        if a == b {
+            return Some(0);
+        }
+
+        let a_chars: Vec<char> = a.chars().collect();
+        let b_chars: Vec<char> = b.chars().collect();
+        let a_len = a_chars.len();
+        let b_len = b_chars.len();
+
+        if a_len.abs_diff(b_len) > max_distance {
+            return None;
+        }
+
+        let mut prev: Vec<usize> = (0..=b_len).collect();
+        let mut curr: Vec<usize> = vec![0; b_len + 1];
+
+        for (i, a_ch) in a_chars.iter().enumerate() {
+            curr[0] = i + 1;
+            let mut row_min = curr[0];
+
+            for (j, b_ch) in b_chars.iter().enumerate() {
+                let cost = usize::from(a_ch != b_ch);
+                curr[j + 1] = (prev[j + 1] + 1).min(curr[j] + 1).min(prev[j] + cost);
+                row_min = row_min.min(curr[j + 1]);
+            }
+
+            if row_min > max_distance {
+                return None;
+            }
+
+            std::mem::swap(&mut prev, &mut curr);
+        }
+
+        let distance = prev[b_len];
+        (distance <= max_distance).then_some(distance)
     }
 
     fn visit_search_matches<F>(&self, query: &str, mut on_match: F)
@@ -99,51 +188,38 @@ impl SongCatalog {
         }
 
         let q_lower = q.to_lowercase();
+        let q_normalized = normalize_song_search_text(q);
         let mut seen: HashSet<&str> = HashSet::new(); // 基于 id 去重
 
         // 官方名：等于（忽略大小写）
-        for (item, name_lower) in &self.search_cache_name_lower {
-            if item.name.eq_ignore_ascii_case(q) && seen.insert(item.id.as_str()) {
+        for (item, name_lower, name_normalized) in &self.search_cache_name_lower {
+            if (item.name.eq_ignore_ascii_case(q)
+                || (!q_normalized.is_empty() && name_normalized == &q_normalized))
+                && seen.insert(item.id.as_str())
+            {
+                let (query_key, hay_key) = if item.name.eq_ignore_ascii_case(q) {
+                    (&q_lower, name_lower)
+                } else {
+                    (&q_normalized, name_normalized)
+                };
                 on_match(
                     item,
                     SearchMatchKind::NameEquals,
-                    Self::score_match(SearchMatchKind::NameEquals, &q_lower, name_lower, Some(0)),
+                    Self::score_match(SearchMatchKind::NameEquals, query_key, hay_key, Some(0)),
                 );
             }
         }
-        // 官方名：前缀包含（忽略大小写）
-        for (item, name_lower) in &self.search_cache_name_lower {
-            if name_lower.starts_with(q_lower.as_str()) && seen.insert(item.id.as_str()) {
-                on_match(
-                    item,
-                    SearchMatchKind::NamePrefix,
-                    Self::score_match(SearchMatchKind::NamePrefix, &q_lower, name_lower, Some(0)),
-                );
-            }
-        }
-        // 官方名：子串包含（忽略大小写）
-        for (item, name_lower) in &self.search_cache_name_lower {
-            if let Some(pos) = name_lower.find(q_lower.as_str())
-                && seen.insert(item.id.as_str())
-            {
-                on_match(
-                    item,
-                    SearchMatchKind::NameContains,
-                    Self::score_match(
-                        SearchMatchKind::NameContains,
-                        &q_lower,
-                        name_lower,
-                        Some(pos),
-                    ),
-                );
-            }
-        }
-
         // 别名：等于（忽略大小写）
-        for (nick, nick_lower, list) in &self.search_cache_nick_lower {
-            if nick.eq_ignore_ascii_case(q) {
-                let score =
-                    Self::score_match(SearchMatchKind::NickEquals, &q_lower, nick_lower, Some(0));
+        for (nick, nick_lower, nick_normalized, list) in &self.search_cache_nick_lower {
+            if nick.eq_ignore_ascii_case(q)
+                || (!q_normalized.is_empty() && nick_normalized == &q_normalized)
+            {
+                let (query_key, hay_key) = if nick.eq_ignore_ascii_case(q) {
+                    (&q_lower, nick_lower)
+                } else {
+                    (&q_normalized, nick_normalized)
+                };
+                let score = Self::score_match(SearchMatchKind::NickEquals, query_key, hay_key, Some(0));
                 for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickEquals, score);
@@ -151,11 +227,36 @@ impl SongCatalog {
                 }
             }
         }
+        // 官方名：前缀包含（忽略大小写）
+        for (item, name_lower, name_normalized) in &self.search_cache_name_lower {
+            let raw_prefix = name_lower.starts_with(q_lower.as_str());
+            let normalized_prefix =
+                !q_normalized.is_empty() && name_normalized.starts_with(q_normalized.as_str());
+            if (raw_prefix || normalized_prefix) && seen.insert(item.id.as_str()) {
+                let (query_key, hay_key) = if raw_prefix {
+                    (&q_lower, name_lower)
+                } else {
+                    (&q_normalized, name_normalized)
+                };
+                on_match(
+                    item,
+                    SearchMatchKind::NamePrefix,
+                    Self::score_match(SearchMatchKind::NamePrefix, query_key, hay_key, Some(0)),
+                );
+            }
+        }
         // 别名：前缀包含（忽略大小写）
-        for (_nick, nick_lower, list) in &self.search_cache_nick_lower {
-            if nick_lower.starts_with(q_lower.as_str()) {
-                let score =
-                    Self::score_match(SearchMatchKind::NickPrefix, &q_lower, nick_lower, Some(0));
+        for (_nick, nick_lower, nick_normalized, list) in &self.search_cache_nick_lower {
+            let raw_prefix = nick_lower.starts_with(q_lower.as_str());
+            let normalized_prefix =
+                !q_normalized.is_empty() && nick_normalized.starts_with(q_normalized.as_str());
+            if raw_prefix || normalized_prefix {
+                let (query_key, hay_key) = if raw_prefix {
+                    (&q_lower, nick_lower)
+                } else {
+                    (&q_normalized, nick_normalized)
+                };
+                let score = Self::score_match(SearchMatchKind::NickPrefix, query_key, hay_key, Some(0));
                 for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickPrefix, score);
@@ -163,18 +264,90 @@ impl SongCatalog {
                 }
             }
         }
-        // 别名：子串包含（忽略大小写）
-        for (_nick, nick_lower, list) in &self.search_cache_nick_lower {
-            if let Some(pos) = nick_lower.find(q_lower.as_str()) {
-                let score = Self::score_match(
-                    SearchMatchKind::NickContains,
-                    &q_lower,
-                    nick_lower,
-                    Some(pos),
+        // 官方名：子串包含（忽略大小写）
+        for (item, name_lower, name_normalized) in &self.search_cache_name_lower {
+            let raw_contains = name_lower.find(q_lower.as_str());
+            let normalized_contains = if q_normalized.is_empty() {
+                None
+            } else {
+                name_normalized.find(q_normalized.as_str())
+            };
+            if let Some((query_key, hay_key, pos)) = raw_contains
+                .map(|pos| (&q_lower, name_lower, pos))
+                .or_else(|| normalized_contains.map(|pos| (&q_normalized, name_normalized, pos)))
+                && seen.insert(item.id.as_str())
+            {
+                on_match(
+                    item,
+                    SearchMatchKind::NameContains,
+                    Self::score_match(SearchMatchKind::NameContains, query_key, hay_key, Some(pos)),
                 );
+            }
+        }
+        // 别名：子串包含（忽略大小写）
+        for (_nick, nick_lower, nick_normalized, list) in &self.search_cache_nick_lower {
+            let raw_contains = nick_lower.find(q_lower.as_str());
+            let normalized_contains = if q_normalized.is_empty() {
+                None
+            } else {
+                nick_normalized.find(q_normalized.as_str())
+            };
+            if let Some((query_key, hay_key, pos)) = raw_contains
+                .map(|pos| (&q_lower, nick_lower, pos))
+                .or_else(|| normalized_contains.map(|pos| (&q_normalized, nick_normalized, pos)))
+            {
+                let score =
+                    Self::score_match(SearchMatchKind::NickContains, query_key, hay_key, Some(pos));
                 for item in list {
                     if seen.insert(item.id.as_str()) {
                         on_match(item, SearchMatchKind::NickContains, score);
+                    }
+                }
+            }
+        }
+
+        if seen.is_empty() && !q_normalized.is_empty() {
+            let max_distance = Self::fuzzy_distance_limit(q_normalized.chars().count());
+
+            // 模糊兜底仅在常规层级完全无命中时启用，避免污染正常结果。
+            for (item, _name_lower, name_normalized) in &self.search_cache_name_lower {
+                if name_normalized.is_empty() {
+                    continue;
+                }
+                if let Some(distance) =
+                    Self::bounded_levenshtein(&q_normalized, name_normalized, max_distance)
+                    && seen.insert(item.id.as_str())
+                {
+                    on_match(
+                        item,
+                        SearchMatchKind::NameFuzzy,
+                        Self::score_fuzzy_match(
+                            SearchMatchKind::NameFuzzy,
+                            &q_normalized,
+                            name_normalized,
+                            distance,
+                        ),
+                    );
+                }
+            }
+
+            for (_nick, _nick_lower, nick_normalized, list) in &self.search_cache_nick_lower {
+                if nick_normalized.is_empty() {
+                    continue;
+                }
+                if let Some(distance) =
+                    Self::bounded_levenshtein(&q_normalized, nick_normalized, max_distance)
+                {
+                    let score = Self::score_fuzzy_match(
+                        SearchMatchKind::NickFuzzy,
+                        &q_normalized,
+                        nick_normalized,
+                        distance,
+                    );
+                    for item in list {
+                        if seen.insert(item.id.as_str()) {
+                            on_match(item, SearchMatchKind::NickFuzzy, score);
+                        }
                     }
                 }
             }
@@ -202,7 +375,7 @@ impl SongCatalog {
         }
 
         // 1.1) 再尝试按 ID 不区分大小写精确命中
-        if let Some((_id, info)) = self.by_id.iter().find(|(id, _)| id.eq_ignore_ascii_case(q)) {
+        if let Some(info) = self.get_by_id_ascii_case_insensitive(q) {
             let items = if offset == 0 && limit > 0 {
                 vec![Arc::clone(info)]
             } else {
@@ -240,19 +413,32 @@ impl SongCatalog {
     pub fn rebuild_search_cache(&mut self) {
         // 注意：HashMap 迭代顺序不稳定。这里将缓存构建为“稳定排序”的 Vec，确保搜索结果顺序跨进程一致。
 
+        // 同步重建 ASCII 小写 ID 索引，避免运行期大小写无关命中退化为全表扫描。
+        self.by_id_lower = self
+            .by_id
+            .iter()
+            .map(|(id, item)| (id.to_ascii_lowercase(), Arc::clone(item)))
+            .collect();
+
         // 1) name cache：按 name_lower，再按 id 排序
-        let mut name_entries: Vec<(Arc<SongInfo>, String)> = self
+        let mut name_entries: Vec<(Arc<SongInfo>, String, String)> = self
             .by_id
             .values()
-            .map(|item| (Arc::clone(item), item.name.to_lowercase()))
+            .map(|item| {
+                (
+                    Arc::clone(item),
+                    item.name.to_lowercase(),
+                    normalize_song_search_text(&item.name),
+                )
+            })
             .collect();
-        name_entries.sort_by(|(a_item, a_lower), (b_item, b_lower)| {
+        name_entries.sort_by(|(a_item, a_lower, _), (b_item, b_lower, _)| {
             a_lower.cmp(b_lower).then_with(|| a_item.id.cmp(&b_item.id))
         });
         self.search_cache_name_lower = name_entries;
 
         // 2) nickname cache：先按 nick_lower/nick 排序；每个 nick 下的歌曲也按 name_lower/id 稳定排序
-        let mut nick_entries: Vec<(String, String, Vec<Arc<SongInfo>>)> =
+        let mut nick_entries: Vec<(String, String, String, Vec<Arc<SongInfo>>)> =
             Vec::with_capacity(self.by_nickname.len());
         for (nick, list) in &self.by_nickname {
             // 为避免在 sort 比较中反复分配 to_lowercase，这里预先计算 key
@@ -265,18 +451,26 @@ impl SongCatalog {
             });
             let sorted_list: Vec<Arc<SongInfo>> = sortable.into_iter().map(|(_, _, s)| s).collect();
 
-            nick_entries.push((nick.clone(), nick.to_lowercase(), sorted_list));
+            nick_entries.push((
+                nick.clone(),
+                nick.to_lowercase(),
+                normalize_song_search_text(nick),
+                sorted_list,
+            ));
         }
-        nick_entries.sort_by(|(a_nick, a_lower, _), (b_nick, b_lower, _)| {
+        nick_entries.sort_by(|(a_nick, a_lower, _, _), (b_nick, b_lower, _, _)| {
             a_lower.cmp(b_lower).then_with(|| a_nick.cmp(b_nick))
         });
         self.search_cache_nick_lower = nick_entries;
     }
 
-    /// 通用查询：按 ID -> 官方名 -> 别名 的顺序查找。
+    /// 通用查询：按 ID -> 官方名/别名 的顺序查找。
     /// 当 ID 精确命中时，直接返回唯一结果；否则按以下优先级合并并去重：
-    /// 1) 官方名：等于(忽略大小写) -> 前缀包含 -> 子串包含
-    /// 2) 别名：等于(忽略大小写) -> 前缀包含 -> 子串包含
+    /// 1) 官方名：等于(忽略大小写)
+    /// 2) 别名：等于(忽略大小写)
+    /// 3) 官方名：前缀包含 -> 别名：前缀包含
+    /// 4) 官方名：子串包含 -> 别名：子串包含
+    /// 5) 若前四层完全无命中，则回退到归一化文本的轻量模糊匹配
     #[must_use]
     pub fn search(&self, query: &str) -> Vec<Arc<SongInfo>> {
         let (items, _total) = self.search_page(query, 0, u32::MAX);
@@ -302,7 +496,7 @@ impl SongCatalog {
         }
 
         // 1.1) 再尝试按 ID 不区分大小写精确命中
-        if let Some((_id, info)) = self.by_id.iter().find(|(id, _)| id.eq_ignore_ascii_case(q)) {
+        if let Some(info) = self.get_by_id_ascii_case_insensitive(q) {
             return Ok(Arc::clone(info));
         }
 
@@ -336,9 +530,19 @@ impl SongCatalog {
         let mut total: usize = 0;
         let mut only: Option<Arc<SongInfo>> = None;
         let mut top: Vec<CandidateScored> = Vec::new();
+        let mut best_priority: Option<u8> = None;
 
-        // 说明：此处会遍历所有可能结果以计算匹配值与 total，但只保留受控数量的候选预览，避免“无收益克隆”。
-        self.visit_search_matches(q, |item, _kind, score| {
+        // 说明：
+        // - unique 判定只看“首个非空匹配层级”，避免较弱 contains 把明显唯一的 exact/prefix 命中误判为歧义。
+        // - 同一层级内仍会统计 total，并仅保留受控数量的候选预览。
+        self.visit_search_matches(q, |item, kind, score| {
+            let priority = Self::match_priority(kind);
+            match best_priority {
+                None => best_priority = Some(priority),
+                Some(current) if priority != current => return,
+                Some(_) => {}
+            }
+
             total = total.saturating_add(1);
             if total == 1 {
                 only = Some(Arc::clone(item));
@@ -587,35 +791,56 @@ fn parse_tokens(input: &str, options: SearchOptions) -> Vec<Token> {
 }
 
 /// 字段匹配：等于（忽略大小写）/ 前缀 / 子串
-fn field_match(field: &str, token: &str, options: SearchOptions) -> bool {
+fn field_match_rank(field: &str, token: &str, options: SearchOptions) -> Option<u8> {
     if field.is_empty() || token.is_empty() {
-        return false;
+        return None;
     }
+
     if options.case_insensitive {
         let f = field.to_lowercase();
         let t = token.to_lowercase();
         if f == t {
-            return true;
+            return Some(3);
         }
         if options.prefix && f.starts_with(&t) {
-            return true;
+            return Some(2);
         }
         if options.substring && f.contains(&t) {
-            return true;
+            return Some(1);
         }
-        false
-    } else {
-        if field == token {
-            return true;
+
+        let normalized_field = normalize_song_search_text(field);
+        let normalized_token = normalize_song_search_text(token);
+        if !normalized_field.is_empty() && !normalized_token.is_empty() {
+            if normalized_field == normalized_token {
+                return Some(3);
+            }
+            if options.prefix && normalized_field.starts_with(&normalized_token) {
+                return Some(2);
+            }
+            if options.substring && normalized_field.contains(&normalized_token) {
+                return Some(1);
+            }
         }
-        if options.prefix && field.starts_with(token) {
-            return true;
-        }
-        if options.substring && field.contains(token) {
-            return true;
-        }
-        false
+
+        return None;
     }
+
+    if field == token {
+        return Some(3);
+    }
+    if options.prefix && field.starts_with(token) {
+        return Some(2);
+    }
+    if options.substring && field.contains(token) {
+        return Some(1);
+    }
+
+    None
+}
+
+fn field_match(field: &str, token: &str, options: SearchOptions) -> bool {
+    field_match_rank(field, token, options).is_some()
 }
 
 /// 简易打分：精确等于 > 前缀 > 子串；官方名 > 别名 > 作曲 > ID；多 token 累加
@@ -636,7 +861,10 @@ fn score_song(
         score += score_field(&song.name, tok, options, 100, 80, 60);
         // 别名（任一匹配即可按权重计分）
         let mut nick_scored = false;
-        for nick in catalog.by_nickname.keys() {
+        for (nick, songs) in &catalog.by_nickname {
+            if !songs.iter().any(|candidate| candidate.id == song.id) {
+                continue;
+            }
             if !nick_scored && field_match(nick, tok, options) {
                 score += 70; // 近似于官方名下一档
                 nick_scored = true;
@@ -661,29 +889,10 @@ fn score_field(
     if field.is_empty() {
         return 0;
     }
-    if options.case_insensitive {
-        let f = field.to_lowercase();
-        let t = token.to_lowercase();
-        if f == t {
-            return eq_w;
-        }
-        if options.prefix && f.starts_with(&t) {
-            return pre_w;
-        }
-        if options.substring && f.contains(&t) {
-            return sub_w;
-        }
-        0
-    } else {
-        if field == token {
-            return eq_w;
-        }
-        if options.prefix && field.starts_with(token) {
-            return pre_w;
-        }
-        if options.substring && field.contains(token) {
-            return sub_w;
-        }
-        0
+    match field_match_rank(field, token, options) {
+        Some(3) => eq_w,
+        Some(2) => pre_w,
+        Some(1) => sub_w,
+        _ => 0,
     }
 }

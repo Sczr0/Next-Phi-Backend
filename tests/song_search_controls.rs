@@ -123,6 +123,72 @@ fn song_catalog_search_is_stably_ordered_for_same_name() {
     assert_eq!(ids, vec!["a", "b"]);
 }
 
+#[test]
+fn song_catalog_search_page_matches_id_case_insensitively() {
+    let mut catalog = SongCatalog::default();
+
+    let info = Arc::new(SongInfo {
+        id: "Stasis.Maozon".to_string(),
+        name: "Stasis".to_string(),
+        composer: "Maozon".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog.by_id.insert(info.id.clone(), Arc::clone(&info));
+    catalog.rebuild_search_cache();
+
+    let (items, total) = catalog.search_page("stasis.maozon", 0, 20);
+    assert_eq!(total, 1);
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, "Stasis.Maozon");
+
+    let unique = catalog
+        .search_unique("stasis.maozon")
+        .expect("case-insensitive id should match");
+    assert_eq!(unique.id, "Stasis.Maozon");
+}
+
+#[test]
+fn song_catalog_search_matches_normalized_name_without_spaces_and_symbols() {
+    let mut catalog = SongCatalog::default();
+
+    let info = Arc::new(SongInfo {
+        id: "quo".to_string(),
+        name: "君往何处 (Quo Vadis)".to_string(),
+        composer: "M2U".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog.by_id.insert(info.id.clone(), Arc::clone(&info));
+    catalog.rebuild_search_cache();
+
+    let items = catalog.search("QuoVadis");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, "quo");
+}
+
+#[test]
+fn song_catalog_search_fuzzy_matches_japanese_name_when_normalized_match_fails() {
+    let mut catalog = SongCatalog::default();
+
+    let info = Arc::new(SongInfo {
+        id: "amb".to_string(),
+        name: "アンビバレンス".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog.by_id.insert(info.id.clone(), Arc::clone(&info));
+    catalog.rebuild_search_cache();
+
+    let items = catalog.search("アンバレンス");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, "amb");
+}
+
 #[tokio::test]
 async fn songs_search_default_limit_is_applied() {
     let mut catalog = SongCatalog::default();
@@ -339,6 +405,489 @@ async fn songs_search_query_too_long_is_validation_error() {
         .expect("request");
 
     assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn songs_search_mode_and_intersects_multiple_terms() {
+    let mut catalog = SongCatalog::default();
+
+    let target = Arc::new(SongInfo {
+        id: "target".to_string(),
+        name: "Burning Start".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let miss_name = Arc::new(SongInfo {
+        id: "miss-name".to_string(),
+        name: "Burning".to_string(),
+        composer: "Other".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let miss_composer = Arc::new(SongInfo {
+        id: "miss-composer".to_string(),
+        name: "Start".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    for song in [&target, &miss_name, &miss_composer] {
+        catalog.by_id.insert(song.id.clone(), Arc::clone(song));
+    }
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=Burn%20Noah&mode=and")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    let items = v["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"].as_str().expect("id"), "target");
+}
+
+#[tokio::test]
+async fn songs_search_mode_and_phrase_supports_unique_match() {
+    let mut catalog = SongCatalog::default();
+
+    let exact_phrase = Arc::new(SongInfo {
+        id: "phrase".to_string(),
+        name: "Indelible Scar".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let shuffled = Arc::new(SongInfo {
+        id: "shuffled".to_string(),
+        name: "Scar Indelible".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    for song in [&exact_phrase, &shuffled] {
+        catalog.by_id.insert(song.id.clone(), Arc::clone(song));
+    }
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=%22Indelible%20Scar%22&mode=and&unique=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    assert_eq!(v["id"].as_str().expect("id"), "phrase");
+}
+
+#[tokio::test]
+async fn songs_search_invalid_mode_is_validation_error() {
+    let mut catalog = SongCatalog::default();
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=Burn&mode=xor")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+#[tokio::test]
+async fn songs_search_mode_and_uses_normalized_matching() {
+    let mut catalog = SongCatalog::default();
+
+    let target = Arc::new(SongInfo {
+        id: "quo".to_string(),
+        name: "君往何处 (Quo Vadis)".to_string(),
+        composer: "M2U".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let other = Arc::new(SongInfo {
+        id: "other".to_string(),
+        name: "Quo Start".to_string(),
+        composer: "Other".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    for song in [&target, &other] {
+        catalog.by_id.insert(song.id.clone(), Arc::clone(song));
+    }
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=QuoVadis%20M2U&mode=and")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    let items = v["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0]["id"].as_str().expect("id"), "quo");
+}
+
+#[tokio::test]
+async fn songs_search_mode_or_alias_score_only_affects_own_song() {
+    let mut catalog = SongCatalog::default();
+
+    let alias_song = Arc::new(SongInfo {
+        id: "alias".to_string(),
+        name: "Indelible Scar".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let other_song = Arc::new(SongInfo {
+        id: "other".to_string(),
+        name: "Noah Theme".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog
+        .by_id
+        .insert(alias_song.id.clone(), Arc::clone(&alias_song));
+    catalog
+        .by_id
+        .insert(other_song.id.clone(), Arc::clone(&other_song));
+    catalog
+        .by_nickname
+        .entry("IS".to_string())
+        .or_insert_with(Vec::new)
+        .push(Arc::clone(&alias_song));
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=IS%20Noah&mode=or&limit=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    let items = v["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"].as_str().expect("first id"), "alias");
+    assert_eq!(items[1]["id"].as_str().expect("second id"), "other");
+}
+
+#[tokio::test]
+async fn songs_search_exact_alias_is_ranked_before_name_contains() {
+    let mut catalog = SongCatalog::default();
+
+    let alias_song = Arc::new(SongInfo {
+        id: "alias".to_string(),
+        name: "Indelible Scar".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let contains_song = Arc::new(SongInfo {
+        id: "contains".to_string(),
+        name: "This Song".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog
+        .by_id
+        .insert(alias_song.id.clone(), Arc::clone(&alias_song));
+    catalog
+        .by_id
+        .insert(contains_song.id.clone(), Arc::clone(&contains_song));
+    catalog
+        .by_nickname
+        .entry("IS".to_string())
+        .or_insert_with(Vec::new)
+        .push(Arc::clone(&alias_song));
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=is&limit=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    let items = v["items"].as_array().expect("items array");
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["id"].as_str().expect("first id"), "alias");
+    assert_eq!(items[1]["id"].as_str().expect("second id"), "contains");
+}
+
+#[tokio::test]
+async fn songs_search_unique_exact_name_ignores_weaker_contains_matches() {
+    let mut catalog = SongCatalog::default();
+
+    let exact = Arc::new(SongInfo {
+        id: "stasis".to_string(),
+        name: "Stasis".to_string(),
+        composer: "Maozon".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let contains_a = Arc::new(SongInfo {
+        id: "chrono".to_string(),
+        name: "Chronostasis".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let contains_b = Arc::new(SongInfo {
+        id: "khro".to_string(),
+        name: "Khronostasis Katharsis".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    for song in [&exact, &contains_a, &contains_b] {
+        catalog.by_id.insert(song.id.clone(), Arc::clone(song));
+    }
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=Stasis&unique=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    assert_eq!(v["id"].as_str().expect("id"), "stasis");
+    assert_eq!(v["name"].as_str().expect("name"), "Stasis");
+}
+
+#[tokio::test]
+async fn songs_search_unique_exact_alias_ignores_weaker_contains_matches() {
+    let mut catalog = SongCatalog::default();
+
+    let alias_song = Arc::new(SongInfo {
+        id: "alias".to_string(),
+        name: "Indelible Scar".to_string(),
+        composer: "Noah".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let contains_song = Arc::new(SongInfo {
+        id: "contains".to_string(),
+        name: "This Song".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog
+        .by_id
+        .insert(alias_song.id.clone(), Arc::clone(&alias_song));
+    catalog
+        .by_id
+        .insert(contains_song.id.clone(), Arc::clone(&contains_song));
+    catalog
+        .by_nickname
+        .entry("IS".to_string())
+        .or_insert_with(Vec::new)
+        .push(Arc::clone(&alias_song));
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=is&unique=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    assert_eq!(v["id"].as_str().expect("id"), "alias");
+    assert_eq!(v["name"].as_str().expect("name"), "Indelible Scar");
+}
+
+#[tokio::test]
+async fn songs_search_unique_normalized_alias_beats_name_prefix() {
+    let mut catalog = SongCatalog::default();
+
+    let alias_song = Arc::new(SongInfo {
+        id: "burn".to_string(),
+        name: "Burn".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let prefix_song = Arc::new(SongInfo {
+        id: "prefix".to_string(),
+        name: "Burn Spectrum".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog
+        .by_id
+        .insert(alias_song.id.clone(), Arc::clone(&alias_song));
+    catalog
+        .by_id
+        .insert(prefix_song.id.clone(), Arc::clone(&prefix_song));
+    catalog
+        .by_nickname
+        .entry("BurnSP".to_string())
+        .or_insert_with(Vec::new)
+        .push(Arc::clone(&alias_song));
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=burn%20sp&unique=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    assert_eq!(v["id"].as_str().expect("id"), "burn");
+    assert_eq!(v["name"].as_str().expect("name"), "Burn");
+}
+
+#[tokio::test]
+async fn songs_search_unique_fuzzy_alias_returns_target_when_no_regular_match_exists() {
+    let mut catalog = SongCatalog::default();
+
+    let alias_song = Arc::new(SongInfo {
+        id: "burn".to_string(),
+        name: "Burn".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+    let other_song = Arc::new(SongInfo {
+        id: "other".to_string(),
+        name: "Spectrum".to_string(),
+        composer: "c".to_string(),
+        illustrator: "i".to_string(),
+        chart_constants: chart_constants_none(),
+    });
+
+    catalog
+        .by_id
+        .insert(alias_song.id.clone(), Arc::clone(&alias_song));
+    catalog
+        .by_id
+        .insert(other_song.id.clone(), Arc::clone(&other_song));
+    catalog
+        .by_nickname
+        .entry("BurnSP".to_string())
+        .or_insert_with(Vec::new)
+        .push(Arc::clone(&alias_song));
+    catalog.rebuild_search_cache();
+
+    let app = build_app(new_test_state(catalog));
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v2/songs/search?q=burnsx&unique=true")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .expect("request");
+
+    assert_eq!(resp.status(), StatusCode::OK);
+
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("read body");
+    let v: serde_json::Value = serde_json::from_slice(&bytes).expect("parse json");
+    assert_eq!(v["id"].as_str().expect("id"), "burn");
+    assert_eq!(v["name"].as_str().expect("name"), "Burn");
 }
 
 #[tokio::test]
