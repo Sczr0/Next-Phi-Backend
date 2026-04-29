@@ -1265,7 +1265,7 @@ impl StatsStorage {
                 *by_kind_map.entry(k).or_insert(0) += 1;
             }
             let mut by_kind: Vec<(String, i64)> = by_kind_map.into_iter().collect();
-            by_kind.sort_by(|a, b| b.1.cmp(&a.1));
+            by_kind.sort_by_key(|b| std::cmp::Reverse(b.1));
             by_kind
         } else {
             Vec::new()

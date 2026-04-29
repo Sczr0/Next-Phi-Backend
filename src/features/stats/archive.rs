@@ -51,7 +51,7 @@ pub async fn run_daily_archiver(storage: Arc<StatsStorage>, cfg: StatsConfig) {
         let now = chrono::Local::now();
         let target = parse_today_time(&cfg.daily_aggregate_time).unwrap_or((3, 0));
         let next = next_occurrence(now, target.0, target.1);
-        let sleep_dur = (next - now).to_std().unwrap_or(Duration::from_secs(60));
+        let sleep_dur = (next - now).to_std().unwrap_or(Duration::from_mins(1));
         tracing::info!("统计维护：将在 {} 触发", next);
         tokio::time::sleep(sleep_dur).await;
 
