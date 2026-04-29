@@ -1033,11 +1033,7 @@ mod tests {
             );
 
             // 仅让最高的 5 条为 AP。
-            let accuracy: f32 = if i >= 36 {
-                100.0
-            } else {
-                99.0
-            };
+            let accuracy: f32 = if i >= 36 { 100.0 } else { 99.0 };
 
             records.insert(
                 song_id.clone(),
