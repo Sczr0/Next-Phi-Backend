@@ -22,13 +22,12 @@ pub struct ChartRankingScore {
 /// 参数 `accuracy` 采用小数形式（例如 98.5% -> 0.985）。
 /// 当 `accuracy` < 0.70 时，直接返回 0.0。
 #[must_use]
-pub fn calculate_single_chart_rks(accuracy: f32, chart_constant: f32) -> f64 {
-    let acc = f64::from(accuracy);
-    if acc < 0.70 {
+pub fn calculate_single_chart_rks(accuracy: f64, chart_constant: f32) -> f64 {
+    if accuracy < 0.70 {
         return 0.0;
     }
     let level = f64::from(chart_constant);
-    let ratio = ((100.0 * acc) - 55.0) / 45.0;
+    let ratio = ((100.0 * accuracy) - 55.0) / 45.0;
     let score = (ratio * ratio) * level;
     if score.is_finite() && score > 0.0 {
         score
@@ -135,14 +134,9 @@ fn key_of_difficulty(diff: &Difficulty) -> u8 {
 /// 返回：
 /// - acc_percent：百分比（0-100+），用于 AP 判定等
 /// - acc_decimal：小数（0-1+），用于公式计算
-fn normalize_accuracy(acc: f32) -> (f64, f32) {
+fn normalize_accuracy(acc: f32) -> (f64, f64) {
     let raw = f64::from(acc);
-    (raw, f64_to_f32_lossy(raw / 100.0))
-}
-
-#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn f64_to_f32_lossy(value: f64) -> f32 {
-    value as f32
+    (raw, raw / 100.0)
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
