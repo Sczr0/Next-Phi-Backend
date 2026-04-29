@@ -130,20 +130,14 @@ fn key_of_difficulty(diff: &Difficulty) -> u8 {
     }
 }
 
-/// 统一 ACC 单位：
-/// - 存档中常见为百分比语义（98.5 表示 98.5%）
-/// - 也可能出现小数语义（0.985 表示 98.5%）
+/// 将百分比形式的 ACC（如 98.5 表示 98.5%）转换为百分比与小数两种表示。
 ///
 /// 返回：
 /// - acc_percent：百分比（0-100+），用于 AP 判定等
 /// - acc_decimal：小数（0-1+），用于公式计算
 fn normalize_accuracy(acc: f32) -> (f64, f32) {
     let raw = f64::from(acc);
-    if raw <= 1.5 {
-        (raw * 100.0, acc)
-    } else {
-        (raw, f64_to_f32_lossy(raw / 100.0))
-    }
+    (raw, f64_to_f32_lossy(raw / 100.0))
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
@@ -544,10 +538,7 @@ where
             let Some(cc) = rec.chart_constant else {
                 continue;
             };
-            let mut acc_percent = f64::from(rec.accuracy);
-            if acc_percent <= 1.5 {
-                acc_percent *= 100.0;
-            }
+            let acc_percent = f64::from(rec.accuracy);
             let chart_constant = f64::from(cc);
             all.push(RksRecord {
                 song_id: song_id.clone(),
@@ -582,10 +573,7 @@ where
     for (song_id, diffs) in game_record.iter_mut() {
         for rec in diffs.iter_mut() {
             let key = format!("{}-{}", song_id, rec.difficulty);
-            let mut acc_percent = f64::from(rec.accuracy);
-            if acc_percent <= 1.5 {
-                acc_percent *= 100.0;
-            }
+            let acc_percent = f64::from(rec.accuracy);
             if acc_percent >= 100.0 {
                 rec.push_acc = Some(100.0);
                 rec.push_acc_hint = Some(PushAccHint::AlreadyPhi);
@@ -903,8 +891,7 @@ mod tests {
             vec![DifficultyRecord {
                 difficulty: Difficulty::IN,
                 score: 1_000_000,
-                // 小数语义：1.0 => 100%
-                accuracy: 1.0,
+                accuracy: 100.0,
                 is_full_combo: true,
                 chart_constant: None,
                 push_acc: None,
@@ -928,8 +915,7 @@ mod tests {
             vec![DifficultyRecord {
                 difficulty: Difficulty::IN,
                 score: 900_000,
-                // 小数语义：0.99 => 99%，不应计入 AP
-                accuracy: 0.99,
+                accuracy: 99.0,
                 is_full_combo: false,
                 chart_constant: None,
                 push_acc: None,
@@ -980,7 +966,7 @@ mod tests {
             DifficultyRecord {
                 difficulty: Difficulty::IN,
                 score: 1_000_000,
-                accuracy: 1.0,
+                accuracy: 100.0,
                 is_full_combo: true,
                 chart_constant: None,
                 push_acc: None,
@@ -1046,9 +1032,9 @@ mod tests {
                 },
             );
 
-            // 仅让最高的 5 条为 AP，其中一条使用小数语义 1.0（100%）。
+            // 仅让最高的 5 条为 AP。
             let accuracy: f32 = if i >= 36 {
-                if i == 38 { 1.0 } else { 100.0 }
+                100.0
             } else {
                 99.0
             };
@@ -1606,11 +1592,10 @@ mod tests {
                     push_acc: None,
                     push_acc_hint: None,
                 },
-                // 小数语义：0.985 => 98.5%
                 DifficultyRecord {
                     difficulty: Difficulty::EZ,
                     score: 800_000,
-                    accuracy: 0.985,
+                    accuracy: 98.5,
                     is_full_combo: false,
                     chart_constant: Some(3.0),
                     push_acc: None,
@@ -1661,10 +1646,7 @@ mod tests {
                     );
                 };
                 assert!(push <= 100.0, "push_acc 应 <=100: {push}");
-                let mut current = f64::from(rec.accuracy);
-                if current <= 1.5 {
-                    current *= 100.0;
-                }
+                let current = f64::from(rec.accuracy);
                 assert!(
                     push >= current,
                     "push_acc 应 >= 当前ACC: push={push}, current={current}, song_id={song_id}, diff={}",

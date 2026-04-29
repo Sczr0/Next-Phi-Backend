@@ -877,8 +877,7 @@ fn compute_grade_counts(
 }
 
 fn normalize_accuracy_percent(acc: f32) -> f64 {
-    let raw = f64::from(acc);
-    if raw <= 1.5 { raw * 100.0 } else { raw }
+    f64::from(acc)
 }
 
 fn build_chart_acc_index(

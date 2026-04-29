@@ -572,10 +572,7 @@ pub async fn render_bn(
             };
             let Some(dv) = dv_opt else { continue };
 
-            let mut acc_percent = f64::from(rec.accuracy);
-            if acc_percent <= 1.5 {
-                acc_percent *= 100.0;
-            }
+            let acc_percent = f64::from(rec.accuracy);
             let rks = crate::rks_contract::engine::calculate_chart_rks(acc_percent, dv);
 
             all.push(RenderRecord {
@@ -1167,10 +1164,7 @@ pub async fn render_song(
                 Difficulty::AT => chart.and_then(|c| c.at),
             };
             let Some(cc) = cc else { continue };
-            let mut acc_percent = f64::from(rec.accuracy);
-            if acc_percent <= 1.5 {
-                acc_percent *= 100.0;
-            }
+            let acc_percent = f64::from(rec.accuracy);
             engine_all.push(crate::rks_contract::engine::RksRecord {
                 song_id: sid.clone(),
                 difficulty: rec.difficulty.clone(),
@@ -1219,10 +1213,7 @@ pub async fn render_song(
             )
         });
         let (score, acc, rks, is_fc) = if let Some(r) = rec {
-            let mut ap = f64::from(r.accuracy);
-            if ap <= 1.5 {
-                ap *= 100.0;
-            }
+            let ap = f64::from(r.accuracy);
             let rks = dv.map(|v| crate::rks_contract::engine::calculate_chart_rks(ap, v));
             (
                 Some(f64::from(r.score)),
