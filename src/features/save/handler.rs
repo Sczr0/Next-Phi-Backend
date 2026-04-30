@@ -211,7 +211,7 @@ async fn fetch_save_with_cache(
     taptap_version: Option<&str>,
     user_hash: Option<&str>,
     chart_constants: Arc<crate::startup::chart_loader::ChartConstantsMap>,
-    stats: Option<&crate::features::stats::StatsHandle>,
+    stats: Option<&crate::stats_contract::StatsHandle>,
     auth_ms: i64,
     source_ms: i64,
 ) -> Result<SaveWithCache, AppError> {
