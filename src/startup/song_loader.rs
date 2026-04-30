@@ -127,9 +127,8 @@ pub fn parse_song_catalog(
         if s.is_empty() {
             Ok(None)
         } else {
-            s.parse::<f32>()
-                .map(Some)
-                .map_err(|e| AppError::Internal(format!("解析浮点数失败 '{s}': {e}")))
+            // 非数字值（如谱师名）视为无定数，不报错
+            Ok(s.parse::<f32>().ok())
         }
     };
 
