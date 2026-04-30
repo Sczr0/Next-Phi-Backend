@@ -1709,4 +1709,423 @@ mod tests {
         let v = serde_json::to_value(&rec).expect("serialize");
         assert_eq!(v.get("push_acc_hint"), Some(&json!({"type": "phi_only"})));
     }
+
+    // === calculate_single_chart_rks ===
+
+    #[test]
+    fn single_chart_rks_below_70_percent_returns_zero() {
+        assert_eq!(calculate_single_chart_rks(0.699, 10.0), 0.0);
+        assert_eq!(calculate_single_chart_rks(0.50, 10.0), 0.0);
+        assert_eq!(calculate_single_chart_rks(0.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn single_chart_rks_exactly_70_percent_is_positive() {
+        let rks = calculate_single_chart_rks(0.70, 10.0);
+        assert!(rks > 0.0, "expected positive rks, got {rks}");
+    }
+
+    #[test]
+    fn single_chart_rks_exactly_100_percent() {
+        // acc=1.0 → ratio = (100-55)/45 = 1.0 → rks = level
+        assert!((calculate_single_chart_rks(1.0, 15.0) - 15.0).abs() < 1e-12);
+        assert!((calculate_single_chart_rks(1.0, 8.5) - 8.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn single_chart_rks_known_value() {
+        // acc=0.985, level=12.0 → ratio=(98.5-55)/45=0.9666... → ratio²≈0.9346 → rks≈11.215
+        let rks = calculate_single_chart_rks(0.985, 12.0);
+        assert!((rks - 11.2153).abs() < 0.01, "got {rks}");
+    }
+
+    #[test]
+    fn single_chart_rks_minimum_valid_accuracy() {
+        // acc=0.7000001, level=10.0 → should be barely positive
+        let rks = calculate_single_chart_rks(0.7000001, 10.0);
+        assert!(rks > 0.0, "expected positive, got {rks}");
+        // acc=0.70, level=10.0 → borderline, still >= 0.70
+        let rks2 = calculate_single_chart_rks(0.70, 10.0);
+        assert!(rks2 >= 0.0, "expected >=0, got {rks2}");
+    }
+
+    // === calculate_chart_rks (percentage variant) ===
+
+    #[test]
+    fn chart_rks_below_70_percent_returns_zero() {
+        assert_eq!(calculate_chart_rks(69.9, 10.0), 0.0);
+        assert_eq!(calculate_chart_rks(0.0, 10.0), 0.0);
+    }
+
+    #[test]
+    fn chart_rks_100_percent_equals_constant() {
+        assert!((calculate_chart_rks(100.0, 15.0) - 15.0).abs() < 1e-12);
+        assert!((calculate_chart_rks(100.0, 8.5) - 8.5).abs() < 1e-12);
+    }
+
+    #[test]
+    fn chart_rks_and_single_chart_rks_agree() {
+        // calculate_chart_rks(acc_percent, c) = calculate_single_chart_rks(acc_percent/100, c)
+        for acc_pct in [70.0, 75.0, 85.5, 90.0, 95.0, 99.99, 100.0] {
+            for level in [1.0, 5.0, 10.0, 15.0, 16.0] {
+                let a = calculate_chart_rks(acc_pct, level);
+                let b = calculate_single_chart_rks(acc_pct / 100.0, level as f32);
+                assert!(
+                    (a - b).abs() < 1e-12,
+                    "mismatch: acc_pct={acc_pct}, level={level}: a={a}, b={b}"
+                );
+            }
+        }
+    }
+
+    // === normalize_accuracy ===
+
+    #[test]
+    fn normalize_accuracy_converts_percent_to_decimal() {
+        let (pct, dec) = normalize_accuracy(98.5);
+        assert!((pct - 98.5).abs() < 1e-12);
+        assert!((dec - 0.985).abs() < 1e-12);
+    }
+
+    #[test]
+    fn normalize_accuracy_handles_zero() {
+        let (pct, dec) = normalize_accuracy(0.0);
+        assert_eq!(pct, 0.0);
+        assert_eq!(dec, 0.0);
+    }
+
+    #[test]
+    fn normalize_accuracy_handles_100() {
+        let (pct, dec) = normalize_accuracy(100.0);
+        assert_eq!(pct, 100.0);
+        assert_eq!(dec, 1.0);
+    }
+
+    // === level_for_difficulty ===
+
+    #[test]
+    fn level_for_difficulty_returns_correct_field() {
+        let cc = ChartConstants {
+            ez: Some(1.0),
+            hd: Some(5.0),
+            in_level: Some(10.0),
+            at: Some(15.0),
+        };
+        assert_eq!(level_for_difficulty(&cc, &Difficulty::EZ), Some(1.0));
+        assert_eq!(level_for_difficulty(&cc, &Difficulty::HD), Some(5.0));
+        assert_eq!(level_for_difficulty(&cc, &Difficulty::IN), Some(10.0));
+        assert_eq!(level_for_difficulty(&cc, &Difficulty::AT), Some(15.0));
+    }
+
+    #[test]
+    fn level_for_difficulty_returns_none_for_missing() {
+        let cc = ChartConstants {
+            ez: None,
+            hd: None,
+            in_level: None,
+            at: None,
+        };
+        assert_eq!(level_for_difficulty(&cc, &Difficulty::EZ), None);
+        assert_eq!(level_for_difficulty(&cc, &Difficulty::IN), None);
+    }
+
+    // === key_of_difficulty ===
+
+    #[test]
+    fn key_of_difficulty_returns_distinct_keys() {
+        assert_eq!(key_of_difficulty(&Difficulty::EZ), 0);
+        assert_eq!(key_of_difficulty(&Difficulty::HD), 1);
+        assert_eq!(key_of_difficulty(&Difficulty::IN), 2);
+        assert_eq!(key_of_difficulty(&Difficulty::AT), 3);
+    }
+
+    // === calculate_player_rks_details ===
+
+    #[test]
+    fn rks_details_empty_records_returns_zero() {
+        let records: Vec<RksRecord> = vec![];
+        let (exact, rounded) = calculate_player_rks_details(&records);
+        assert_eq!(exact, 0.0);
+        assert_eq!(rounded, 0.0);
+    }
+
+    #[test]
+    fn rks_details_single_record() {
+        let records = vec![RksRecord {
+            song_id: "s1".into(),
+            difficulty: Difficulty::IN,
+            score: 900_000,
+            acc: 98.0,
+            rks: 12.0,
+            chart_constant: 12.0,
+        }];
+        let (exact, rounded) = calculate_player_rks_details(&records);
+        // Best27 sum=12.0, AP sum=0 → 12.0/30 = 0.4
+        assert!((exact - 0.4).abs() < 1e-12, "got {exact}");
+        assert!((rounded - 0.4).abs() < 1e-12);
+    }
+
+    #[test]
+    fn rks_details_best27_and_ap3_overlap_correctly() {
+        // Best27 与 AP3 允许重叠：AP 记录同时计入 Best27。
+        let mut records = Vec::new();
+        for i in 0..27 {
+            records.push(RksRecord {
+                song_id: format!("best{i:02}"),
+                difficulty: Difficulty::IN,
+                score: 900_000,
+                acc: 99.0,
+                rks: 13.0,
+                chart_constant: 13.0,
+            });
+        }
+        for i in 0..3 {
+            records.push(RksRecord {
+                song_id: format!("ap{i:02}"),
+                difficulty: Difficulty::IN,
+                score: 1_000_000,
+                acc: 100.0,
+                rks: 14.0,
+                chart_constant: 14.0,
+            });
+        }
+        sort_records_desc(&mut records);
+        // 排序后前 3 条是 AP (14.0)，后 27 条是非 AP (13.0)。
+        // Best27 = 3*14 + 24*13 = 354
+        // AP3 = 3*14 = 42（与 Best27 重叠）
+        // (354 + 42)/30 = 13.2
+        let (exact, _rounded) = calculate_player_rks_details(&records);
+        assert!((exact - 13.2).abs() < 1e-12, "got {exact}");
+    }
+
+    // === target_rks_threshold_from_exact ===
+
+    #[test]
+    fn threshold_rounds_up_when_third_decimal_ge_5() {
+        // exact=12.345 → third decimal 5 → floor(12.34) + 0.015 = 12.355
+        let t = target_rks_threshold_from_exact(12.345);
+        assert!((t - 12.355).abs() < 1e-12, "got {t}");
+    }
+
+    #[test]
+    fn threshold_rounds_down_when_third_decimal_lt_5() {
+        // exact=12.344 → third decimal 4 → floor(12.34) + 0.005 = 12.345
+        let t = target_rks_threshold_from_exact(12.344);
+        assert!((t - 12.345).abs() < 1e-12, "got {t}");
+    }
+
+    #[test]
+    fn threshold_exact_integer() {
+        // exact=14.0 → third decimal 0 → floor(14.0) + 0.005 = 14.005
+        let t = target_rks_threshold_from_exact(14.0);
+        assert!((t - 14.005).abs() < 1e-12, "got {t}");
+    }
+
+    // === ceil_f64_to_i64_saturating ===
+
+    #[test]
+    fn ceil_f64_normal_values() {
+        assert_eq!(ceil_f64_to_i64_saturating(3.2), 4);
+        assert_eq!(ceil_f64_to_i64_saturating(3.0), 3);
+        assert_eq!(ceil_f64_to_i64_saturating(-3.7), -3);
+        assert_eq!(ceil_f64_to_i64_saturating(0.0), 0);
+    }
+
+    #[test]
+    fn ceil_f64_saturates_at_extremes() {
+        assert_eq!(ceil_f64_to_i64_saturating(f64::INFINITY), i64::MAX);
+        assert_eq!(ceil_f64_to_i64_saturating(f64::NEG_INFINITY), i64::MIN);
+        assert_eq!(ceil_f64_to_i64_saturating(f64::NAN), i64::MAX);
+    }
+
+    // === TopKChartScores ===
+
+    #[test]
+    fn topk_with_k_zero_ignores_all() {
+        let mut topk = TopKChartScores::new(0);
+        topk.consider(10.0, 0, || ChartRankingScore {
+            song_id: "s".into(),
+            difficulty: Difficulty::IN,
+            rks: 10.0,
+        });
+        assert_eq!(topk.sum(), 0.0);
+        assert!(topk.into_sorted_scores().is_empty());
+    }
+
+    #[test]
+    fn topk_less_items_than_k() {
+        let mut topk = TopKChartScores::new(5);
+        topk.consider(10.0, 0, || ChartRankingScore {
+            song_id: "a".into(),
+            difficulty: Difficulty::IN,
+            rks: 10.0,
+        });
+        topk.consider(5.0, 1, || ChartRankingScore {
+            song_id: "b".into(),
+            difficulty: Difficulty::IN,
+            rks: 5.0,
+        });
+        assert!((topk.sum() - 15.0).abs() < 1e-12);
+        assert_eq!(topk.into_sorted_scores().len(), 2);
+    }
+
+    #[test]
+    fn topk_replaces_worst_when_full() {
+        let mut topk = TopKChartScores::new(3);
+        topk.consider(10.0, 0, || ChartRankingScore {
+            song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0,
+        });
+        topk.consider(5.0, 1, || ChartRankingScore {
+            song_id: "b".into(), difficulty: Difficulty::IN, rks: 5.0,
+        });
+        topk.consider(8.0, 2, || ChartRankingScore {
+            song_id: "c".into(), difficulty: Difficulty::IN, rks: 8.0,
+        });
+        // Current: {10, 5, 8}, sum=23, worst=5
+        topk.consider(6.0, 3, || ChartRankingScore {
+            song_id: "d".into(), difficulty: Difficulty::IN, rks: 6.0,
+        });
+        // Replaces 5 with 6 → {10, 6, 8}, sum=24
+        assert!((topk.sum() - 24.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn topk_ignores_worse_item_when_full() {
+        let mut topk = TopKChartScores::new(3);
+        topk.consider(10.0, 0, || ChartRankingScore {
+            song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0,
+        });
+        topk.consider(5.0, 1, || ChartRankingScore {
+            song_id: "b".into(), difficulty: Difficulty::IN, rks: 5.0,
+        });
+        topk.consider(8.0, 2, || ChartRankingScore {
+            song_id: "c".into(), difficulty: Difficulty::IN, rks: 8.0,
+        });
+        topk.consider(4.0, 3, || ChartRankingScore {
+            song_id: "d".into(), difficulty: Difficulty::IN, rks: 4.0,
+        });
+        // 4 < 5 (worst), should be ignored → sum still 23
+        assert!((topk.sum() - 23.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn topk_tie_break_by_scan_index() {
+        let mut topk = TopKChartScores::new(2);
+        // Same rks, earlier scan_index wins
+        topk.consider(10.0, 1, || ChartRankingScore {
+            song_id: "later".into(), difficulty: Difficulty::IN, rks: 10.0,
+        });
+        topk.consider(10.0, 0, || ChartRankingScore {
+            song_id: "earlier".into(), difficulty: Difficulty::IN, rks: 10.0,
+        });
+        // {later(10, scan=1), earlier(10, scan=0)} → worst=later (tie, larger scan_index=1)
+        topk.consider(10.0, 2, || ChartRankingScore {
+            song_id: "newest".into(), difficulty: Difficulty::IN, rks: 10.0,
+        });
+        // newer(scan=2) vs later(scan=1): rks equal, scan=2 > scan=1 → newer is NOT better
+        // → later stays, sum unchanged, contains {later(scan=1), earlier(scan=0)}
+        let scores = topk.into_sorted_scores();
+        assert_eq!(scores.len(), 2);
+        assert_eq!(scores[0].song_id, "earlier");
+        assert_eq!(scores[1].song_id, "later");
+    }
+
+    // === cmp_ranked ===
+
+    #[test]
+    fn cmp_ranked_higher_rks_comes_first() {
+        let a = RankedChartScore { score: ChartRankingScore { song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 0 };
+        let b = RankedChartScore { score: ChartRankingScore { song_id: "b".into(), difficulty: Difficulty::IN, rks: 5.0 }, scan_index: 0 };
+        assert_eq!(cmp_ranked(&a, &b), core::cmp::Ordering::Less); // a < b in sort order → a comes first
+    }
+
+    #[test]
+    fn cmp_ranked_equal_rks_uses_scan_index() {
+        let a = RankedChartScore { score: ChartRankingScore { song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 0 };
+        let b = RankedChartScore { score: ChartRankingScore { song_id: "b".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 1 };
+        assert_eq!(cmp_ranked(&a, &b), core::cmp::Ordering::Less); // earlier scan wins
+    }
+
+    // === better_than ===
+
+    #[test]
+    fn better_than_higher_rks_wins() {
+        let other = RankedChartScore { score: ChartRankingScore { song_id: "o".into(), difficulty: Difficulty::IN, rks: 5.0 }, scan_index: 0 };
+        assert!(better_than(10.0, 0, &other));
+        assert!(!better_than(3.0, 0, &other));
+    }
+
+    #[test]
+    fn better_than_equal_rks_uses_scan_index() {
+        let other = RankedChartScore { score: ChartRankingScore { song_id: "o".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 5 };
+        assert!(better_than(10.0, 3, &other)); // earlier scan_index wins
+        assert!(!better_than(10.0, 7, &other)); // later scan_index loses
+    }
+
+    // === PushAccHint methods ===
+
+    #[test]
+    fn push_acc_hint_target_acc() {
+        assert_eq!(PushAccHint::TargetAcc { acc: 98.5 }.target_acc(), Some(98.5));
+        assert_eq!(PushAccHint::PhiOnly.target_acc(), None);
+        assert_eq!(PushAccHint::Unreachable.target_acc(), None);
+        assert_eq!(PushAccHint::AlreadyPhi.target_acc(), None);
+    }
+
+    #[test]
+    fn push_acc_hint_as_legacy_acc() {
+        assert!((PushAccHint::TargetAcc { acc: 98.5 }.as_legacy_acc() - 98.5).abs() < 1e-12);
+        assert_eq!(PushAccHint::PhiOnly.as_legacy_acc(), 100.0);
+        assert_eq!(PushAccHint::Unreachable.as_legacy_acc(), 100.0);
+        assert_eq!(PushAccHint::AlreadyPhi.as_legacy_acc(), 100.0);
+    }
+
+    // === calculate_player_rks with empty/missing data ===
+
+    #[test]
+    fn calculate_player_rks_empty_records() {
+        let records: HashMap<String, Vec<DifficultyRecord>> = HashMap::new();
+        let chart_constants = ChartConstantsMap::new();
+        let res = calculate_player_rks(&records, &chart_constants);
+        assert_eq!(res.total_rks, 0.0);
+        assert!(res.b30_charts.is_empty());
+    }
+
+    #[test]
+    fn calculate_player_rks_missing_chart_constants_yields_zero() {
+        let chart_constants = ChartConstantsMap::new();
+        let mut records = HashMap::new();
+        records.insert(
+            "unknown".to_string(),
+            vec![DifficultyRecord {
+                difficulty: Difficulty::IN,
+                score: 1_000_000,
+                accuracy: 100.0,
+                is_full_combo: true,
+                chart_constant: None,
+                push_acc: None,
+                push_acc_hint: None,
+            }],
+        );
+        let res = calculate_player_rks(&records, &chart_constants);
+        assert_eq!(res.total_rks, 0.0);
+        assert!(res.b30_charts.is_empty());
+    }
+
+    // === calculate_player_rks_details rounding ===
+
+    #[test]
+    fn rks_details_rounds_to_two_decimals() {
+        let records = vec![RksRecord {
+            song_id: "s1".into(),
+            difficulty: Difficulty::IN,
+            score: 900_000,
+            acc: 98.0,
+            rks: 12.3456,
+            chart_constant: 12.0,
+        }];
+        let (_exact, rounded) = calculate_player_rks_details(&records);
+        // exact = 12.3456/30 = 0.41152 → rounded = 0.41
+        assert!((rounded - 0.41).abs() < 1e-12, "got {rounded}");
+    }
 }

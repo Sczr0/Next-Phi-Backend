@@ -18,6 +18,9 @@ pub mod config;
 /// CORS 构建工具
 pub mod cors;
 
+/// 路由装配与中间件
+pub mod router;
+
 /// 启动检查模块
 pub mod startup;
 
