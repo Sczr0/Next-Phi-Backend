@@ -747,8 +747,7 @@ pub async fn get_save_data(
     let response = if let Some(ref rks_result) = rks_opt {
         if calc_rks {
             // 包含 RKS 的复合响应
-            let response = build_save_response(&data, Some((rks_result, data.parsed.as_ref())))?;
-            response
+            build_save_response(&data, Some((rks_result, data.parsed.as_ref())))?
         } else {
             // need_leaderboard 但不需要 RKS 响应
             build_save_response(&data, None)?

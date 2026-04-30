@@ -147,9 +147,9 @@ fn load_etag_cache(path: &Path) -> HashMap<String, String> {
 }
 
 fn save_etag_cache(path: &Path, etags: &HashMap<String, String>) {
-    if let Ok(json) = serde_json::to_string(etags) {
-        if let Err(e) = std::fs::write(path, json) {
-            tracing::warn!("保存远端 info ETag 缓存失败: {e}");
-        }
+    if let Ok(json) = serde_json::to_string(etags)
+        && let Err(e) = std::fs::write(path, json)
+    {
+        tracing::warn!("保存远端 info ETag 缓存失败: {e}");
     }
 }
