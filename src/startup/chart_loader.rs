@@ -1,21 +1,17 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{collections::HashMap, fs, io::Read, path::Path};
 
 use crate::error::AppError;
 
 /// 单曲各难度定数
 #[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
 pub struct ChartConstants {
-    /// EZ 难度定数
     #[schema(example = 4.5)]
     pub ez: Option<f32>,
-    /// HD 难度定数
     #[schema(example = 7.9)]
     pub hd: Option<f32>,
     #[serde(rename = "in")]
-    /// IN 难度定数
     #[schema(example = 9.6)]
     pub in_level: Option<f32>,
-    /// AT 难度定数
     #[schema(example = 12.3)]
     pub at: Option<f32>,
 }
@@ -23,8 +19,7 @@ pub struct ChartConstants {
 /// 歌曲ID -> 定数映射
 pub type ChartConstantsMap = HashMap<String, ChartConstants>;
 
-/// 从 difficulty.csv 加载曲目定数映射
-/// 要求 CSV 头包含列：`id`, `EZ`, `HD`, `IN`, `AT`
+/// 从 difficulty.csv 文件加载曲目定数映射
 pub fn load_chart_constants(file_path: &Path) -> Result<ChartConstantsMap, AppError> {
     if !file_path.exists() {
         return Err(AppError::Internal(format!(
@@ -32,23 +27,23 @@ pub fn load_chart_constants(file_path: &Path) -> Result<ChartConstantsMap, AppEr
             file_path.display()
         )));
     }
-
-    // 先尝试打开文件以区分 IO 问题
-    fs::File::open(file_path)
+    let file = fs::File::open(file_path)
         .map_err(|e| AppError::Internal(format!("打开 difficulty.csv 失败: {e}")))?;
+    parse_chart_constants(file)
+}
 
+/// 从 reader 解析 difficulty.csv 格式的曲目定数映射
+pub fn parse_chart_constants<R: Read>(reader: R) -> Result<ChartConstantsMap, AppError> {
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
-        .from_path(file_path)
-        .map_err(|e| AppError::Internal(format!("读取 CSV 失败: {e}")))?;
+        .from_reader(reader);
 
     let headers = rdr
         .headers()
         .map_err(|e| AppError::Internal(format!("读取 CSV 表头失败: {e}")))?
         .clone();
 
-    // 表头索引（不区分大小写）
     let idx_of = |name: &str| -> Result<usize, AppError> {
         headers
             .iter()

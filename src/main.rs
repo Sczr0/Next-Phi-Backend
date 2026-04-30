@@ -94,16 +94,33 @@ async fn main() {
     // 加载 difficulty.csv
     let info_dir = config.info_path();
     let csv_path = info_dir.join("difficulty.csv");
-    let chart_map: ChartConstantsMap = load_chart_constants(&csv_path).unwrap_or_else(|e| {
+    let mut chart_map: ChartConstantsMap = load_chart_constants(&csv_path).unwrap_or_else(|e| {
         tracing::error!("Failed to load difficulty.csv: {}", e);
         panic!("missing or invalid difficulty.csv");
     });
 
     // 加载歌曲目录
-    let song_catalog = song_loader::load_song_catalog(&info_dir).unwrap_or_else(|e| {
+    let mut song_catalog = song_loader::load_song_catalog(&info_dir).unwrap_or_else(|e| {
         tracing::error!("Failed to load info.csv or nicklist.yaml: {}", e);
         panic!("missing or invalid info.csv/nicklist.yaml");
     });
+
+    // 尝试从远端加载更新的 info 文件
+    if let Some(ref base_url) = config.resources.info_base_url {
+        match phi_backend::startup::remote_info::try_load_remote_info(base_url, &info_dir).await {
+            Ok(Some(remote)) => {
+                tracing::info!("远端 info 版本更新，已切换至远端数据");
+                chart_map = remote.chart_constants;
+                song_catalog = remote.song_catalog;
+            }
+            Ok(None) => {
+                tracing::info!("远端 info 无更新或不可达，继续使用本地数据");
+            }
+            Err(e) => {
+                tracing::warn!("远端 info 加载出错，继续使用本地数据: {e}");
+            }
+        }
+    }
 
     // 构建共享状态
     let taptap_client = match TapTapClient::new(&config.taptap) {

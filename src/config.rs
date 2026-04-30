@@ -39,6 +39,9 @@ pub struct ResourcesConfig {
     pub illustration_repo_auto_sync: bool,
     /// info 数据目录（包含 difficulty.csv）
     pub info_path: String,
+    /// info 文件远程基地址（如 `https://example.com/info`），留空则仅使用本地文件
+    #[serde(default)]
+    pub info_base_url: Option<String>,
 }
 
 impl ResourcesConfig {
@@ -675,6 +678,7 @@ impl Default for AppConfig {
                 external_illustration_ext: ResourcesConfig::default_external_illustration_ext(),
                 illustration_repo_auto_sync: ResourcesConfig::default_illustration_repo_auto_sync(),
                 info_path: "./info".to_string(),
+                info_base_url: None,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),

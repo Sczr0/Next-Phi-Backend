@@ -45,6 +45,8 @@ illustration_folder = "ill"
 illustration_repo_auto_sync = true
 # info 数据目录（包含 difficulty.csv）
 info_path = "./info"
+# info 文件远程基地址（若本地文件落后，启动时自动从远端拉取）
+# info_base_url = "https://r-0semi.xtower.site/info"
 
 [logging]
 # 日志级别: trace, debug, info, warn, error

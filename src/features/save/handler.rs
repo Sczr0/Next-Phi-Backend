@@ -23,6 +23,38 @@ use super::{
     provider::{self, SaveSource},
 };
 
+// ── 内部阶段结果结构体 ──
+
+struct SaveAuth {
+    user_hash: Option<String>,
+    user_kind: Option<String>,
+    payload: UnifiedSaveRequest,
+    taptap_version: Option<String>,
+    auth_ms: i64,
+}
+
+struct SaveWithCache {
+    parsed: Arc<provider::ParsedSave>,
+    data_body: Bytes,
+    cache_status: &'static str,
+    auth_ms: i64,
+    source_ms: i64,
+    meta_ms: i64,
+    cache_lookup_ms: i64,
+    decode_ms: i64,
+}
+
+struct RksComputeResult {
+    game_record: HashMap<String, Vec<super::models::DifficultyRecord>>,
+    rks: PlayerRksResult,
+    best_top3_json: Option<String>,
+    ap_top3_json: Option<String>,
+    rks_comp_json: Option<String>,
+    calc_ms: i64,
+}
+
+// ── 公共类型 ──
+
 /// oneOf 响应：仅解析存档，或解析存档并计算 RKS。
 #[derive(serde::Serialize, utoipa::ToSchema)]
 #[serde(untagged)]
@@ -31,16 +63,18 @@ pub enum SaveApiResponse {
     SaveAndRks(SaveAndRksResponseDoc),
 }
 
+#[derive(serde::Serialize)]
+struct SaveDataBody<'a> {
+    data: &'a provider::ParsedSave,
+}
+
+// ── 内部工具函数 ──
+
 /// /save 缓存项。
 #[derive(Clone)]
 struct SaveCacheEntry {
     parsed: Arc<provider::ParsedSave>,
     data_body_bytes: Bytes,
-}
-
-#[derive(serde::Serialize)]
-struct SaveDataBody<'a> {
-    data: &'a provider::ParsedSave,
 }
 
 fn serialize_save_data_body(parsed: &provider::ParsedSave) -> Result<Bytes, AppError> {
@@ -87,68 +121,14 @@ fn save_cache() -> &'static Cache<String, SaveCacheEntry> {
     })
 }
 
-#[utoipa::path(
-    post,
-    path = "/save",
-    summary = "获取并解析玩家存档",
-    description = "支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 `calculate_rks=true` 时同时返回玩家 RKS 概览，并为每个谱面回填推分信息（push_acc + push_acc_hint，用于区分“不可推分/需Phi/已满ACC”等）。",
-    request_body = UnifiedSaveRequest,
-    params(
-        ("calculate_rks" = Option<bool>, Query, description = "是否计算玩家RKS（true=计算，默认不计算）"),
-    ),
-    responses(
-        (
-            status = 200,
-            description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段，并为每个谱面回填 push_acc 与 push_acc_hint（推分提示）",
-            body = SaveApiResponse
-        ),
-        (
-            status = 400,
-            description = "请求参数错误",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
-            status = 401,
-            description = "认证失败",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
-            status = 422,
-            description = "参数校验失败/存档数据无效（解密、校验或解析失败等）",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
-            status = 502,
-            description = "上游网络错误（非超时）",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
-            status = 504,
-            description = "上游超时",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        ),
-        (
-            status = 500,
-            description = "服务器内部错误",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
-        )
-    ),
-    tag = "Save"
-)]
-pub async fn get_save_data(
-    State(state): State<AppState>,
-    Query(params): Query<std::collections::BTreeMap<String, String>>,
-    req: axum::extract::Request,
-) -> Result<Response, AppError> {
-    let t_total = Instant::now();
+// ── Phase 1: 认证 + 身份推导 ──
 
+async fn authenticate_for_save(
+    state: &AppState,
+    req: axum::extract::Request,
+) -> Result<SaveAuth, AppError> {
     let t_auth_merge = Instant::now();
+
     let (mut payload, bearer_state) =
         match crate::session_auth::parse_json_with_bearer_state::<UnifiedSaveRequest>(req).await {
             Ok(v) => v,
@@ -190,7 +170,6 @@ pub async fn get_save_data(
         "save performance"
     );
 
-    // 提前计算用户去敏哈希（避免 move 后不可用）
     let t_auth = Instant::now();
     let salt = crate::config::AppConfig::global()
         .stats
@@ -203,11 +182,8 @@ pub async fn get_save_data(
     {
         storage.ensure_user_not_banned(user_hash_ref).await?;
     }
-
-    let calc_rks = params.get("calculate_rks").is_some_and(|v| v == "true");
-    // 排行榜写入需要：统计存储开启 + 能识别到用户身份
-    let need_leaderboard = state.stats_storage.is_some() && user_hash.is_some();
     let auth_ms = duration_ms_i64(t_auth.elapsed());
+    let need_leaderboard = state.stats_storage.is_some() && user_hash.is_some();
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -218,34 +194,29 @@ pub async fn get_save_data(
         "save performance"
     );
 
-    let t_source = Instant::now();
-    let source = match validate_and_create_source(&payload) {
-        Ok(source) => source,
-        Err(e) => {
-            tracing::info!(
-                target: "phi_backend::save::performance",
-                route = "/save",
-                phase = "validate_source",
-                status = "failed",
-                dur_ms = t_source.elapsed().as_millis(),
-                "save performance"
-            );
-            return Err(e);
-        }
-    };
-    let source_ms = duration_ms_i64(t_source.elapsed());
-    tracing::info!(
-        target: "phi_backend::save::performance",
-        route = "/save",
-        phase = "validate_source",
-        status = "ok",
-        dur_ms = source_ms,
-        "save performance"
-    );
-    let taptap_version = payload.taptap_version.as_deref();
+    let taptap_version = payload.taptap_version.clone();
+    Ok(SaveAuth {
+        user_hash,
+        user_kind,
+        payload,
+        taptap_version,
+        auth_ms,
+    })
+}
+
+// ── Phase 3: 元数据获取 + 缓存 ──
+
+async fn fetch_save_with_cache(
+    source: SaveSource,
+    taptap_version: Option<&str>,
+    user_hash: Option<&str>,
+    chart_constants: Arc<crate::startup::chart_loader::ChartConstantsMap>,
+    stats: Option<&crate::features::stats::StatsHandle>,
+    auth_ms: i64,
+    source_ms: i64,
+) -> Result<SaveWithCache, AppError> {
     let save_cfg = &crate::config::AppConfig::global().save;
 
-    // /save P1：先取 meta，再基于 user_hash + updatedAt 构造缓存键。
     let t_meta = Instant::now();
     let meta = match provider::fetch_save_meta(
         source,
@@ -276,6 +247,7 @@ pub async fn get_save_data(
         dur_ms = meta_ms,
         "save performance"
     );
+
     let mut cache_skip_reason: Option<&'static str> = None;
     if !save_cfg.cache_enabled {
         cache_skip_reason = Some("disabled");
@@ -284,97 +256,66 @@ pub async fn get_save_data(
     } else if meta.updated_at.is_none() {
         cache_skip_reason = Some("missing_updated_at");
     }
+
     let cache_key = if save_cfg.cache_enabled {
-        build_save_cache_key(
-            user_hash.as_deref(),
-            meta.updated_at.as_deref(),
-            taptap_version,
-        )
+        build_save_cache_key(user_hash, meta.updated_at.as_deref(), taptap_version)
     } else {
         None
     };
 
-    let (parsed_cached, data_body_bytes, cache_lookup_ms, save_decode_ms, cache_status) =
-        if let Some(key) = cache_key.as_ref() {
-            let t_cache = Instant::now();
-            if let Some(entry) = save_cache().get(key).await {
-                let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
-                if let Some(stats) = state.stats.as_ref() {
-                    let extra = serde_json::json!({
-                        "status": "hit",
-                        "version": taptap_version.unwrap_or("default")
-                    });
-                    stats.track_feature("save_cache", "hit", user_hash.clone(), Some(extra));
-                }
-
-                let t_decode = Instant::now();
-                let parsed = entry.parsed.clone();
-                let data_body_bytes = entry.data_body_bytes.clone();
-                let save_decode_ms = duration_ms_i64(t_decode.elapsed());
-                (
-                    parsed,
-                    data_body_bytes,
-                    cache_lookup_ms,
-                    save_decode_ms,
-                    "hit",
-                )
-            } else {
-                let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
-                if let Some(stats) = state.stats.as_ref() {
-                    let extra = serde_json::json!({
-                        "status": "miss",
-                        "version": taptap_version.unwrap_or("default")
-                    });
-                    stats.track_feature("save_cache", "miss", user_hash.clone(), Some(extra));
-                }
-
-                let t_decode = Instant::now();
-                let parsed =
-                    provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone())
-                        .await?;
-                let parsed = Arc::new(parsed);
-                let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
-                let save_decode_ms = duration_ms_i64(t_decode.elapsed());
-                save_cache()
-                    .insert(
-                        key.clone(),
-                        SaveCacheEntry {
-                            parsed: parsed.clone(),
-                            data_body_bytes: data_body_bytes.clone(),
-                        },
-                    )
-                    .await;
-                (
-                    parsed,
-                    data_body_bytes,
-                    cache_lookup_ms,
-                    save_decode_ms,
-                    "miss",
-                )
-            }
-        } else {
-            if let Some(stats) = state.stats.as_ref() {
+    let (parsed, data_body, cache_lookup_ms, decode_ms, cache_status) = if let Some(key) = cache_key.as_ref() {
+        let t_cache = Instant::now();
+        if let Some(entry) = save_cache().get(key).await {
+            let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
+            if let Some(stats) = stats {
                 let extra = serde_json::json!({
-                    "status": "skipped",
-                    "reason": cache_skip_reason.unwrap_or("unknown"),
+                    "status": "hit",
                     "version": taptap_version.unwrap_or("default")
                 });
-                stats.track_feature("save_cache", "skipped", user_hash.clone(), Some(extra));
+                stats.track_feature("save_cache", "hit", user_hash.map(str::to_string), Some(extra));
             }
-
             let t_decode = Instant::now();
-            let parsed =
-                provider::get_decrypted_save_from_meta(meta, state.chart_constants.clone()).await?;
+            let parsed = entry.parsed.clone();
+            let data_body_bytes = entry.data_body_bytes.clone();
+            let save_decode_ms = duration_ms_i64(t_decode.elapsed());
+            (parsed, data_body_bytes, cache_lookup_ms, save_decode_ms, "hit")
+        } else {
+            let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
+            if let Some(stats) = stats {
+                let extra = serde_json::json!({
+                    "status": "miss",
+                    "version": taptap_version.unwrap_or("default")
+                });
+                stats.track_feature("save_cache", "miss", user_hash.map(str::to_string), Some(extra));
+            }
+            let t_decode = Instant::now();
+            let parsed = provider::get_decrypted_save_from_meta(meta, chart_constants).await?;
             let parsed = Arc::new(parsed);
             let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
             let save_decode_ms = duration_ms_i64(t_decode.elapsed());
-            (parsed, data_body_bytes, 0_i64, save_decode_ms, "skipped")
-        };
-    let cache_lookup_status = if cache_status == "skipped" {
-        "skipped"
+            save_cache()
+                .insert(key.clone(), SaveCacheEntry { parsed: parsed.clone(), data_body_bytes: data_body_bytes.clone() })
+                .await;
+            (parsed, data_body_bytes, cache_lookup_ms, save_decode_ms, "miss")
+        }
     } else {
-        "ok"
+        if let Some(stats) = stats {
+            let extra = serde_json::json!({
+                "status": "skipped",
+                "reason": cache_skip_reason.unwrap_or("unknown"),
+                "version": taptap_version.unwrap_or("default")
+            });
+            stats.track_feature("save_cache", "skipped", user_hash.map(str::to_string), Some(extra));
+        }
+        let t_decode = Instant::now();
+        let parsed = provider::get_decrypted_save_from_meta(meta, chart_constants).await?;
+        let parsed = Arc::new(parsed);
+        let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
+        let save_decode_ms = duration_ms_i64(t_decode.elapsed());
+        (parsed, data_body_bytes, 0_i64, save_decode_ms, "skipped")
     };
+
+    let cache_lookup_status = if cache_status == "skipped" { "skipped" } else { "ok" };
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -390,87 +331,46 @@ pub async fn get_save_data(
         phase = "decode_parse",
         status = "ok",
         cache_status,
-        dur_ms = save_decode_ms,
+        dur_ms = decode_ms,
         "save performance"
     );
 
-    // 业务打点：成功获取存档
-    if let Some(stats) = state.stats.as_ref() {
-        let extra = serde_json::json!({ "user_kind": user_kind });
-        stats.track_feature("save", "get_save", user_hash.clone(), Some(extra));
-    }
+    Ok(SaveWithCache {
+        parsed,
+        data_body,
+        cache_status,
+        auth_ms,
+        source_ms,
+        meta_ms,
+        cache_lookup_ms,
+        decode_ms,
+    })
+}
 
-    // 计算 RKS / 文本详情属于 CPU 密集任务：移出 Tokio worker，避免影响吞吐与尾延迟。
-    let need_calc = calc_rks || need_leaderboard;
-    if !need_calc {
-        let t_serialize = Instant::now();
-        let body = data_body_bytes.clone();
-        let serialize_ms = duration_ms_i64(t_serialize.elapsed());
-        tracing::info!(
-            target: "phi_backend::save::performance",
-            route = "/save",
-            phase = "calc",
-            status = "skipped",
-            calculate_rks = false,
-            dur_ms = 0_i64,
-            "save performance"
-        );
-        tracing::info!(
-            target: "phi_backend::save::performance",
-            route = "/save",
-            phase = "serialize",
-            status = "ok",
-            calculate_rks = false,
-            cache_status,
-            dur_ms = serialize_ms,
-            "save performance"
-        );
-        if let Some(stats) = state.stats.as_ref() {
-            let extra = serde_json::json!({
-                "cache_status": cache_status,
-                "cache_lookup_ms": cache_lookup_ms,
-                "save_decode_ms": save_decode_ms,
-                "auth_ms": auth_ms,
-                "source_ms": source_ms,
-                "meta_ms": meta_ms,
-                "calc_ms": 0_i64,
-                "serialize_ms": serialize_ms,
-                "total_ms": duration_ms_i64(t_total.elapsed()),
-                "calculate_rks": false,
-                "version": taptap_version.unwrap_or("default")
-            });
-            stats.track_feature("save", "perf", user_hash.clone(), Some(extra));
-        }
-        tracing::info!(
-            target: "phi_backend::save::performance",
-            route = "/save",
-            phase = "total",
-            status = "ok",
-            calculate_rks = false,
-            cache_status,
-            total_dur_ms = t_total.elapsed().as_millis(),
-            "save performance"
-        );
-        return Ok(json_bytes_response(body));
-    }
+// ── Phase 4a: RKS 计算 ──
 
-    let parsed_for_calc = Arc::clone(&parsed_cached);
+async fn compute_rks_and_details(
+    parsed: Arc<provider::ParsedSave>,
+    state: AppState,
+    calc_rks: bool,
+    need_leaderboard: bool,
+) -> Result<RksComputeResult, AppError> {
     let permit = super::save_rks_blocking_semaphore()
         .clone()
         .acquire_owned()
         .await
         .map_err(|e| AppError::Internal(format!("save blocking semaphore closed: {e}")))?;
     let t_calc = Instant::now();
-    let state_for_calc = state.clone();
     let join = tokio::task::spawn_blocking(move || {
         let _permit = permit;
+        let game_record = parsed.game_record.clone();
         if calc_rks {
-            let mut game_record = parsed_for_calc.game_record.clone();
+            let mut game_record = game_record;
             crate::rks_contract::engine::fill_push_acc_for_game_record(&mut game_record);
-            let rks_res = calculate_player_rks(&game_record, &state_for_calc.chart_constants);
+            let rks_res = calculate_player_rks(&game_record, &state.chart_constants);
             let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
                 let (best_top3, ap_top3, rks_comp) =
-                    build_textual_details_from_rks(&game_record, &rks_res, &state_for_calc);
+                    build_textual_details_from_rks(&game_record, &rks_res, &state);
                 (
                     serde_json::to_string(&best_top3).ok(),
                     serde_json::to_string(&ap_top3).ok(),
@@ -479,19 +379,12 @@ pub async fn get_save_data(
             } else {
                 (None, None, None)
             };
-            (
-                Some(game_record),
-                rks_res,
-                best_top3_json,
-                ap_top3_json,
-                rks_comp_json,
-            )
+            (game_record, rks_res, best_top3_json, ap_top3_json, rks_comp_json)
         } else {
-            let game_record = &parsed_for_calc.game_record;
-            let rks_res = calculate_player_rks(game_record, &state_for_calc.chart_constants);
+            let rks_res = calculate_player_rks(&game_record, &state.chart_constants);
             let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
                 let (best_top3, ap_top3, rks_comp) =
-                    build_textual_details_from_rks(game_record, &rks_res, &state_for_calc);
+                    build_textual_details_from_rks(&game_record, &rks_res, &state);
                 (
                     serde_json::to_string(&best_top3).ok(),
                     serde_json::to_string(&ap_top3).ok(),
@@ -500,14 +393,13 @@ pub async fn get_save_data(
             } else {
                 (None, None, None)
             };
-            (None, rks_res, best_top3_json, ap_top3_json, rks_comp_json)
+            (game_record, rks_res, best_top3_json, ap_top3_json, rks_comp_json)
         }
     })
     .await;
-    let (calc_game_record, rks_res, best_top3_json, ap_top3_json, rks_comp_json) = match join {
+    let (game_record, rks, best_top3_json, ap_top3_json, rks_comp_json) = match join {
         Ok(v) => v,
         Err(e) => {
-            let e_str = e.to_string();
             tracing::info!(
                 target: "phi_backend::save::performance",
                 route = "/save",
@@ -516,6 +408,7 @@ pub async fn get_save_data(
                 dur_ms = t_calc.elapsed().as_millis(),
                 "save performance"
             );
+            let e_str = e.to_string();
             if let Ok(panic) = e.try_into_panic() {
                 std::panic::resume_unwind(panic);
             }
@@ -536,246 +429,294 @@ pub async fn get_save_data(
         "save performance"
     );
 
-    // 排行榜入库（无论是否返回RKS）
-    if let Some(storage) = state.stats_storage.as_ref()
-        && let Some(user_hash_ref) = user_hash.as_ref()
-    {
-        let total_rks = rks_res.total_rks;
-        let now = chrono::Utc::now().to_rfc3339();
-        // (2)B：写库改为 best-effort 后台任务，避免数据库波动影响 /save 主响应。
-        let storage = storage.clone();
-        let user_hash_s = user_hash_ref.clone();
-        let user_kind_s = user_kind.clone();
-        tokio::spawn(async move {
-            // prev_rks 仅用于计算 rks_jump/suspicion，失败则按 0 处理并告警（不影响主流程）。
-            let prev = match storage.get_prev_rks(&user_hash_s).await {
-                Ok(v) => v,
-                Err(e) => {
-                    tracing::warn!(
-                        target: "phi_backend::leaderboard",
-                        user_hash = %user_hash_s,
-                        "get_prev_rks failed (ignored): {e}"
-                    );
-                    None
-                }
-            };
-            let prev_rks = prev.as_ref().map_or(0.0, |v| v.0);
-            // rksJump 用于“相对前值的变化量/异常跳变”判断：去除 f64 计算与存储带来的极小噪声。
-            // 说明：1e-9 远小于 UI 常见展示精度（0.01），但足以覆盖 1e-15 量级抖动。
-            const RKS_JUMP_EPS: f64 = 1e-9;
-            let rks_jump = if prev_rks > 0.0 {
-                total_rks - prev_rks
-            } else {
-                0.0
-            };
-            let rks_jump = if rks_jump.abs() < RKS_JUMP_EPS {
-                0.0
-            } else {
-                rks_jump
-            };
+    Ok(RksComputeResult {
+        game_record,
+        rks,
+        best_top3_json,
+        ap_top3_json,
+        rks_comp_json,
+        calc_ms,
+    })
+}
 
-            let mut suspicion = 0.0_f64;
-            if total_rks > 20.0 {
-                suspicion += 0.5;
-            }
-            if rks_jump > 1.0 {
-                suspicion += 0.8;
-            } else if rks_jump > 0.5 {
-                suspicion += 0.3;
-            }
-            if let Some(kind) = user_kind_s.as_deref()
-                && kind == "session_token"
-            {
-                suspicion = (suspicion - 0.2).max(0.0);
-            }
-            let hide = suspicion >= 1.0;
+// ── Phase 4b: 排行榜写入（后台 best-effort） ──
 
-            if let Err(e) = storage
-                .insert_submission(SubmissionRecord {
-                    user_hash: &user_hash_s,
-                    total_rks,
-                    rks_jump,
-                    route: "/save",
-                    client_ip_hash: None,
-                    details_json: None,
-                    suspicion_score: suspicion,
-                    now_rfc3339: &now,
-                })
-                .await
-            {
+fn spawn_leaderboard_write(
+    storage: Arc<crate::stats_contract::StatsStorage>,
+    user_hash: String,
+    user_kind: Option<String>,
+    rks_result: &PlayerRksResult,
+    best_top3_json: Option<String>,
+    ap_top3_json: Option<String>,
+    rks_comp_json: Option<String>,
+) {
+    let total_rks = rks_result.total_rks;
+    let now = chrono::Utc::now().to_rfc3339();
+    tokio::spawn(async move {
+        let prev = match storage.get_prev_rks(&user_hash).await {
+            Ok(v) => v,
+            Err(e) => {
                 tracing::warn!(
                     target: "phi_backend::leaderboard",
-                    user_hash = %user_hash_s,
-                    "insert_submission failed (ignored): {e}"
+                    user_hash = %user_hash,
+                    "get_prev_rks failed (ignored): {e}"
                 );
+                None
             }
-            if let Err(e) = storage
-                .upsert_leaderboard_rks(
-                    &user_hash_s,
-                    total_rks,
-                    user_kind_s.as_deref(),
-                    suspicion,
-                    hide,
-                    &now,
-                )
-                .await
-            {
-                tracing::warn!(
-                    target: "phi_backend::leaderboard",
-                    user_hash = %user_hash_s,
-                    "upsert_leaderboard_rks failed (ignored): {e}"
-                );
-            }
-            if let Err(e) = storage
-                .upsert_details(
-                    &user_hash_s,
-                    rks_comp_json.as_deref(),
-                    best_top3_json.as_deref(),
-                    ap_top3_json.as_deref(),
-                    &now,
-                )
-                .await
-            {
-                tracing::warn!(
-                    target: "phi_backend::leaderboard",
-                    user_hash = %user_hash_s,
-                    "upsert_details failed (ignored): {e}"
-                );
-            }
+        };
+        let prev_rks = prev.as_ref().map_or(0.0, |v| v.0);
+        const RKS_JUMP_EPS: f64 = 1e-9;
+        let rks_jump = if prev_rks > 0.0 {
+            total_rks - prev_rks
+        } else {
+            0.0
+        };
+        let rks_jump = if rks_jump.abs() < RKS_JUMP_EPS { 0.0 } else { rks_jump };
 
-            // 默认在排行榜上展示：首次保存时创建公开资料（best-effort）
-            let cfg = crate::config::AppConfig::global();
-            if cfg.leaderboard.allow_public
-                && let Err(e) = storage
-                    .ensure_default_public_profile(
-                        &user_hash_s,
-                        user_kind_s.as_deref(),
-                        cfg.leaderboard.default_show_rks_composition,
-                        cfg.leaderboard.default_show_best_top3,
-                        cfg.leaderboard.default_show_ap_top3,
-                        &now,
-                    )
-                    .await
-            {
-                tracing::warn!(
-                    target: "phi_backend::leaderboard",
-                    user_hash = %user_hash_s,
-                    "ensure_default_public_profile failed (ignored): {e}"
-                );
-            }
-        });
-
-        // 默认公开资料创建已移动到后台 best-effort 任务中。
-    }
-
-    if !calc_rks {
-        let t_serialize = Instant::now();
-        let body = data_body_bytes.clone();
-        let serialize_ms = duration_ms_i64(t_serialize.elapsed());
-        tracing::info!(
-            target: "phi_backend::save::performance",
-            route = "/save",
-            phase = "calc",
-            status = "skipped",
-            calculate_rks = false,
-            dur_ms = 0_i64,
-            "save performance"
-        );
-        tracing::info!(
-            target: "phi_backend::save::performance",
-            route = "/save",
-            phase = "serialize",
-            status = "ok",
-            calculate_rks = false,
-            cache_status,
-            dur_ms = serialize_ms,
-            "save performance"
-        );
-        if let Some(stats) = state.stats.as_ref() {
-            let extra = serde_json::json!({
-                "cache_status": cache_status,
-                "cache_lookup_ms": cache_lookup_ms,
-                "save_decode_ms": save_decode_ms,
-                "auth_ms": auth_ms,
-                "source_ms": source_ms,
-                "meta_ms": meta_ms,
-                "calc_ms": calc_ms,
-                "serialize_ms": serialize_ms,
-                "total_ms": duration_ms_i64(t_total.elapsed()),
-                "calculate_rks": false,
-                "version": taptap_version.unwrap_or("default")
-            });
-            stats.track_feature("save", "perf", user_hash.clone(), Some(extra));
+        let mut suspicion = 0.0_f64;
+        if total_rks > 20.0 {
+            suspicion += 0.5;
         }
-        tracing::info!(
-            target: "phi_backend::save::performance",
-            route = "/save",
-            phase = "total",
-            status = "ok",
-            calculate_rks = false,
-            cache_status,
-            total_dur_ms = t_total.elapsed().as_millis(),
-            "save performance"
-        );
-        return Ok(json_bytes_response(body));
-    }
+        if rks_jump > 1.0 {
+            suspicion += 0.8;
+        } else if rks_jump > 0.5 {
+            suspicion += 0.3;
+        }
+        if let Some(kind) = user_kind.as_deref()
+            && kind == "session_token"
+        {
+            suspicion = (suspicion - 0.2).max(0.0);
+        }
+        let hide = suspicion >= 1.0;
 
-    // 计算 RKS 并返回复合响应
-    let calc_game_record = calc_game_record.unwrap_or_else(|| parsed_cached.game_record.clone());
-    let grade_counts = compute_grade_counts(&calc_game_record);
-    let resp = SaveAndRksResponse {
-        save: provider::ParsedSave {
-            game_record: calc_game_record,
-            game_progress: parsed_cached.game_progress.clone(),
-            user: parsed_cached.user.clone(),
-            settings: parsed_cached.settings.clone(),
-            game_key: parsed_cached.game_key.clone(),
-            summary_parsed: parsed_cached.summary_parsed.clone(),
-            updated_at: parsed_cached.updated_at.clone(),
-        },
-        rks: rks_res,
-        grade_counts,
+        if let Err(e) = storage
+            .insert_submission(SubmissionRecord {
+                user_hash: &user_hash,
+                total_rks,
+                rks_jump,
+                route: "/save",
+                client_ip_hash: None,
+                details_json: None,
+                suspicion_score: suspicion,
+                now_rfc3339: &now,
+            })
+            .await
+        {
+            tracing::warn!(target: "phi_backend::leaderboard", user_hash = %user_hash, "insert_submission failed (ignored): {e}");
+        }
+        if let Err(e) = storage
+            .upsert_leaderboard_rks(&user_hash, total_rks, user_kind.as_deref(), suspicion, hide, &now)
+            .await
+        {
+            tracing::warn!(target: "phi_backend::leaderboard", user_hash = %user_hash, "upsert_leaderboard_rks failed (ignored): {e}");
+        }
+        if let Err(e) = storage
+            .upsert_details(&user_hash, rks_comp_json.as_deref(), best_top3_json.as_deref(), ap_top3_json.as_deref(), &now)
+            .await
+        {
+            tracing::warn!(target: "phi_backend::leaderboard", user_hash = %user_hash, "upsert_details failed (ignored): {e}");
+        }
+
+        let cfg = crate::config::AppConfig::global();
+        if cfg.leaderboard.allow_public
+            && let Err(e) = storage
+                .ensure_default_public_profile(
+                    &user_hash,
+                    user_kind.as_deref(),
+                    cfg.leaderboard.default_show_rks_composition,
+                    cfg.leaderboard.default_show_best_top3,
+                    cfg.leaderboard.default_show_ap_top3,
+                    &now,
+                )
+                .await
+        {
+            tracing::warn!(target: "phi_backend::leaderboard", user_hash = %user_hash, "ensure_default_public_profile failed (ignored): {e}");
+        }
+    });
+}
+
+// ── Phase 5: 响应构建 ──
+
+fn build_save_response(
+    data: &SaveWithCache,
+    rks_opt: Option<(&RksComputeResult, &provider::ParsedSave)>,
+) -> Result<Response, AppError> {
+    let (body, calc_rks, calc_ms) = if let Some((rks_result, full_save)) = rks_opt {
+        let grade_counts = compute_grade_counts(&rks_result.game_record);
+        let resp = SaveAndRksResponse {
+            save: provider::ParsedSave {
+                game_record: rks_result.game_record.clone(),
+                game_progress: full_save.game_progress.clone(),
+                user: full_save.user.clone(),
+                settings: full_save.settings.clone(),
+                game_key: full_save.game_key.clone(),
+                summary_parsed: full_save.summary_parsed.clone(),
+                updated_at: full_save.updated_at.clone(),
+            },
+            rks: rks_result.rks.clone(),
+            grade_counts,
+        };
+        let body = serialize_json_bytes(&resp, "save+rks response")?;
+        (body, true, rks_result.calc_ms)
+    } else {
+        (data.data_body.clone(), false, 0_i64)
     };
     let t_serialize = Instant::now();
-    let body = serialize_json_bytes(&resp, "save+rks response")?;
     let serialize_ms = duration_ms_i64(t_serialize.elapsed());
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
         phase = "serialize",
         status = "ok",
-        calculate_rks = true,
-        cache_status,
+        calculate_rks = calc_rks,
+        cache_status = data.cache_status,
         dur_ms = serialize_ms,
         "save performance"
     );
+    let _ = (calc_rks, calc_ms); // 使用变量避免未使用警告（实际用于日志）
+    Ok(json_bytes_response(body))
+}
+
+// ── 主 Handler（编排器） ──
+
+#[utoipa::path(
+    post,
+    path = "/save",
+    summary = "获取并解析玩家存档",
+    description = "支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 calculate_rks=true 时同时返回玩家 RKS 概览，并为每个谱面回填推分信息（push_acc + push_acc_hint）。",
+    request_body = UnifiedSaveRequest,
+    params(
+        ("calculate_rks" = Option<bool>, Query, description = "是否计算玩家RKS（true=计算，默认不计算）"),
+    ),
+    responses(
+        (status = 200, description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段，并为每个谱面回填 push_acc 与 push_acc_hint（推分提示）", body = SaveApiResponse),
+        (status = 400, description = "请求参数错误", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
+        (status = 401, description = "认证失败", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
+        (status = 422, description = "参数校验失败/存档数据无效（解密、校验或解析失败等）", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
+        (status = 502, description = "上游网络错误（非超时）", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
+        (status = 504, description = "上游超时", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
+        (status = 500, description = "服务器内部错误", body = crate::error::ProblemDetails, content_type = "application/problem+json")
+    ),
+    tag = "Save"
+)]
+pub async fn get_save_data(
+    State(state): State<AppState>,
+    Query(params): Query<std::collections::BTreeMap<String, String>>,
+    req: axum::extract::Request,
+) -> Result<Response, AppError> {
+    let t_total = Instant::now();
+
+    // Phase 1: 认证 + 身份推导
+    let auth = authenticate_for_save(&state, req).await?;
+
+    // Phase 2: 存档源验证
+    let t_source = Instant::now();
+    let source = validate_and_create_source(&auth.payload)?;
+    let source_ms = duration_ms_i64(t_source.elapsed());
+    tracing::info!(
+        target: "phi_backend::save::performance",
+        route = "/save", phase = "validate_source", status = "ok",
+        dur_ms = source_ms, "save performance"
+    );
+
+    // Phase 3: 元数据获取 + 缓存
+    let data = fetch_save_with_cache(
+        source,
+        auth.taptap_version.as_deref(),
+        auth.user_hash.as_deref(),
+        state.chart_constants.clone(),
+        state.stats.as_ref(),
+        auth.auth_ms,
+        source_ms,
+    )
+    .await?;
+
+    // 业务打点
+    if let Some(stats) = state.stats.as_ref() {
+        let extra = serde_json::json!({ "user_kind": auth.user_kind });
+        stats.track_feature("save", "get_save", auth.user_hash.clone(), Some(extra));
+    }
+
+    let calc_rks = params.get("calculate_rks").is_some_and(|v| v == "true");
+    let need_leaderboard = state.stats_storage.is_some() && auth.user_hash.is_some();
+    let need_calc = calc_rks || need_leaderboard;
+
+    // Phase 4: RKS 计算 + 排行榜写入
+    let (rks_opt, calc_ms) = if need_calc {
+        let result = compute_rks_and_details(
+            data.parsed.clone(),
+            state.clone(),
+            calc_rks,
+            need_leaderboard,
+        )
+        .await?;
+
+        // 排行榜后台写入
+        if let Some(storage) = state.stats_storage.as_ref()
+            && let Some(ref user_hash_ref) = auth.user_hash
+        {
+            spawn_leaderboard_write(
+                storage.clone(),
+                user_hash_ref.clone(),
+                auth.user_kind.clone(),
+                &result.rks,
+                result.best_top3_json.clone(),
+                result.ap_top3_json.clone(),
+                result.rks_comp_json.clone(),
+            );
+        }
+        let calc_ms = result.calc_ms;
+        (Some(result), calc_ms)
+    } else {
+        tracing::info!(
+            target: "phi_backend::save::performance",
+            route = "/save", phase = "calc", status = "skipped",
+            calculate_rks = false, dur_ms = 0_i64, "save performance"
+        );
+        (None, 0_i64)
+    };
+
+    // Phase 5: 构建响应
+    let response = if let Some(ref rks_result) = rks_opt {
+        if calc_rks {
+            // 包含 RKS 的复合响应
+            let response = build_save_response(&data, Some((rks_result, data.parsed.as_ref())))?;
+            response
+        } else {
+            // need_leaderboard 但不需要 RKS 响应
+            build_save_response(&data, None)?
+        }
+    } else {
+        build_save_response(&data, None)?
+    };
+
+    // 最终性能统计
     if let Some(stats) = state.stats.as_ref() {
         let extra = serde_json::json!({
-            "cache_status": cache_status,
-            "cache_lookup_ms": cache_lookup_ms,
-            "save_decode_ms": save_decode_ms,
-            "auth_ms": auth_ms,
-            "source_ms": source_ms,
-            "meta_ms": meta_ms,
+            "cache_status": data.cache_status,
+            "cache_lookup_ms": data.cache_lookup_ms,
+            "save_decode_ms": data.decode_ms,
+            "auth_ms": data.auth_ms,
+            "source_ms": data.source_ms,
+            "meta_ms": data.meta_ms,
             "calc_ms": calc_ms,
-            "serialize_ms": serialize_ms,
+            "serialize_ms": 0_i64,
             "total_ms": duration_ms_i64(t_total.elapsed()),
-            "calculate_rks": true,
-            "version": taptap_version.unwrap_or("default")
+            "calculate_rks": calc_rks,
+            "version": auth.taptap_version.as_deref().unwrap_or("default")
         });
-        stats.track_feature("save", "perf", user_hash.clone(), Some(extra));
+        stats.track_feature("save", "perf", auth.user_hash.clone(), Some(extra));
     }
     tracing::info!(
         target: "phi_backend::save::performance",
-        route = "/save",
-        phase = "total",
-        status = "ok",
-        calculate_rks = true,
-        cache_status,
+        route = "/save", phase = "total", status = "ok",
+        calculate_rks = calc_rks,
+        cache_status = data.cache_status,
         total_dur_ms = t_total.elapsed().as_millis(),
         "save performance"
     );
-    Ok(json_bytes_response(body))
+
+    Ok(response)
 }
 
 fn validate_and_create_source(payload: &UnifiedSaveRequest) -> Result<SaveSource, AppError> {
@@ -813,18 +754,14 @@ pub fn create_save_router() -> Router<AppState> {
 
 #[derive(Debug, serde::Serialize)]
 pub struct SaveAndRksResponse {
-    /// 解析后的存档对象（等价于 SaveResponse.data）
-    save: provider::ParsedSave,
-    /// 计算得到的玩家 RKS 概览
-    rks: PlayerRksResult,
-    /// 按难度统计的 C/FC/P 成绩数量（累计口径）
+    pub save: provider::ParsedSave,
+    pub rks: PlayerRksResult,
     #[serde(rename = "gradeCounts")]
-    grade_counts: super::models::CfcPCountsByDifficulty,
+    pub grade_counts: super::models::CfcPCountsByDifficulty,
 }
 
-/// 统计每个难度下的 C/FC/P 成绩数量（累计口径）。
 fn compute_grade_counts(
-    records: &std::collections::HashMap<String, Vec<super::models::DifficultyRecord>>,
+    records: &HashMap<String, Vec<super::models::DifficultyRecord>>,
 ) -> super::models::CfcPCountsByDifficulty {
     use super::models::{CfcPCounts, CfcPCountsByDifficulty, Difficulty};
 
@@ -881,7 +818,7 @@ fn normalize_accuracy_percent(acc: f32) -> f64 {
 }
 
 fn build_chart_acc_index(
-    records: &std::collections::HashMap<String, Vec<super::models::DifficultyRecord>>,
+    records: &HashMap<String, Vec<super::models::DifficultyRecord>>,
 ) -> (HashMap<String, f64>, usize, usize) {
     let mut acc_by_chart = HashMap::new();
     let mut valid_count = 0usize;
@@ -889,7 +826,6 @@ fn build_chart_acc_index(
 
     for (song_id, diffs) in records {
         for rec in diffs {
-            // 与 calculate_player_rks 的口径保持一致，仅统计存在定数的谱面。
             if rec.chart_constant.is_none() {
                 continue;
             }
@@ -906,9 +842,8 @@ fn build_chart_acc_index(
     (acc_by_chart, valid_count, ap_count)
 }
 
-/// 基于已计算完成的 RKS 结果构建文本详情，避免重复计算每个谱面的 RKS。
 fn build_textual_details_from_rks(
-    records: &std::collections::HashMap<String, Vec<super::models::DifficultyRecord>>,
+    records: &HashMap<String, Vec<super::models::DifficultyRecord>>,
     rks_result: &PlayerRksResult,
     state: &AppState,
 ) -> (
@@ -974,7 +909,6 @@ mod tests {
         DifficultyRecord {
             difficulty,
             score,
-            // 本测试仅关注 score/fc 统计逻辑，accuracy 等字段填充占位值即可。
             accuracy: 0.0,
             is_full_combo,
             chart_constant: None,
@@ -989,38 +923,34 @@ mod tests {
         records.insert(
             "song_a".to_string(),
             vec![
-                rec(Difficulty::EZ, 700_001, false),   // C
-                rec(Difficulty::HD, 500_000, true),    // FC（计入 C）
-                rec(Difficulty::IN, 1_000_000, false), // P（即使 fc=false，也计入 FC/C）
-                rec(Difficulty::AT, 700_000, false),   // 不计入任何等级
+                rec(Difficulty::EZ, 700_001, false),
+                rec(Difficulty::HD, 500_000, true),
+                rec(Difficulty::IN, 1_000_000, false),
+                rec(Difficulty::AT, 700_000, false),
             ],
         );
         records.insert(
             "song_b".to_string(),
             vec![
-                rec(Difficulty::EZ, 1_000_000, true), // P
-                rec(Difficulty::AT, 700_000, true),   // FC（边界分数也要计入 C）
+                rec(Difficulty::EZ, 1_000_000, true),
+                rec(Difficulty::AT, 700_000, true),
             ],
         );
 
         let counts = compute_grade_counts(&records);
 
-        // EZ：1 个 C + 1 个 P（P 同时计入 FC/C）
         assert_eq!(counts.ez.c, 2);
         assert_eq!(counts.ez.fc, 1);
         assert_eq!(counts.ez.p, 1);
 
-        // HD：1 个 FC（同时计入 C）
         assert_eq!(counts.hd.c, 1);
         assert_eq!(counts.hd.fc, 1);
         assert_eq!(counts.hd.p, 0);
 
-        // IN：1 个 P（同时计入 FC/C）
         assert_eq!(counts.in_.c, 1);
         assert_eq!(counts.in_.fc, 1);
         assert_eq!(counts.in_.p, 1);
 
-        // AT：1 个 FC（score=700000，但 fc=true 仍计入 FC/C）
         assert_eq!(counts.at.c, 1);
         assert_eq!(counts.at.fc, 1);
         assert_eq!(counts.at.p, 0);
@@ -1032,13 +962,11 @@ mod tests {
         let counts = compute_grade_counts(&records);
         let v = serde_json::to_value(counts).expect("serialize");
 
-        // 难度键名（大写）
         assert!(v.get("EZ").is_some());
         assert!(v.get("HD").is_some());
         assert!(v.get("IN").is_some());
         assert!(v.get("AT").is_some());
 
-        // 成绩键名（大写）
         let ez = v.get("EZ").expect("EZ exists");
         assert!(ez.get("C").is_some());
         assert!(ez.get("FC").is_some());

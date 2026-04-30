@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fs::File, path::Path, sync::Arc};
+use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc};
 
 use crate::{
     error::AppError,
@@ -73,21 +73,31 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
         )));
     }
 
+    let info_reader = File::open(&info_csv)
+        .map_err(|e| AppError::Internal(format!("打开 info.csv 失败: {e}")))?;
+    let nicklist_reader = File::open(&nicklist_yaml)
+        .map_err(|e| AppError::Internal(format!("打开 nicklist.yaml 失败: {e}")))?;
+
+    parse_song_catalog(info_reader, nicklist_reader)
+}
+
+/// 从 reader 解析 info.csv 和 nicklist.yaml，构建内存索引
+pub fn parse_song_catalog(
+    info_reader: impl Read,
+    nicklist_reader: impl Read,
+) -> Result<SongCatalog, AppError> {
     let mut catalog = SongCatalog::default();
 
-    // 1) 读取 info.csv
     let mut rdr = csv::ReaderBuilder::new()
         .has_headers(true)
         .flexible(true)
-        .from_path(&info_csv)
-        .map_err(|e| AppError::Internal(format!("读取 info.csv 失败: {e}")))?;
+        .from_reader(info_reader);
 
     let headers = rdr
         .headers()
         .map_err(|e| AppError::Internal(format!("读取 info.csv 表头失败: {e}")))?
         .clone();
 
-    // 支持不同大小写/命名（song 或 name）
     let idx_of = |name: &str| -> Option<usize> {
         headers
             .iter()
@@ -160,11 +170,7 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
             .push(Arc::clone(&info));
     }
 
-    // 2) 读取 nicklist.yaml
-    let nick_file = File::open(&nicklist_yaml)
-        .map_err(|e| AppError::Internal(format!("打开 nicklist.yaml 失败: {e}")))?;
-
-    let nick_map: HashMap<String, Vec<String>> = serde_yaml::from_reader(nick_file)
+    let nick_map: HashMap<String, Vec<String>> = serde_yaml::from_reader(nicklist_reader)
         .map_err(|e| AppError::Internal(format!("解析 nicklist.yaml 失败: {e}")))?;
 
     let mut fallback_matched_keys: Vec<(String, String)> = Vec::new();
@@ -229,7 +235,6 @@ pub fn load_song_catalog(info_path: &Path) -> Result<SongCatalog, AppError> {
         );
     }
 
-    // 构建搜索缓存，避免运行期每次搜索重复分配与遍历预处理。
     catalog.rebuild_search_cache();
 
     Ok(catalog)
