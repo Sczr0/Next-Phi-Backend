@@ -263,59 +263,97 @@ async fn fetch_save_with_cache(
         None
     };
 
-    let (parsed, data_body, cache_lookup_ms, decode_ms, cache_status) = if let Some(key) = cache_key.as_ref() {
-        let t_cache = Instant::now();
-        if let Some(entry) = save_cache().get(key).await {
-            let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
-            if let Some(stats) = stats {
-                let extra = serde_json::json!({
-                    "status": "hit",
-                    "version": taptap_version.unwrap_or("default")
-                });
-                stats.track_feature("save_cache", "hit", user_hash.map(str::to_string), Some(extra));
+    let (parsed, data_body, cache_lookup_ms, decode_ms, cache_status) =
+        if let Some(key) = cache_key.as_ref() {
+            let t_cache = Instant::now();
+            if let Some(entry) = save_cache().get(key).await {
+                let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
+                if let Some(stats) = stats {
+                    let extra = serde_json::json!({
+                        "status": "hit",
+                        "version": taptap_version.unwrap_or("default")
+                    });
+                    stats.track_feature(
+                        "save_cache",
+                        "hit",
+                        user_hash.map(str::to_string),
+                        Some(extra),
+                    );
+                }
+                let t_decode = Instant::now();
+                let parsed = entry.parsed.clone();
+                let data_body_bytes = entry.data_body_bytes.clone();
+                let save_decode_ms = duration_ms_i64(t_decode.elapsed());
+                (
+                    parsed,
+                    data_body_bytes,
+                    cache_lookup_ms,
+                    save_decode_ms,
+                    "hit",
+                )
+            } else {
+                let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
+                if let Some(stats) = stats {
+                    let extra = serde_json::json!({
+                        "status": "miss",
+                        "version": taptap_version.unwrap_or("default")
+                    });
+                    stats.track_feature(
+                        "save_cache",
+                        "miss",
+                        user_hash.map(str::to_string),
+                        Some(extra),
+                    );
+                }
+                let t_decode = Instant::now();
+                let parsed = provider::get_decrypted_save_from_meta(meta, chart_constants).await?;
+                let parsed = Arc::new(parsed);
+                let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
+                let save_decode_ms = duration_ms_i64(t_decode.elapsed());
+                save_cache()
+                    .insert(
+                        key.clone(),
+                        SaveCacheEntry {
+                            parsed: parsed.clone(),
+                            data_body_bytes: data_body_bytes.clone(),
+                        },
+                    )
+                    .await;
+                (
+                    parsed,
+                    data_body_bytes,
+                    cache_lookup_ms,
+                    save_decode_ms,
+                    "miss",
+                )
             }
-            let t_decode = Instant::now();
-            let parsed = entry.parsed.clone();
-            let data_body_bytes = entry.data_body_bytes.clone();
-            let save_decode_ms = duration_ms_i64(t_decode.elapsed());
-            (parsed, data_body_bytes, cache_lookup_ms, save_decode_ms, "hit")
         } else {
-            let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
             if let Some(stats) = stats {
                 let extra = serde_json::json!({
-                    "status": "miss",
+                    "status": "skipped",
+                    "reason": cache_skip_reason.unwrap_or("unknown"),
                     "version": taptap_version.unwrap_or("default")
                 });
-                stats.track_feature("save_cache", "miss", user_hash.map(str::to_string), Some(extra));
+                stats.track_feature(
+                    "save_cache",
+                    "skipped",
+                    user_hash.map(str::to_string),
+                    Some(extra),
+                );
             }
             let t_decode = Instant::now();
             let parsed = provider::get_decrypted_save_from_meta(meta, chart_constants).await?;
             let parsed = Arc::new(parsed);
             let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
             let save_decode_ms = duration_ms_i64(t_decode.elapsed());
-            save_cache()
-                .insert(key.clone(), SaveCacheEntry { parsed: parsed.clone(), data_body_bytes: data_body_bytes.clone() })
-                .await;
-            (parsed, data_body_bytes, cache_lookup_ms, save_decode_ms, "miss")
-        }
-    } else {
-        if let Some(stats) = stats {
-            let extra = serde_json::json!({
-                "status": "skipped",
-                "reason": cache_skip_reason.unwrap_or("unknown"),
-                "version": taptap_version.unwrap_or("default")
-            });
-            stats.track_feature("save_cache", "skipped", user_hash.map(str::to_string), Some(extra));
-        }
-        let t_decode = Instant::now();
-        let parsed = provider::get_decrypted_save_from_meta(meta, chart_constants).await?;
-        let parsed = Arc::new(parsed);
-        let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
-        let save_decode_ms = duration_ms_i64(t_decode.elapsed());
-        (parsed, data_body_bytes, 0_i64, save_decode_ms, "skipped")
-    };
+            (parsed, data_body_bytes, 0_i64, save_decode_ms, "skipped")
+        };
 
-    let cache_lookup_status = if cache_status == "skipped" { "skipped" } else { "ok" };
+    let cache_lookup_status = if cache_status == "skipped" {
+        "skipped"
+    } else {
+        "ok"
+    };
     tracing::info!(
         target: "phi_backend::save::performance",
         route = "/save",
@@ -379,7 +417,13 @@ async fn compute_rks_and_details(
             } else {
                 (None, None, None)
             };
-            (game_record, rks_res, best_top3_json, ap_top3_json, rks_comp_json)
+            (
+                game_record,
+                rks_res,
+                best_top3_json,
+                ap_top3_json,
+                rks_comp_json,
+            )
         } else {
             let rks_res = calculate_player_rks(&game_record, &state.chart_constants);
             let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
@@ -393,7 +437,13 @@ async fn compute_rks_and_details(
             } else {
                 (None, None, None)
             };
-            (game_record, rks_res, best_top3_json, ap_top3_json, rks_comp_json)
+            (
+                game_record,
+                rks_res,
+                best_top3_json,
+                ap_top3_json,
+                rks_comp_json,
+            )
         }
     })
     .await;
@@ -471,7 +521,11 @@ fn spawn_leaderboard_write(
         } else {
             0.0
         };
-        let rks_jump = if rks_jump.abs() < RKS_JUMP_EPS { 0.0 } else { rks_jump };
+        let rks_jump = if rks_jump.abs() < RKS_JUMP_EPS {
+            0.0
+        } else {
+            rks_jump
+        };
 
         let mut suspicion = 0.0_f64;
         if total_rks > 20.0 {
@@ -505,13 +559,26 @@ fn spawn_leaderboard_write(
             tracing::warn!(target: "phi_backend::leaderboard", user_hash = %user_hash, "insert_submission failed (ignored): {e}");
         }
         if let Err(e) = storage
-            .upsert_leaderboard_rks(&user_hash, total_rks, user_kind.as_deref(), suspicion, hide, &now)
+            .upsert_leaderboard_rks(
+                &user_hash,
+                total_rks,
+                user_kind.as_deref(),
+                suspicion,
+                hide,
+                &now,
+            )
             .await
         {
             tracing::warn!(target: "phi_backend::leaderboard", user_hash = %user_hash, "upsert_leaderboard_rks failed (ignored): {e}");
         }
         if let Err(e) = storage
-            .upsert_details(&user_hash, rks_comp_json.as_deref(), best_top3_json.as_deref(), ap_top3_json.as_deref(), &now)
+            .upsert_details(
+                &user_hash,
+                rks_comp_json.as_deref(),
+                best_top3_json.as_deref(),
+                ap_top3_json.as_deref(),
+                &now,
+            )
             .await
         {
             tracing::warn!(target: "phi_backend::leaderboard", user_hash = %user_hash, "upsert_details failed (ignored): {e}");

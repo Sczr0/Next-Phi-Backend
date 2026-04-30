@@ -8,9 +8,9 @@ use std::io::Cursor;
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::features::song::models::SongCatalog;
 use crate::startup::chart_loader::{ChartConstantsMap, parse_chart_constants};
 use crate::startup::song_loader::parse_song_catalog;
-use crate::features::song::models::SongCatalog;
 
 const INFO_FILES: [&str; 3] = ["difficulty.csv", "info.csv", "nicklist.yaml"];
 
@@ -98,10 +98,7 @@ pub async fn try_load_remote_info(
         match client.get(&url).send().await {
             Ok(resp) if resp.status().is_success() => match resp.bytes().await {
                 Ok(bytes) => {
-                    tracing::info!(
-                        "远端 info 文件下载成功: {file} ({} bytes)",
-                        bytes.len()
-                    );
+                    tracing::info!("远端 info 文件下载成功: {file} ({} bytes)", bytes.len());
                     match *file {
                         "difficulty.csv" => difficulty_bytes = bytes.to_vec(),
                         "info.csv" => info_bytes = bytes.to_vec(),

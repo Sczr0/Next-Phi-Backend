@@ -1973,17 +1973,25 @@ mod tests {
     fn topk_replaces_worst_when_full() {
         let mut topk = TopKChartScores::new(3);
         topk.consider(10.0, 0, || ChartRankingScore {
-            song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0,
+            song_id: "a".into(),
+            difficulty: Difficulty::IN,
+            rks: 10.0,
         });
         topk.consider(5.0, 1, || ChartRankingScore {
-            song_id: "b".into(), difficulty: Difficulty::IN, rks: 5.0,
+            song_id: "b".into(),
+            difficulty: Difficulty::IN,
+            rks: 5.0,
         });
         topk.consider(8.0, 2, || ChartRankingScore {
-            song_id: "c".into(), difficulty: Difficulty::IN, rks: 8.0,
+            song_id: "c".into(),
+            difficulty: Difficulty::IN,
+            rks: 8.0,
         });
         // Current: {10, 5, 8}, sum=23, worst=5
         topk.consider(6.0, 3, || ChartRankingScore {
-            song_id: "d".into(), difficulty: Difficulty::IN, rks: 6.0,
+            song_id: "d".into(),
+            difficulty: Difficulty::IN,
+            rks: 6.0,
         });
         // Replaces 5 with 6 → {10, 6, 8}, sum=24
         assert!((topk.sum() - 24.0).abs() < 1e-12);
@@ -1993,16 +2001,24 @@ mod tests {
     fn topk_ignores_worse_item_when_full() {
         let mut topk = TopKChartScores::new(3);
         topk.consider(10.0, 0, || ChartRankingScore {
-            song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0,
+            song_id: "a".into(),
+            difficulty: Difficulty::IN,
+            rks: 10.0,
         });
         topk.consider(5.0, 1, || ChartRankingScore {
-            song_id: "b".into(), difficulty: Difficulty::IN, rks: 5.0,
+            song_id: "b".into(),
+            difficulty: Difficulty::IN,
+            rks: 5.0,
         });
         topk.consider(8.0, 2, || ChartRankingScore {
-            song_id: "c".into(), difficulty: Difficulty::IN, rks: 8.0,
+            song_id: "c".into(),
+            difficulty: Difficulty::IN,
+            rks: 8.0,
         });
         topk.consider(4.0, 3, || ChartRankingScore {
-            song_id: "d".into(), difficulty: Difficulty::IN, rks: 4.0,
+            song_id: "d".into(),
+            difficulty: Difficulty::IN,
+            rks: 4.0,
         });
         // 4 < 5 (worst), should be ignored → sum still 23
         assert!((topk.sum() - 23.0).abs() < 1e-12);
@@ -2013,14 +2029,20 @@ mod tests {
         let mut topk = TopKChartScores::new(2);
         // Same rks, earlier scan_index wins
         topk.consider(10.0, 1, || ChartRankingScore {
-            song_id: "later".into(), difficulty: Difficulty::IN, rks: 10.0,
+            song_id: "later".into(),
+            difficulty: Difficulty::IN,
+            rks: 10.0,
         });
         topk.consider(10.0, 0, || ChartRankingScore {
-            song_id: "earlier".into(), difficulty: Difficulty::IN, rks: 10.0,
+            song_id: "earlier".into(),
+            difficulty: Difficulty::IN,
+            rks: 10.0,
         });
         // {later(10, scan=1), earlier(10, scan=0)} → worst=later (tie, larger scan_index=1)
         topk.consider(10.0, 2, || ChartRankingScore {
-            song_id: "newest".into(), difficulty: Difficulty::IN, rks: 10.0,
+            song_id: "newest".into(),
+            difficulty: Difficulty::IN,
+            rks: 10.0,
         });
         // newer(scan=2) vs later(scan=1): rks equal, scan=2 > scan=1 → newer is NOT better
         // → later stays, sum unchanged, contains {later(scan=1), earlier(scan=0)}
@@ -2034,15 +2056,43 @@ mod tests {
 
     #[test]
     fn cmp_ranked_higher_rks_comes_first() {
-        let a = RankedChartScore { score: ChartRankingScore { song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 0 };
-        let b = RankedChartScore { score: ChartRankingScore { song_id: "b".into(), difficulty: Difficulty::IN, rks: 5.0 }, scan_index: 0 };
+        let a = RankedChartScore {
+            score: ChartRankingScore {
+                song_id: "a".into(),
+                difficulty: Difficulty::IN,
+                rks: 10.0,
+            },
+            scan_index: 0,
+        };
+        let b = RankedChartScore {
+            score: ChartRankingScore {
+                song_id: "b".into(),
+                difficulty: Difficulty::IN,
+                rks: 5.0,
+            },
+            scan_index: 0,
+        };
         assert_eq!(cmp_ranked(&a, &b), core::cmp::Ordering::Less); // a < b in sort order → a comes first
     }
 
     #[test]
     fn cmp_ranked_equal_rks_uses_scan_index() {
-        let a = RankedChartScore { score: ChartRankingScore { song_id: "a".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 0 };
-        let b = RankedChartScore { score: ChartRankingScore { song_id: "b".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 1 };
+        let a = RankedChartScore {
+            score: ChartRankingScore {
+                song_id: "a".into(),
+                difficulty: Difficulty::IN,
+                rks: 10.0,
+            },
+            scan_index: 0,
+        };
+        let b = RankedChartScore {
+            score: ChartRankingScore {
+                song_id: "b".into(),
+                difficulty: Difficulty::IN,
+                rks: 10.0,
+            },
+            scan_index: 1,
+        };
         assert_eq!(cmp_ranked(&a, &b), core::cmp::Ordering::Less); // earlier scan wins
     }
 
@@ -2050,14 +2100,28 @@ mod tests {
 
     #[test]
     fn better_than_higher_rks_wins() {
-        let other = RankedChartScore { score: ChartRankingScore { song_id: "o".into(), difficulty: Difficulty::IN, rks: 5.0 }, scan_index: 0 };
+        let other = RankedChartScore {
+            score: ChartRankingScore {
+                song_id: "o".into(),
+                difficulty: Difficulty::IN,
+                rks: 5.0,
+            },
+            scan_index: 0,
+        };
         assert!(better_than(10.0, 0, &other));
         assert!(!better_than(3.0, 0, &other));
     }
 
     #[test]
     fn better_than_equal_rks_uses_scan_index() {
-        let other = RankedChartScore { score: ChartRankingScore { song_id: "o".into(), difficulty: Difficulty::IN, rks: 10.0 }, scan_index: 5 };
+        let other = RankedChartScore {
+            score: ChartRankingScore {
+                song_id: "o".into(),
+                difficulty: Difficulty::IN,
+                rks: 10.0,
+            },
+            scan_index: 5,
+        };
         assert!(better_than(10.0, 3, &other)); // earlier scan_index wins
         assert!(!better_than(10.0, 7, &other)); // later scan_index loses
     }
@@ -2066,7 +2130,10 @@ mod tests {
 
     #[test]
     fn push_acc_hint_target_acc() {
-        assert_eq!(PushAccHint::TargetAcc { acc: 98.5 }.target_acc(), Some(98.5));
+        assert_eq!(
+            PushAccHint::TargetAcc { acc: 98.5 }.target_acc(),
+            Some(98.5)
+        );
         assert_eq!(PushAccHint::PhiOnly.target_acc(), None);
         assert_eq!(PushAccHint::Unreachable.target_acc(), None);
         assert_eq!(PushAccHint::AlreadyPhi.target_acc(), None);
