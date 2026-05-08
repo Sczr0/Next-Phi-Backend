@@ -17,8 +17,7 @@ pub struct ServerConfig {
 }
 
 /// CDN 鉴权模式
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum CdnAuthMode {
     TypeA,
