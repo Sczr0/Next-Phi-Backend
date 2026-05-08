@@ -48,6 +48,23 @@ info_path = "./info"
 # info 文件远程基地址（若本地文件落后，启动时自动从远端拉取）
 # info_base_url = "https://r-0semi.xtower.site/info"
 
+# CDN 签名URL防盗链配置（腾讯云CDN Token鉴权）
+# [resources.illustration_signing]
+# 是否启用签名URL（默认关闭）
+# enabled = true
+# 鉴权模式：TypeA / TypeB / TypeC / TypeD（默认 TypeD）
+# mode = "TypeD"
+# 主鉴权密钥（建议通过环境变量 APP_RESOURCES_ILLUSTRATION_SIGNING_KEY 覆盖）
+# key = ""
+# 备鉴权密钥（密钥轮换时使用，校验时主密钥优先，备密钥兜底）
+# backup_key = ""
+# 有效期（秒），需与CDN侧配置保持一致（默认 300 = 5分钟）
+# ttl_secs = 300
+# 鉴权加密串参数名称，TypeA/TypeD 使用（默认 "token"）
+# token_param = "token"
+# 时间戳参数名称，TypeD 使用（默认 "t"）
+# timestamp_param = "t"
+
 [logging]
 # 日志级别: trace, debug, info, warn, error
 level = "info"

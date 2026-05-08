@@ -16,6 +16,74 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
+/// CDN 鉴权模式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "PascalCase")]
+pub enum CdnAuthMode {
+    TypeA,
+    TypeB,
+    TypeC,
+    TypeD,
+}
+
+impl Default for CdnAuthMode {
+    fn default() -> Self {
+        Self::TypeD
+    }
+}
+
+/// 曲绘签名URL配置（CDN防盗链）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IllustrationSigningConfig {
+    /// 是否启用签名URL
+    #[serde(default)]
+    pub enabled: bool,
+    /// 鉴权模式：TypeA / TypeB / TypeC / TypeD
+    #[serde(default)]
+    pub mode: CdnAuthMode,
+    /// 主鉴权密钥（建议通过 APP_RESOURCES_ILLUSTRATION_SIGNING_KEY 环境变量覆盖）
+    #[serde(default)]
+    pub key: String,
+    /// 备鉴权密钥（密钥轮换时使用，校验时主密钥优先，备密钥兜底）
+    #[serde(default)]
+    pub backup_key: Option<String>,
+    /// 有效期（秒），与CDN侧保持一致
+    #[serde(default = "IllustrationSigningConfig::default_ttl_secs")]
+    pub ttl_secs: u64,
+    /// 鉴权加密串参数名称（TypeA/TypeD 使用，默认 "token"）
+    #[serde(default = "IllustrationSigningConfig::default_token_param")]
+    pub token_param: String,
+    /// 时间戳参数名称（TypeD 使用，默认 "t"）
+    #[serde(default = "IllustrationSigningConfig::default_timestamp_param")]
+    pub timestamp_param: String,
+}
+
+impl IllustrationSigningConfig {
+    fn default_ttl_secs() -> u64 {
+        300
+    }
+    fn default_token_param() -> String {
+        "token".to_string()
+    }
+    fn default_timestamp_param() -> String {
+        "t".to_string()
+    }
+}
+
+impl Default for IllustrationSigningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: CdnAuthMode::default(),
+            key: String::new(),
+            backup_key: None,
+            ttl_secs: Self::default_ttl_secs(),
+            token_param: Self::default_token_param(),
+            timestamp_param: Self::default_timestamp_param(),
+        }
+    }
+}
+
 /// 资源配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ResourcesConfig {
@@ -42,6 +110,9 @@ pub struct ResourcesConfig {
     /// info 文件远程基地址（如 `https://example.com/info`），留空则仅使用本地文件
     #[serde(default)]
     pub info_base_url: Option<String>,
+    /// 曲绘签名URL配置（CDN防盗链），None 表示不启用
+    #[serde(default)]
+    pub illustration_signing: Option<IllustrationSigningConfig>,
 }
 
 impl ResourcesConfig {
@@ -679,6 +750,7 @@ impl Default for AppConfig {
                 illustration_repo_auto_sync: ResourcesConfig::default_illustration_repo_auto_sync(),
                 info_path: "./info".to_string(),
                 info_base_url: None,
+                illustration_signing: None,
             },
             logging: LoggingConfig {
                 level: "info".to_string(),

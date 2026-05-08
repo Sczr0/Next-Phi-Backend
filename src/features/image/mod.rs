@@ -1,6 +1,7 @@
 mod cover_loader;
 pub mod handler;
 mod renderer;
+pub(crate) mod signing;
 mod service;
 mod types;
 
