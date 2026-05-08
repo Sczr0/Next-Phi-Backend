@@ -624,7 +624,7 @@ fn to_somnia_public_url_for_base(
     let (mode, ext) = external_illustration_mode_and_ext();
     let remote_dir = remote_illustration_dir_for_category(category.as_ref(), mode)?;
 
-    let resource_path = format!("/{}/{}.{}", remote_dir, encoded_song_id, ext);
+    let resource_path = format!("/{remote_dir}/{encoded_song_id}.{ext}");
 
     // CDN 签名URL防盗链
     let final_path = if let Some(signing) = AppConfig::global()

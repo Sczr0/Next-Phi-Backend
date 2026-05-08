@@ -18,18 +18,14 @@ pub struct ServerConfig {
 
 /// CDN 鉴权模式
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Default)]
 #[serde(rename_all = "PascalCase")]
 pub enum CdnAuthMode {
     TypeA,
     TypeB,
     TypeC,
+    #[default]
     TypeD,
-}
-
-impl Default for CdnAuthMode {
-    fn default() -> Self {
-        Self::TypeD
-    }
 }
 
 /// 曲绘签名URL配置（CDN防盗链）

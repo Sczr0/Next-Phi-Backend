@@ -15,7 +15,7 @@ fn random_string(len: usize) -> String {
 fn md5_hex(input: &str) -> String {
     use md5::Digest;
     let hash = md5::Md5::digest(input.as_bytes());
-    format!("{:x}", hash)
+    format!("{hash:x}")
 }
 
 /// 根据配置生成签名URL
@@ -51,11 +51,11 @@ pub fn sign_url(config: &IllustrationSigningConfig, path: &str) -> String {
 fn sign_type_a(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -> String {
     let rand = random_string(16);
     let uid = "0";
-    let sign_str = format!("{}-{}-{}-{}-{}", path, timestamp, rand, uid, config.key);
+    let sign_str = format!("{path}-{timestamp}-{rand}-{uid}-{}", config.key);
     let hash = md5_hex(&sign_str);
     format!(
-        "{}?{}={}-{}-{}-{}",
-        path, config.token_param, timestamp, rand, uid, hash
+        "{path}?{}={timestamp}-{rand}-{uid}-{hash}",
+        config.token_param,
     )
 }
 
@@ -66,14 +66,9 @@ fn sign_type_a(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -
 /// timestamp 格式: `YYYYMMDDHHMM`（UTC+8）
 fn sign_type_b(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -> String {
     let ts_formatted = format_timestamp_utc8(timestamp);
-    let sign_str = format!("{}{}{}", config.key, ts_formatted, path);
+    let sign_str = format!("{}{ts_formatted}{path}", config.key);
     let hash = md5_hex(&sign_str);
-    format!(
-        "/{}/{}/{}",
-        ts_formatted,
-        hash,
-        path.trim_start_matches('/')
-    )
+    format!("/{ts_formatted}/{hash}/{}", path.trim_start_matches('/'))
 }
 
 /// TypeC 鉴权
@@ -82,22 +77,22 @@ fn sign_type_b(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -
 /// MD5: `MD5(key + Path + timestamp)`
 /// timestamp 为十六进制 Unix 时间戳（不含 0x 前缀）
 fn sign_type_c(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -> String {
-    let ts_hex = format!("{:x}", timestamp);
-    let sign_str = format!("{}{}{}", config.key, path, ts_hex);
+    let ts_hex = format!("{timestamp:x}");
+    let sign_str = format!("{}{path}{ts_hex}", config.key);
     let hash = md5_hex(&sign_str);
-    format!("/{}/{}/{}", hash, ts_hex, path.trim_start_matches('/'))
+    format!("/{hash}/{ts_hex}/{}", path.trim_start_matches('/'))
 }
 
-/// TypeD 鉴权（推荐，最安全）
+/// TypeD 鉴权（推荐）
 ///
 /// URL: `Path?token=md5hash&t=timestamp`
 /// MD5: `MD5(key + Path + timestamp)`
 fn sign_type_d(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -> String {
-    let sign_str = format!("{}{}{}", config.key, path, timestamp);
+    let sign_str = format!("{}{path}{timestamp}", config.key);
     let hash = md5_hex(&sign_str);
     format!(
-        "{}?{}={}&{}={}",
-        path, config.token_param, hash, config.timestamp_param, timestamp
+        "{path}?{}={hash}&{}={timestamp}",
+        config.token_param, config.timestamp_param,
     )
 }
 
@@ -105,7 +100,7 @@ fn sign_type_d(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -
 fn format_timestamp_utc8(timestamp: u64) -> String {
     use chrono::{FixedOffset, TimeZone};
     let utc8 = FixedOffset::east_opt(8 * 3600).unwrap();
-    let dt = utc8.timestamp_opt(timestamp as i64, 0).unwrap();
+    let dt = utc8.timestamp_opt(timestamp.cast_signed(), 0).unwrap();
     dt.format("%Y%m%d%H%M").to_string()
 }
 
@@ -132,12 +127,12 @@ mod tests {
             ..test_config()
         };
         let path = "/foo.jpg";
-        let timestamp = 1721029907u64;
-        let sign_str = format!("{}{}{}", config.key, path, timestamp);
+        let timestamp = 1_721_029_907_u64;
+        let sign_str = format!("{}{path}{timestamp}", config.key);
         let expected_hash = md5_hex(&sign_str);
         let result = sign_type_d(&config, path, timestamp);
         assert!(result.starts_with("/foo.jpg?token="));
-        assert!(result.contains(&format!("&t={}", timestamp)));
+        assert!(result.contains(&format!("&t={timestamp}")));
         assert!(result.contains(&expected_hash));
     }
 
@@ -148,7 +143,7 @@ mod tests {
             ..test_config()
         };
         let path = "/foo.jpg";
-        let timestamp = 1721028437u64;
+        let timestamp = 1_721_028_437_u64;
         let result = sign_type_a(&config, path, timestamp);
         assert!(result.starts_with("/foo.jpg?token="));
         assert!(result.contains(&timestamp.to_string()));
@@ -161,8 +156,8 @@ mod tests {
             ..test_config()
         };
         let path = "/foo.jpg";
-        let timestamp = 1721029907u64;
-        let ts_hex = format!("{:x}", timestamp);
+        let timestamp = 1_721_029_907_u64;
+        let ts_hex = format!("{timestamp:x}");
         let result = sign_type_c(&config, path, timestamp);
         // TypeC 格式: /{md5hash}/{timestamp_hex}/{filename}
         let parts: Vec<&str> = result.split('/').collect();
@@ -174,7 +169,7 @@ mod tests {
     #[test]
     fn test_type_b_format_timestamp() {
         // 2024-07-15 15:33:50 UTC+8 => timestamp ~1721028830
-        let ts = 1721028830u64;
+        let ts = 1_721_028_830_u64;
         let formatted = format_timestamp_utc8(ts);
         assert_eq!(formatted.len(), 12); // YYYYMMDDHHMM
     }
