@@ -544,6 +544,14 @@ fn external_illustration_mode_and_ext() -> (ExternalIllustrationDirMode, &'stati
     )
 }
 
+/// 从URL中提取路径部分（如 `https://example.com/lilith` -> `/lilith`，`https://example.com` -> `""`）
+fn url_path_prefix(base_url: &str) -> &str {
+    let after_scheme = base_url
+        .split_once("://")
+        .map_or(base_url, |(_, rest)| rest);
+    after_scheme.find('/').map_or("", |i| &after_scheme[i..])
+}
+
 fn build_remote_illustration_url_with_options(
     public_illustration_base_url: &str,
     song_id: &str,
@@ -553,23 +561,20 @@ fn build_remote_illustration_url_with_options(
 ) -> String {
     let category = if low_res { "illLow" } else { "ill" };
     let remote_dir = remote_illustration_dir_for_category(category, mode).unwrap_or("illustration");
-    let path = format!(
-        "/{}/{}.{}",
-        remote_dir,
-        url_encode_path_segment(song_id),
-        ext
-    );
+    let resource_path = format!("/{remote_dir}/{}.{}", url_encode_path_segment(song_id), ext);
 
-    // CDN 签名URL防盗链
+    // CDN 签名URL防盗链：签名path需包含base_url中的路径前缀
     let final_path = if let Some(signing) = AppConfig::global()
         .resources
         .illustration_signing
         .as_ref()
         .filter(|s| s.enabled && !s.key.is_empty())
     {
-        super::signing::sign_url(signing, &path)
+        let prefix = url_path_prefix(public_illustration_base_url);
+        let sign_path = format!("{prefix}{resource_path}");
+        super::signing::sign_url(signing, &sign_path)
     } else {
-        path
+        resource_path
     };
 
     format!(
@@ -626,14 +631,16 @@ fn to_somnia_public_url_for_base(
 
     let resource_path = format!("/{remote_dir}/{encoded_song_id}.{ext}");
 
-    // CDN 签名URL防盗链
+    // CDN 签名URL防盗链：签名path需包含base_url中的路径前缀
     let final_path = if let Some(signing) = AppConfig::global()
         .resources
         .illustration_signing
         .as_ref()
         .filter(|s| s.enabled && !s.key.is_empty())
     {
-        super::signing::sign_url(signing, &resource_path)
+        let prefix = url_path_prefix(base_url);
+        let sign_path = format!("{prefix}{resource_path}");
+        super::signing::sign_url(signing, &sign_path)
     } else {
         resource_path
     };
