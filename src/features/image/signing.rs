@@ -68,7 +68,12 @@ fn sign_type_b(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -
     let ts_formatted = format_timestamp_utc8(timestamp);
     let sign_str = format!("{}{}{}", config.key, ts_formatted, path);
     let hash = md5_hex(&sign_str);
-    format!("/{}/{}/{}", ts_formatted, hash, path.trim_start_matches('/'))
+    format!(
+        "/{}/{}/{}",
+        ts_formatted,
+        hash,
+        path.trim_start_matches('/')
+    )
 }
 
 /// TypeC 鉴权

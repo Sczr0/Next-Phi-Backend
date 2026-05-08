@@ -553,7 +553,12 @@ fn build_remote_illustration_url_with_options(
 ) -> String {
     let category = if low_res { "illLow" } else { "ill" };
     let remote_dir = remote_illustration_dir_for_category(category, mode).unwrap_or("illustration");
-    let path = format!("/{}/{}.{}", remote_dir, url_encode_path_segment(song_id), ext);
+    let path = format!(
+        "/{}/{}.{}",
+        remote_dir,
+        url_encode_path_segment(song_id),
+        ext
+    );
 
     // CDN 签名URL防盗链
     let final_path = if let Some(signing) = AppConfig::global()
@@ -633,11 +638,7 @@ fn to_somnia_public_url_for_base(
         resource_path
     };
 
-    Some(format!(
-        "{}{}",
-        base_url.trim_end_matches('/'),
-        final_path
-    ))
+    Some(format!("{}{}", base_url.trim_end_matches('/'), final_path))
 }
 
 fn to_public_illustration_url(path: &std::path::Path, base_url: &str) -> Option<String> {

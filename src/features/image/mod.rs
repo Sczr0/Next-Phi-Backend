@@ -1,8 +1,8 @@
 mod cover_loader;
 pub mod handler;
 mod renderer;
-pub(crate) mod signing;
 mod service;
+pub(crate) mod signing;
 mod types;
 
 /// 启动期预热曲绘索引（目录扫描 + 白主题背景反色预计算）。
