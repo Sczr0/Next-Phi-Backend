@@ -572,7 +572,9 @@ fn build_remote_illustration_url_with_options(
     {
         let prefix = url_path_prefix(public_illustration_base_url);
         let sign_path = format!("{prefix}{resource_path}");
-        super::signing::sign_url(signing, &sign_path)
+        let signed = super::signing::sign_url(signing, &sign_path);
+        // sign_url 返回 "full/path?params"，去掉前缀只保留 resource_path + 查询参数
+        signed.strip_prefix(prefix).unwrap_or(&signed).to_string()
     } else {
         resource_path
     };
@@ -640,7 +642,9 @@ fn to_somnia_public_url_for_base(
     {
         let prefix = url_path_prefix(base_url);
         let sign_path = format!("{prefix}{resource_path}");
-        super::signing::sign_url(signing, &sign_path)
+        let signed = super::signing::sign_url(signing, &sign_path);
+        // sign_url 返回 "full/path?params"，去掉前缀只保留 resource_path + 查询参数
+        signed.strip_prefix(prefix).unwrap_or(&signed).to_string()
     } else {
         resource_path
     };
