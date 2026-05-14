@@ -780,7 +780,7 @@ pub async fn get_stats_summary(
         .transpose()?;
     // 两端都未指定 → 默认回退到 retention_hot_days（避免全表扫描拖垮接口）
     if start_utc.is_none() && end_utc.is_none() {
-        let since = Utc::now() - chrono::Duration::days(cfg.stats.retention_hot_days as i64);
+        let since = Utc::now() - chrono::Duration::days(i64::from(cfg.stats.retention_hot_days));
         start_utc = Some(since.to_rfc3339());
     }
     let range_start_at = start_utc.as_deref().and_then(|s| convert_tz(s, tz));
