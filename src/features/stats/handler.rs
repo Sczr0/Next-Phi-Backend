@@ -768,7 +768,7 @@ pub async fn get_stats_summary(
         .ok_or_else(|| AppError::Internal("统计存储未初始化".into()))?;
     let cfg = crate::config::AppConfig::global();
     let (tz_name, tz) = resolve_timezone(cfg.stats.timezone.as_str(), q.timezone.as_deref())?;
-    let start_utc = q
+    let mut start_utc = q
         .start
         .as_deref()
         .map(|s| parse_date_bound_utc(s, tz, false))
@@ -778,6 +778,11 @@ pub async fn get_stats_summary(
         .as_deref()
         .map(|s| parse_date_bound_utc(s, tz, true))
         .transpose()?;
+    // 两端都未指定 → 默认回退到 retention_hot_days（避免全表扫描拖垮接口）
+    if start_utc.is_none() && end_utc.is_none() {
+        let since = Utc::now() - chrono::Duration::days(cfg.stats.retention_hot_days as i64);
+        start_utc = Some(since.to_rfc3339());
+    }
     let range_start_at = start_utc.as_deref().and_then(|s| convert_tz(s, tz));
     let range_end_at = end_utc.as_deref().and_then(|s| convert_tz(s, tz));
     let feature_filter = q.feature.clone();

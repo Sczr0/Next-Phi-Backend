@@ -1,6 +1,7 @@
 use std::{
     path::Path,
     sync::atomic::{AtomicI64, Ordering},
+    time::Duration,
 };
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
@@ -278,6 +279,7 @@ impl StatsStorage {
         let opt = SqliteConnectOptions::new()
             .filename(Path::new(path))
             .create_if_missing(true)
+            .busy_timeout(Duration::from_secs(5))
             .log_statements(tracing::log::LevelFilter::Off);
         let pool = SqlitePool::connect_with(opt)
             .await

@@ -3039,6 +3039,7 @@ dependencies = [
  "image",
  "jsonwebtoken",
  "lru",
+ "md-5",
  "minijinja",
  "moka",
  "num_cpus",
