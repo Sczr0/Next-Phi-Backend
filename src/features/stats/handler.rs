@@ -778,9 +778,12 @@ pub async fn get_stats_summary(
         .as_deref()
         .map(|s| parse_date_bound_utc(s, tz, true))
         .transpose()?;
-    // 两端都未指定 → 默认回退到 retention_hot_days（避免全表扫描拖垮接口）
+    // 两端都未指定 → 默认回退到 retention_hot_days，取整到 UTC 当天 0 点以稳定缓存 key
     if start_utc.is_none() && end_utc.is_none() {
-        let since = Utc::now() - chrono::Duration::days(i64::from(cfg.stats.retention_hot_days));
+        let today = Utc::now().date_naive();
+        let since = NaiveDateTime::new(today, NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+            .and_utc()
+            - chrono::Duration::days(i64::from(cfg.stats.retention_hot_days));
         start_utc = Some(since.to_rfc3339());
     }
     let range_start_at = start_utc.as_deref().and_then(|s| convert_tz(s, tz));
