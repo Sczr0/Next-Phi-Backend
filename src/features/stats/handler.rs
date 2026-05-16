@@ -781,8 +781,7 @@ pub async fn get_stats_summary(
     // 两端都未指定 → 默认回退到 retention_hot_days，取整到 UTC 当天 0 点以稳定缓存 key
     if start_utc.is_none() && end_utc.is_none() {
         let today = Utc::now().date_naive();
-        let since = NaiveDateTime::new(today, NaiveTime::from_hms_opt(0, 0, 0).unwrap())
-            .and_utc()
+        let since = NaiveDateTime::new(today, NaiveTime::from_hms_opt(0, 0, 0).unwrap()).and_utc()
             - chrono::Duration::days(i64::from(cfg.stats.retention_hot_days));
         start_utc = Some(since.to_rfc3339());
     }
