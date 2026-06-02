@@ -3046,6 +3046,7 @@ dependencies = [
  "once_cell",
  "parquet",
  "pbkdf2",
+ "phi-save-codec",
  "png 0.17.16",
  "pprof",
  "qrcode",
@@ -3072,6 +3073,15 @@ dependencies = [
  "uuid",
  "webp",
  "zip",
+]
+
+[[package]]
+name = "phi-save-codec"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

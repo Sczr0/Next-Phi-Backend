@@ -7,6 +7,7 @@ use serde::Serialize;
 use thiserror::Error;
 
 use crate::features::song::models::SongCandidatePreview;
+use phi_save_codec::CodecError;
 
 /// 应用统一错误类型
 #[derive(Error, Debug, utoipa::ToSchema)]
@@ -356,6 +357,12 @@ impl From<std::io::Error> for SaveProviderError {
 
 impl From<serde_json::Error> for SaveProviderError {
     fn from(err: serde_json::Error) -> Self {
+        SaveProviderError::Json(err.to_string())
+    }
+}
+
+impl From<CodecError> for SaveProviderError {
+    fn from(err: CodecError) -> Self {
         SaveProviderError::Json(err.to_string())
     }
 }

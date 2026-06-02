@@ -82,12 +82,23 @@ pub fn save_response_example() -> serde_json::Value {
 }
 
 /// 难度枚举
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum Difficulty {
     EZ,
     HD,
     IN,
     AT,
+}
+
+impl core::convert::From<phi_save_codec::Difficulty> for Difficulty {
+    fn from(d: phi_save_codec::Difficulty) -> Self {
+        match d {
+            phi_save_codec::Difficulty::EZ => Difficulty::EZ,
+            phi_save_codec::Difficulty::HD => Difficulty::HD,
+            phi_save_codec::Difficulty::IN => Difficulty::IN,
+            phi_save_codec::Difficulty::AT => Difficulty::AT,
+        }
+    }
 }
 
 impl core::fmt::Display for Difficulty {

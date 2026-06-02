@@ -1,3 +1,10 @@
+[workspace]
+members = [
+    ".",
+    "crates/phi-save-codec",
+]
+resolver = "3"
+
 [package]
 name = "phi-backend"
 version = "0.1.0"
@@ -8,6 +15,8 @@ edition = "2024"
 doc_markdown = "allow"
 
 [dependencies]
+# 内部 crate
+phi-save-codec = { path = "crates/phi-save-codec" }
 # 核心异步与服务框架
 tokio = { version = "1.41", features = ["full"] }
 axum = "0.7.9"
