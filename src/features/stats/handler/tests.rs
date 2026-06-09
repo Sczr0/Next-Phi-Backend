@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::auth_services::{QrCodeService, TapTapClient};
 use crate::features::stats::models::EventInsert;
@@ -289,6 +288,223 @@ async fn stats_summary_skips_user_kinds_when_not_requested() {
 }
 
 #[tokio::test]
+async fn stats_summary_user_kinds_dedupes_users_and_ignores_non_string_values() {
+    let sqlite_path = tmp_sqlite_path("stats_summary_user_kinds_sql");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 1, 0),
+                route: None,
+                feature: Some("bestn".into()),
+                action: Some("render".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u1".into()),
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: Some(serde_json::json!({"user_kind":"official"})),
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 1, 1),
+                route: None,
+                feature: Some("bestn".into()),
+                action: Some("cache".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u1".into()),
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: Some(serde_json::json!({"user_kind":"official"})),
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 1, 2),
+                route: None,
+                feature: Some("bestn".into()),
+                action: Some("render".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u2".into()),
+                client_ip_hash: None,
+                instance: Some("inst-b".into()),
+                extra_json: Some(serde_json::json!({"user_kind":"official"})),
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 1, 3),
+                route: None,
+                feature: Some("save".into()),
+                action: Some("submit".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u3".into()),
+                client_ip_hash: None,
+                instance: Some("inst-c".into()),
+                extra_json: Some(serde_json::json!({"user_kind":"taptap"})),
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 1, 4),
+                route: None,
+                feature: Some("save".into()),
+                action: Some("submit".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u4".into()),
+                client_ip_hash: None,
+                instance: Some("inst-d".into()),
+                extra_json: Some(serde_json::json!({"user_kind":123})),
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 1, 5),
+                route: None,
+                feature: Some("save".into()),
+                action: Some("submit".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u5".into()),
+                client_ip_hash: None,
+                instance: Some("inst-e".into()),
+                extra_json: Some(serde_json::json!({"user_kind":""})),
+            },
+        ])
+        .await
+        .unwrap();
+
+    let query = StatsSummaryQuery {
+        start: None,
+        end: None,
+        timezone: Some("Asia/Shanghai".into()),
+        feature: None,
+        include: Some("user_kinds".into()),
+        top: Some(10),
+    };
+    let Json(resp) = get_stats_summary(State(state.clone()), Query(query))
+        .await
+        .unwrap();
+
+    assert_eq!(resp.unique_users.total, 5);
+    assert_eq!(
+        resp.unique_users.by_kind,
+        vec![("official".to_string(), 2), ("taptap".to_string(), 1)]
+    );
+
+    let query = StatsSummaryQuery {
+        start: None,
+        end: None,
+        timezone: Some("Asia/Shanghai".into()),
+        feature: Some("bestn".into()),
+        include: Some("user_kinds".into()),
+        top: Some(10),
+    };
+    let Json(resp) = get_stats_summary(State(state), Query(query)).await.unwrap();
+
+    assert_eq!(resp.unique_users.total, 2);
+    assert_eq!(resp.unique_users.by_kind, vec![("official".to_string(), 2)]);
+}
+
+#[tokio::test]
+async fn stats_summary_latency_percentiles_match_existing_index_rule() {
+    let sqlite_path = tmp_sqlite_path("stats_summary_latency_percentiles");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 0, 1),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip1".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 0, 2),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(20),
+                user_hash: None,
+                client_ip_hash: Some("ip2".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 0, 3),
+                route: Some("/save".into()),
+                feature: None,
+                action: None,
+                method: Some("POST".into()),
+                status: Some(500),
+                duration_ms: Some(30),
+                user_hash: None,
+                client_ip_hash: Some("ip3".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 0, 4),
+                route: Some("/song/search".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(40),
+                user_hash: None,
+                client_ip_hash: Some("ip4".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 0, 0, 5),
+                route: None,
+                feature: Some("bestn".into()),
+                action: Some("render".into()),
+                method: None,
+                status: None,
+                duration_ms: Some(999),
+                user_hash: Some("u1".into()),
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let query = StatsSummaryQuery {
+        start: None,
+        end: None,
+        timezone: Some("Asia/Shanghai".into()),
+        feature: None,
+        include: Some("latency".into()),
+        top: Some(10),
+    };
+    let Json(resp) = get_stats_summary(State(state), Query(query)).await.unwrap();
+
+    let latency = resp.latency.unwrap();
+    assert_eq!(latency.sample_count, 4);
+    assert_eq!(latency.avg_ms, Some(25.0));
+    assert_eq!(latency.p50_ms, Some(30));
+    assert_eq!(latency.p95_ms, Some(40));
+    assert_eq!(latency.max_ms, Some(40));
+}
+
+#[tokio::test]
 async fn stats_summary_cache_returns_stale_within_ttl() {
     let sqlite_path = tmp_sqlite_path("stats_summary_cache_hit");
     let state = build_test_state(&sqlite_path).await;
@@ -493,6 +709,111 @@ async fn daily_stats_respects_timezone_day_boundary() {
 }
 
 #[tokio::test]
+async fn daily_stats_dst_fallback_respects_route_and_method_filters() {
+    let sqlite_path = tmp_sqlite_path("stats_daily_dst_route_method_filter");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            EventInsert {
+                // 纽约时间：2025-03-09 01:00:00-05，夏令时切换前。
+                ts_utc: dt_utc(2025, 3, 9, 6, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip1".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 纽约时间：2025-03-09 03:30:00-04，夏令时已切换。
+                ts_utc: dt_utc(2025, 3, 9, 7, 30, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(500),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip2".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 同路由不同方法，不应计入 /image/bn GET。
+                ts_utc: dt_utc(2025, 3, 9, 8, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("POST".into()),
+                status: Some(404),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip3".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 同方法不同路由，不应计入 /image/bn GET。
+                ts_utc: dt_utc(2025, 3, 9, 8, 1, 0),
+                route: Some("/save".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(500),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip4".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 纽约时间：2025-03-10 00:30:00-04，验证 fallback 按本地日切片。
+                ts_utc: dt_utc(2025, 3, 10, 4, 30, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(404),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip5".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let q = DailyQuery {
+        start: "2025-03-08".into(),
+        end: "2025-03-10".into(),
+        timezone: Some("America/New_York".into()),
+        feature: None,
+        route: Some("/image/bn".into()),
+        method: Some("GET".into()),
+    };
+    let Json(rows) = get_daily_stats(State(state), Query(q)).await.unwrap();
+
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].date, "2025-03-09");
+    assert_eq!(rows[0].route.as_deref(), Some("/image/bn"));
+    assert_eq!(rows[0].method.as_deref(), Some("GET"));
+    assert_eq!(rows[0].count, 2);
+    assert_eq!(rows[0].err_count, 1);
+    assert_eq!(rows[1].date, "2025-03-10");
+    assert_eq!(rows[1].route.as_deref(), Some("/image/bn"));
+    assert_eq!(rows[1].method.as_deref(), Some("GET"));
+    assert_eq!(rows[1].count, 1);
+    assert_eq!(rows[1].err_count, 1);
+}
+
+#[tokio::test]
 async fn daily_features_outputs_counts_and_unique_users() {
     let sqlite_path = tmp_sqlite_path("stats_daily_features");
     let state = build_test_state(&sqlite_path).await;
@@ -551,7 +872,9 @@ async fn daily_features_outputs_counts_and_unique_users() {
         timezone: Some("Asia/Shanghai".into()),
         feature: None,
     };
-    let Json(resp) = get_daily_features(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_features(State(state.clone()), Query(q))
+        .await
+        .unwrap();
     assert_eq!(resp.timezone, "Asia/Shanghai");
     assert_eq!(resp.rows.len(), 2);
 
@@ -566,6 +889,20 @@ async fn daily_features_outputs_counts_and_unique_users() {
     assert_eq!(r1.feature, "save");
     assert_eq!(r1.count, 1);
     assert_eq!(r1.unique_users, 1);
+
+    let q = DailyFeaturesQuery {
+        start: "2025-12-24".into(),
+        end: "2025-12-25".into(),
+        timezone: Some("Asia/Shanghai".into()),
+        feature: Some("bestn".into()),
+    };
+    let Json(resp) = get_daily_features(State(state), Query(q)).await.unwrap();
+    assert_eq!(resp.feature_filter.as_deref(), Some("bestn"));
+    assert_eq!(resp.rows.len(), 1);
+    assert_eq!(resp.rows[0].date, "2025-12-24");
+    assert_eq!(resp.rows[0].feature, "bestn");
+    assert_eq!(resp.rows[0].count, 2);
+    assert_eq!(resp.rows[0].unique_users, 1);
 }
 
 #[tokio::test]
@@ -745,6 +1082,226 @@ async fn daily_http_top_per_day_prefers_higher_total_on_equal_errors() {
     assert_eq!(resp.routes[0].method, "GET");
     assert_eq!(resp.routes[0].errors, 1);
     assert_eq!(resp.routes[0].total, 2);
+}
+
+#[tokio::test]
+async fn daily_http_dst_fallback_pushes_top_down_without_truncating_totals() {
+    let sqlite_path = tmp_sqlite_path("stats_daily_http_dst_top");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            EventInsert {
+                // 纽约时间：2025-03-09 01:00:00-05，夏令时切换前。
+                ts_utc: dt_utc(2025, 3, 9, 6, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip1".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 纽约时间：2025-03-09 03:30:00-04，夏令时已切换。
+                ts_utc: dt_utc(2025, 3, 9, 7, 30, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(500),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip2".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 3, 9, 8, 0, 0),
+                route: Some("/save".into()),
+                feature: None,
+                action: None,
+                method: Some("POST".into()),
+                status: Some(404),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip3".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 3, 9, 8, 1, 0),
+                route: Some("/song/search".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip4".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let q = DailyHttpQuery {
+        start: "2025-03-08".into(),
+        end: "2025-03-10".into(),
+        timezone: Some("America/New_York".into()),
+        route: None,
+        method: None,
+        top: Some(1),
+    };
+    let Json(resp) = get_daily_http(State(state), Query(q)).await.unwrap();
+
+    assert_eq!(resp.totals.len(), 3);
+    assert_eq!(resp.totals[0].date, "2025-03-08");
+    assert_eq!(resp.totals[0].total, 0);
+    assert_eq!(resp.totals[1].date, "2025-03-09");
+    assert_eq!(resp.totals[1].total, 4);
+    assert_eq!(resp.totals[1].errors, 2);
+    assert_eq!(resp.totals[1].client_errors, 1);
+    assert_eq!(resp.totals[1].server_errors, 1);
+    assert_eq!(resp.totals[2].date, "2025-03-10");
+    assert_eq!(resp.totals[2].total, 0);
+
+    assert_eq!(resp.routes.len(), 1);
+    assert_eq!(resp.routes[0].date, "2025-03-09");
+    assert_eq!(resp.routes[0].route, "/image/bn");
+    assert_eq!(resp.routes[0].method, "GET");
+    assert_eq!(resp.routes[0].total, 2);
+    assert_eq!(resp.routes[0].errors, 1);
+}
+
+#[tokio::test]
+async fn daily_http_dst_fallback_respects_route_and_method_filters() {
+    let sqlite_path = tmp_sqlite_path("stats_daily_http_dst_route_method_filter");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            EventInsert {
+                // 纽约时间：2025-03-09 01:00:00-05，夏令时切换前。
+                ts_utc: dt_utc(2025, 3, 9, 6, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip1".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 纽约时间：2025-03-09 03:30:00-04，夏令时已切换。
+                ts_utc: dt_utc(2025, 3, 9, 7, 30, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(500),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip2".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 同路由不同方法，不应计入 /image/bn GET。
+                ts_utc: dt_utc(2025, 3, 9, 8, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("POST".into()),
+                status: Some(404),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip3".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 同方法不同路由，不应计入 /image/bn GET。
+                ts_utc: dt_utc(2025, 3, 9, 8, 1, 0),
+                route: Some("/save".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(500),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip4".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                // 纽约时间：2025-03-10 00:30:00-04，验证 fallback 按本地日切片。
+                ts_utc: dt_utc(2025, 3, 10, 4, 30, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(404),
+                duration_ms: Some(10),
+                user_hash: None,
+                client_ip_hash: Some("ip5".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let q = DailyHttpQuery {
+        start: "2025-03-08".into(),
+        end: "2025-03-10".into(),
+        timezone: Some("America/New_York".into()),
+        route: Some("/image/bn".into()),
+        method: Some("GET".into()),
+        top: Some(1),
+    };
+    let Json(resp) = get_daily_http(State(state), Query(q)).await.unwrap();
+
+    assert_eq!(resp.route_filter.as_deref(), Some("/image/bn"));
+    assert_eq!(resp.method_filter.as_deref(), Some("GET"));
+    assert_eq!(resp.totals.len(), 3);
+    assert_eq!(resp.totals[0].date, "2025-03-08");
+    assert_eq!(resp.totals[0].total, 0);
+    assert_eq!(resp.totals[1].date, "2025-03-09");
+    assert_eq!(resp.totals[1].total, 2);
+    assert_eq!(resp.totals[1].errors, 1);
+    assert_eq!(resp.totals[1].client_errors, 0);
+    assert_eq!(resp.totals[1].server_errors, 1);
+    assert_eq!(resp.totals[2].date, "2025-03-10");
+    assert_eq!(resp.totals[2].total, 1);
+    assert_eq!(resp.totals[2].errors, 1);
+    assert_eq!(resp.totals[2].client_errors, 1);
+    assert_eq!(resp.totals[2].server_errors, 0);
+
+    assert_eq!(resp.routes.len(), 2);
+    assert_eq!(resp.routes[0].date, "2025-03-09");
+    assert_eq!(resp.routes[0].route, "/image/bn");
+    assert_eq!(resp.routes[0].method, "GET");
+    assert_eq!(resp.routes[0].total, 2);
+    assert_eq!(resp.routes[0].errors, 1);
+    assert_eq!(resp.routes[0].client_errors, 0);
+    assert_eq!(resp.routes[0].server_errors, 1);
+    assert_eq!(resp.routes[1].date, "2025-03-10");
+    assert_eq!(resp.routes[1].route, "/image/bn");
+    assert_eq!(resp.routes[1].method, "GET");
+    assert_eq!(resp.routes[1].total, 1);
+    assert_eq!(resp.routes[1].errors, 1);
+    assert_eq!(resp.routes[1].client_errors, 1);
+    assert_eq!(resp.routes[1].server_errors, 0);
 }
 
 #[tokio::test]
@@ -1032,6 +1589,78 @@ async fn latency_agg_supports_day_week_month_and_filters() {
             .all(|r| r.route.as_deref() == Some("/song/search"))
     );
     assert!(resp.rows.iter().all(|r| r.method.as_deref() == Some("GET")));
+}
+
+#[tokio::test]
+async fn latency_agg_respects_feature_filter() {
+    let sqlite_path = tmp_sqlite_path("stats_latency_feature_filter");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 1, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: Some("bestn".into()),
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(100),
+                user_hash: None,
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 1, 0, 1),
+                route: Some("/image/bn".into()),
+                feature: Some("bestn".into()),
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(300),
+                user_hash: None,
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 1, 0, 2),
+                route: Some("/save".into()),
+                feature: Some("save".into()),
+                action: None,
+                method: Some("POST".into()),
+                status: Some(200),
+                duration_ms: Some(20),
+                user_hash: None,
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let q = LatencyAggQuery {
+        start: "2025-12-24".into(),
+        end: "2025-12-24".into(),
+        timezone: Some("Asia/Shanghai".into()),
+        bucket: Some("day".into()),
+        feature: Some("bestn".into()),
+        route: None,
+        method: None,
+    };
+    let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+
+    assert_eq!(resp.rows.len(), 1);
+    assert_eq!(resp.rows[0].feature.as_deref(), Some("bestn"));
+    assert_eq!(resp.rows[0].route.as_deref(), Some("/image/bn"));
+    assert_eq!(resp.rows[0].method.as_deref(), Some("GET"));
+    assert_eq!(resp.rows[0].count, 2);
+    assert_eq!(resp.rows[0].min_ms, Some(100));
+    assert_eq!(resp.rows[0].avg_ms, Some(200.0));
+    assert_eq!(resp.rows[0].max_ms, Some(300));
 }
 
 #[tokio::test]

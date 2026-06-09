@@ -3,9 +3,17 @@ use sqlx::SqlitePool;
 use super::models::DailyAggRow;
 
 mod connection;
+mod daily;
 mod events;
+mod http;
+mod latency;
 mod leaderboard;
+mod moderation;
+mod profile;
+mod public_leaderboard;
 mod session;
+mod submission;
+mod summary;
 
 /// 保存提交入库参数，减少函数参数数量
 pub struct SubmissionRecord<'a> {
@@ -230,9 +238,23 @@ pub struct StatsSummaryData {
 
 #[derive(Debug, Clone)]
 pub struct RksHistoryEntry {
+    pub id: i64,
     pub rks: f64,
     pub rks_jump: f64,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct RksHistoryCursor {
+    pub created_at: String,
+    pub id: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct RksHistoryPage {
+    pub entries: Vec<RksHistoryEntry>,
+    pub total: i64,
+    pub has_more: bool,
 }
 
 #[derive(Clone)]

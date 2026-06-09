@@ -5,7 +5,7 @@ use std::{
 
 use moka::future::Cache;
 
-use super::{DailyHttpResponse, StatsSummaryResponse, params::IncludeFlags};
+use super::{daily_http::DailyHttpResponse, params::IncludeFlags, summary::StatsSummaryResponse};
 
 const STATS_SUMMARY_CACHE_MAX_ENTRIES: u64 = 256;
 const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 60;

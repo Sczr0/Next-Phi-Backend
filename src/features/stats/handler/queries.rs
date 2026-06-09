@@ -447,10 +447,32 @@ pub(super) async fn query_daily_http(
         while cur <= end {
             let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
             let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-            let rows = storage
-                .query_daily_http_route_slice(&day_start, &day_end, route, method)
-                .await
-                .map_err(|e| AppError::Internal(format!("daily http (fallback): {e}")))?;
+            let routes_fut = async {
+                if top_per_day > 0 {
+                    storage
+                        .query_daily_http_route_slice_top(
+                            &day_start,
+                            &day_end,
+                            route,
+                            method,
+                            top_per_day,
+                        )
+                        .await
+                } else {
+                    storage
+                        .query_daily_http_route_slice(&day_start, &day_end, route, method)
+                        .await
+                }
+                .map_err(|e| AppError::Internal(format!("daily http routes (fallback): {e}")))
+            };
+            let totals_fut = async {
+                storage
+                    .query_daily_http_total_slice(&day_start, &day_end, route, method)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("daily http totals (fallback): {e}")))
+            };
+            let (rows, total_row) = tokio::try_join!(routes_fut, totals_fut)?;
+            totals_map.insert(cur.to_string(), total_row);
 
             for r in rows {
                 let route = r.route;
@@ -476,18 +498,14 @@ pub(super) async fn query_daily_http(
             cur += chrono::Duration::days(1);
         }
 
-        route_rows.sort_by(|a, b| a.date.cmp(&b.date));
-    }
-
-    // totals: sum(route rows) per day, and fill missing days with 0
-    if fixed_offset.is_none() {
-        for r in &route_rows {
-            let e = totals_map.entry(r.date.clone()).or_insert((0, 0, 0, 0));
-            e.0 += r.total;
-            e.1 += r.errors;
-            e.2 += r.client_errors;
-            e.3 += r.server_errors;
-        }
+        route_rows.sort_by(|a, b| {
+            a.date
+                .cmp(&b.date)
+                .then(b.errors.cmp(&a.errors))
+                .then(b.total.cmp(&a.total))
+                .then(a.route.cmp(&b.route))
+                .then(a.method.cmp(&b.method))
+        });
     }
 
     let mut totals: Vec<DailyHttpTotalRow> = Vec::new();
@@ -507,35 +525,6 @@ pub(super) async fn query_daily_http(
             server_error_rate: rate(server_errors, total),
         });
         cur += chrono::Duration::days(1);
-    }
-
-    // DST fallback 的 per-day top limit 在内存应用（fixed-offset 路径已在 SQL 下推）
-    if top_per_day > 0 && fixed_offset.is_none() {
-        let mut grouped: HashMap<String, Vec<DailyHttpRouteRow>> = HashMap::new();
-        for r in route_rows {
-            grouped.entry(r.date.clone()).or_default().push(r);
-        }
-
-        let mut dates: Vec<String> = grouped.keys().cloned().collect();
-        dates.sort();
-
-        let mut out_routes: Vec<DailyHttpRouteRow> = Vec::new();
-        for d in dates {
-            if let Some(mut v) = grouped.remove(&d) {
-                v.sort_by(|a, b| {
-                    b.errors
-                        .cmp(&a.errors)
-                        .then(b.total.cmp(&a.total))
-                        .then(a.route.cmp(&b.route))
-                        .then(a.method.cmp(&b.method))
-                });
-                let top_limit = usize::try_from(top_per_day).unwrap_or(usize::MAX);
-                v.truncate(top_limit);
-                // 保持输出按 date ASC，再按排序 key
-                out_routes.extend(v);
-            }
-        }
-        return Ok((totals, out_routes));
     }
 
     Ok((totals, route_rows))

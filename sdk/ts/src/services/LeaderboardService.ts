@@ -242,6 +242,7 @@ export class LeaderboardService {
     public static getTop({
         limit,
         offset,
+        cursor,
         lite,
     }: {
         /**
@@ -253,6 +254,10 @@ export class LeaderboardService {
          */
         offset?: number,
         /**
+         * 加密游标；存在时优先使用 cursor，并忽略 offset 与 after_*
+         */
+        cursor?: string,
+        /**
          * 精简模式：不返回 bestTop3/apTop3（默认 false）
          */
         lite?: boolean,
@@ -263,6 +268,7 @@ export class LeaderboardService {
             query: {
                 'limit': limit,
                 'offset': offset,
+                'cursor': cursor,
                 'lite': lite,
             },
             errors: {

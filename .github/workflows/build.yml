@@ -41,8 +41,11 @@ jobs:
     - name: 运行测试
       run: cargo test --all-targets --all-features
 
-  # 任务一：构建和创建发布产物
+  # 任务一：构建和创建发布产物（仅 master 分支需要编译）
   build-release:
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'master')
     needs: quality-gate
     strategy:
       matrix:

@@ -50,14 +50,26 @@ impl StatsStorage {
             extra_json TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_utc);
+        CREATE INDEX IF NOT EXISTS idx_events_day ON events(substr(ts_utc,1,10));
         CREATE INDEX IF NOT EXISTS idx_events_feature_ts ON events(feature, ts_utc);
+        CREATE INDEX IF NOT EXISTS idx_events_ts_feature ON events(ts_utc, feature)
+            WHERE feature IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_events_route_ts ON events(route, ts_utc);
         CREATE INDEX IF NOT EXISTS idx_events_ts_user_hash ON events(ts_utc, user_hash);
         CREATE INDEX IF NOT EXISTS idx_events_ts_client_ip_hash ON events(ts_utc, client_ip_hash);
+        CREATE INDEX IF NOT EXISTS idx_events_feature_ts_user ON events(feature, ts_utc, user_hash)
+            WHERE user_hash IS NOT NULL AND feature IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_events_http_ip_ts ON events(ts_utc, client_ip_hash)
+            WHERE route IS NOT NULL AND client_ip_hash IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_events_http_agg ON events(ts_utc, route, method, status);
         CREATE INDEX IF NOT EXISTS idx_events_feature_action_ts ON events(feature, action, ts_utc);
         CREATE INDEX IF NOT EXISTS idx_events_instance_ts ON events(instance, ts_utc);
+        CREATE INDEX IF NOT EXISTS idx_events_ts_instance ON events(ts_utc, instance)
+            WHERE instance IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_events_latency_route_duration_ts ON events(route, duration_ms, ts_utc)
+            WHERE route IS NOT NULL AND duration_ms IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_events_latency_ts_route_method_feature_duration
+            ON events(ts_utc, route, method, feature, duration_ms)
             WHERE route IS NOT NULL AND duration_ms IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS daily_agg (
@@ -81,6 +93,8 @@ impl StatsStorage {
             updated_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_lb_rks_order ON leaderboard_rks(total_rks DESC, updated_at ASC, user_hash ASC);
+        CREATE INDEX IF NOT EXISTS idx_lb_visible_order ON leaderboard_rks(is_hidden, total_rks DESC, updated_at ASC, user_hash ASC);
+        CREATE INDEX IF NOT EXISTS idx_lb_suspicion_order ON leaderboard_rks(suspicion_score DESC, total_rks DESC, user_hash ASC);
 
         CREATE TABLE IF NOT EXISTS user_profile (
             user_hash TEXT PRIMARY KEY,
@@ -108,6 +122,8 @@ impl StatsStorage {
             created_at TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_submissions_user ON save_submissions(user_hash, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_submissions_user_created_id ON save_submissions(user_hash, created_at DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_submissions_user_total_rks ON save_submissions(user_hash, total_rks DESC);
 
         CREATE TABLE IF NOT EXISTS leaderboard_details (
             user_hash TEXT PRIMARY KEY,
@@ -141,6 +157,7 @@ impl StatsStorage {
             expires_at TEXT
         );
         CREATE INDEX IF NOT EXISTS idx_user_moderation_status ON user_moderation_state(status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_user_moderation_status_nocase ON user_moderation_state(status COLLATE NOCASE, updated_at DESC);
 
         CREATE TABLE IF NOT EXISTS moderation_flags (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

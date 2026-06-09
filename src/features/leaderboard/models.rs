@@ -78,7 +78,8 @@ pub struct LeaderboardTopItem {
   "total": 12345,
   "nextAfterScore": 14.73,
   "nextAfterUpdated": "2025-09-20T04:10:44Z",
-  "nextAfterUser": "abcd****"
+  "nextAfterUser": "abcd****",
+  "nextCursor": "encrypted-cursor"
 }))]
 pub struct LeaderboardTopResponse {
     pub items: Vec<LeaderboardTopItem>,
@@ -87,9 +88,12 @@ pub struct LeaderboardTopResponse {
     pub next_after_score: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_after_updated: Option<String>,
-    /// 下一页游标：去敏化用户标识（与 `items[].user` 同规则）。
+    /// 旧版下一页游标：去敏化用户标识（与 `items[].user` 同规则）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_after_user: Option<String>,
+    /// 下一页加密游标。客户端应优先使用该字段继续分页。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
