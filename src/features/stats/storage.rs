@@ -1,7 +1,5 @@
 use sqlx::SqlitePool;
 
-use super::models::DailyAggRow;
-
 mod connection;
 mod daily;
 mod events;

@@ -103,7 +103,7 @@ pub(super) fn generate_leaderboard_svg_string(
     for (i, entry) in data.entries.iter().enumerate() {
         let y_pos = header_height + (i32_from_usize(i) * row_height);
         write_leaderboard_entry(
-            svg,
+            &mut svg,
             entry,
             LeaderboardEntryRenderLayout {
                 rank: i + 1,
@@ -201,6 +201,7 @@ mod tests {
                 player_name: "玩家<&>\"".to_string(),
                 rks: 15.234,
             }],
+            display_count: 10,
         })
         .expect("render leaderboard svg");
 

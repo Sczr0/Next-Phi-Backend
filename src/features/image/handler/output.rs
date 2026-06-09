@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::{config::AppConfig, error::AppError, features::image::renderer};
 
-use super::Theme;
+use crate::features::image::Theme;
 
 /// 图片输出选项（通过 Query 传入，避免破坏现有 JSON 请求体）
 #[derive(Debug, Clone, Default, Deserialize)]

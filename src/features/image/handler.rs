@@ -41,8 +41,7 @@ use score::{
     calculate_ap_top_3_avg, calculate_best_27_avg, calculate_push_acc_map, collect_ap_top_3_scores,
     difficulty_from_canonical_label, difficulty_index, find_song_engine_record_indices,
     index_song_difficulty_records, is_user_score_full_combo, parse_user_score_difficulty,
-    sort_engine_records_by_rks_desc, sort_render_records_by_rks_desc, u32_from_usize,
-    user_score_difficulty_error,
+    sort_engine_records_by_rks_desc, sort_render_records_by_rks_desc, user_score_difficulty_error,
 };
 
 fn usize_from_u32(value: u32) -> usize {
