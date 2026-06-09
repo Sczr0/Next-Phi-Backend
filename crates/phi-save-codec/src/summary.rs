@@ -19,6 +19,10 @@ pub struct SummaryParsed {
 }
 
 /// 从 base64 编码的 summary 解析
+///
+/// # Errors
+///
+/// base64 解码失败时返回 `CodecError::Custom`，数据不足时返回 `CodecError::NotEnoughData`。
 pub fn parse_summary_base64(b64: &str) -> Result<SummaryParsed> {
     let bytes = base64::engine::general_purpose::STANDARD
         .decode(b64)

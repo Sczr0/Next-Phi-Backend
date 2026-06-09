@@ -33,6 +33,10 @@ pub struct LevelRecord {
 /// - 单首歌解析失败时静默跳过（不影响其他歌曲的结果）
 /// - 使用 payload length 校验检测数据损坏
 ///
+/// # Errors
+///
+/// 数据不足时返回 `CodecError::NotEnoughData`，数据格式异常时返回 `CodecError::InvalidData`。
+///
 /// 输入为完整 entry（包含第 1 字节前缀）
 pub fn parse_game_record_bytes(
     game_record_entry: &[u8],
@@ -48,14 +52,9 @@ pub fn parse_game_record_bytes(
     let mut result = BTreeMap::new();
 
     for _ in 0..length {
-        let song_id = match reader.read_owned_string(2) {
-            Ok(id) => id,
-            Err(_) => continue, // 跳过损坏的 song_id
-        };
-        let first_len = match reader.read_u8() {
-            Ok(len) => len as usize,
-            Err(_) => continue,
-        };
+        let Ok(song_id) = reader.read_owned_string(2) else { continue }; // 跳过损坏的 song_id
+        let Ok(first_len) = reader.read_u8() else { continue };
+        let first_len = first_len as usize;
         let payload_start = reader.offset(); // 从 payload 开始计数
         let next = payload_start
             .checked_add(first_len)
@@ -64,14 +63,8 @@ pub fn parse_game_record_bytes(
             break;
         }
 
-        let mask = match reader.read_u8() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        let fc_mask = match reader.read_u8() {
-            Ok(fc) => fc,
-            Err(_) => continue,
-        };
+        let Ok(mask) = reader.read_u8() else { continue };
+        let Ok(fc_mask) = reader.read_u8() else { continue };
         let mut records = Vec::with_capacity(4);
         let mut parse_ok = true;
 
@@ -80,43 +73,34 @@ pub fn parse_game_record_bytes(
                 continue;
             }
 
-            let score_i32 = match reader.read_i32_le() {
-                Ok(s) => s,
-                Err(_) => {
-                    parse_ok = false;
-                    break;
-                }
+            let Ok(score_i32) = reader.read_i32_le() else {
+                parse_ok = false;
+                break;
             };
             if i64::from(score_i32) <= 0 {
                 // score 为 0 表示无成绩，但 acc 字段仍在流中，需要跳过
                 let _ = reader.read_f32_le();
                 continue;
             }
-            let score_u32 = u32::try_from(score_i32).unwrap_or(0);
+            let parsed_score = u32::try_from(score_i32).unwrap_or(0);
 
-            let mut accuracy = match reader.read_f32_le() {
-                Ok(a) => a,
-                Err(_) => {
-                    parse_ok = false;
-                    break;
-                }
+            let Ok(mut accuracy) = reader.read_f32_le() else {
+                parse_ok = false;
+                break;
             };
             if !accuracy.is_finite() {
                 accuracy = 0.0;
             }
             let is_full_combo = ((fc_mask >> idx) & 1) != 0;
-            let difficulty = match Difficulty::try_from(idx) {
-                Ok(d) => d,
-                Err(_) => {
-                    parse_ok = false;
-                    break;
-                }
+            let Ok(difficulty) = Difficulty::try_from(idx) else {
+                parse_ok = false;
+                break;
             };
             let chart_constant = chart_lookup(&song_id, difficulty);
 
             records.push(DifficultyRecord {
                 difficulty,
-                score: score_u32,
+                score: parsed_score,
                 accuracy,
                 is_full_combo,
                 chart_constant,
@@ -146,7 +130,11 @@ pub fn parse_game_record_bytes(
     Ok(result)
 }
 
-/// 从 serde_json Value 解析 gameRecord JSON 格式
+/// 从 `serde_json` Value 解析 gameRecord JSON 格式
+///
+/// # Errors
+///
+/// 当 JSON 结构不符合预期（类型错误、字段缺失等）时返回描述错误的 `String`。
 pub fn parse_game_record_json(
     record_value: &serde_json::Value,
     chart_lookup: impl Fn(&str, Difficulty) -> Option<f32>,
@@ -175,16 +163,18 @@ pub fn parse_game_record_json(
             if score_i64 <= 0 {
                 continue;
             }
-            let score_u32 = u32::try_from(score_i64)
+            let parsed_score = u32::try_from(score_i64)
                 .map_err(|_| format!("score overflow at '{song_id}'[{idx}]"))?;
 
-            let accuracy_f32 = if let Some(v) = chunk[1].as_f64() {
-                v as f32
-            } else if let Some(v) = chunk[1].as_i64() {
-                v as f32
-            } else {
-                return Err(format!("accuracy at '{song_id}'[{idx}] is not a number"));
-            };
+            let accuracy_f64 = chunk[1]
+                .as_f64()
+                .or_else(|| chunk[1].as_i64().map(|i| i as f64))
+                .ok_or_else(|| format!("accuracy at '{song_id}'[{idx}] is not a number"))?;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_precision_loss
+            )]
+            let accuracy_f32 = accuracy_f64 as f32;
 
             let is_full_combo = match chunk[2].as_i64() {
                 Some(1) => true,
@@ -199,7 +189,7 @@ pub fn parse_game_record_json(
 
             records.push(DifficultyRecord {
                 difficulty,
-                score: score_u32,
+                score: parsed_score,
                 accuracy: accuracy_f32,
                 is_full_combo,
                 chart_constant,

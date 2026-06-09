@@ -51,12 +51,12 @@ pub struct GameKeyParsed {
 
 /// 解析单首歌的密钥原始字节为 Key enum
 ///
-/// 健壮性设计：如果解析出的格式不符合预期（type_byte 高位不为 0、长度不匹配等），
+/// 健壮性设计：如果解析出的格式不符合预期（`type_byte` 高位不为 0、长度不匹配等），
 /// 不报错，直接返回 `Key::Raw` 保留原始字节。
-fn parse_single_key(data: &[u8]) -> Result<Key> {
+fn parse_single_key(data: &[u8]) -> Key {
     // 至少需要 2 字节：length + type_byte
     if data.len() < 2 {
-        return Ok(Key::Raw(data.to_vec()));
+        return Key::Raw(data.to_vec());
     }
 
     let payload_len = data[0] as usize; // length field
@@ -64,7 +64,7 @@ fn parse_single_key(data: &[u8]) -> Result<Key> {
 
     // 高位 bit (5-7) 必须为 0，否则可能是未知格式
     if (type_byte & 0b1110_0000) != 0 {
-        return Ok(Key::Raw(data.to_vec()));
+        return Key::Raw(data.to_vec());
     }
 
     let exist_read = get_bit(type_byte, 0);
@@ -74,17 +74,17 @@ fn parse_single_key(data: &[u8]) -> Result<Key> {
     let exist_avatar = get_bit(type_byte, 4);
 
     // 预期的字段数 = 存在的 bit 数
-    let expected_fields = exist_read as usize
-        + exist_single as usize
-        + exist_collection as usize
-        + exist_illust as usize
-        + exist_avatar as usize;
+    let expected_fields = usize::from(exist_read)
+        + usize::from(exist_single)
+        + usize::from(exist_collection)
+        + usize::from(exist_illust)
+        + usize::from(exist_avatar);
 
     // payload 长度 = length 自身(1) + 字段数据
     let field_data_len = payload_len.saturating_sub(1);
     let data_start = 2; // 跳过 length + type_byte
     if data.len() < data_start + field_data_len || expected_fields != field_data_len {
-        return Ok(Key::Raw(data.to_vec()));
+        return Key::Raw(data.to_vec());
     }
 
     let field_data = &data[data_start..data_start + field_data_len];
@@ -112,7 +112,7 @@ fn parse_single_key(data: &[u8]) -> Result<Key> {
         key.unlock_avatar = Some(field_data[idx] == 1);
     }
 
-    Ok(Key::Normal(key))
+    Key::Normal(key)
 }
 
 fn parse_game_key_map(reader: &mut Reader) -> Result<BTreeMap<String, Key>> {
@@ -126,7 +126,7 @@ fn parse_game_key_map(reader: &mut Reader) -> Result<BTreeMap<String, Key>> {
             return Err(CodecError::NotEnoughData);
         }
         let entry_data = &reader.data[reader.offset()..next];
-        let parsed = parse_single_key(entry_data)?;
+        let parsed = parse_single_key(entry_data);
         map.insert(key_name, parsed);
         reader.skip(next.saturating_sub(reader.offset()));
     }
@@ -134,6 +134,10 @@ fn parse_game_key_map(reader: &mut Reader) -> Result<BTreeMap<String, Key>> {
 }
 
 /// 解析 gameKey entry
+///
+/// # Errors
+///
+/// 当数据不足或解析过程中出现格式错误时返回 `CodecError`。
 pub fn parse_game_key_entry(entry: &[u8]) -> Result<GameKeyParsed> {
     if entry.is_empty() {
         return Err(CodecError::NotEnoughData);
@@ -196,7 +200,7 @@ mod tests {
     fn parse_single_key_malformed_returns_raw() {
         // 只有 1 字节，不足 2 字节 -> Raw
         let data = vec![0x01];
-        let result = parse_single_key(&data).expect("should not fail");
+        let result = parse_single_key(&data);
         assert!(matches!(result, Key::Raw(_)));
     }
 
@@ -204,7 +208,7 @@ mod tests {
     fn parse_single_key_high_bits_set_returns_raw() {
         // type_byte 高位 (5-7) 不为 0 -> 未知格式 -> Raw
         let data = vec![0x02, 0b0010_0000];
-        let result = parse_single_key(&data).expect("should not fail");
+        let result = parse_single_key(&data);
         assert!(matches!(result, Key::Raw(_)));
     }
 
@@ -212,7 +216,7 @@ mod tests {
     fn parse_single_key_length_mismatch_returns_raw() {
         // 声明了 2 字节 payload 但 type_byte 只有 1 个 bit -> 不匹配 -> Raw
         let data = vec![0x03, 0b0000_0001, 0x01, 0x02];
-        let result = parse_single_key(&data).expect("should not fail");
+        let result = parse_single_key(&data);
         assert!(matches!(result, Key::Raw(_)));
     }
 
@@ -220,7 +224,7 @@ mod tests {
     fn parse_single_key_normal_read_collection() {
         // length=2, type=bit0(read), data=[42]
         let data = vec![0x02, 0b0000_0001, 42];
-        let result = parse_single_key(&data).expect("should not fail");
+        let result = parse_single_key(&data);
         match result {
             Key::Normal(nk) => {
                 assert_eq!(nk.read_collection_piece_num, Some(42));
@@ -234,7 +238,7 @@ mod tests {
     fn parse_single_key_normal_unlock_single() {
         // length=2, type=bit1(single), data=[1=true]
         let data = vec![0x02, 0b0000_0010, 1];
-        let result = parse_single_key(&data).expect("should not fail");
+        let result = parse_single_key(&data);
         match result {
             Key::Normal(nk) => {
                 assert_eq!(nk.unlock_single, Some(true));
@@ -247,7 +251,7 @@ mod tests {
     #[test]
     fn parse_single_key_normal_unlock_single_false() {
         let data = vec![0x02, 0b0000_0010, 0];
-        let result = parse_single_key(&data).expect("should not fail");
+        let result = parse_single_key(&data);
         match result {
             Key::Normal(nk) => {
                 assert_eq!(nk.unlock_single, Some(false));
@@ -268,7 +272,7 @@ mod tests {
             0,
             1, // read=10, single=true, collection=20, illust=false, avatar=true
         ];
-        let result = parse_single_key(&data).expect("should not fail");
+        let result = parse_single_key(&data);
         match result {
             Key::Normal(nk) => {
                 assert_eq!(nk.read_collection_piece_num, Some(10));

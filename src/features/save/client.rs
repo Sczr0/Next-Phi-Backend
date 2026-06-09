@@ -127,9 +127,16 @@ pub async fn fetch_from_official(
 
     let tap_config = config.resolve(version);
 
+    let save_endpoint = if tap_config.leancloud_base_url.contains("rak3ffdi.cloud.tds1.tapapis.cn") {
+        // 国服: 2025-06-08 TapTap 将 _GameSave 端点迁移至 /gamesaves/
+        "/gamesaves/?limit=1"
+    } else {
+        "/classes/_GameSave?limit=1"
+    };
     let url = format!(
-        "{}/classes/_GameSave?limit=1",
-        tap_config.leancloud_base_url
+        "{}{}",
+        tap_config.leancloud_base_url,
+        save_endpoint
     );
 
     let t_http = Instant::now();

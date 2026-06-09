@@ -6,6 +6,7 @@ use crate::error::{CodecError, Result};
 use crate::reader::Reader;
 
 /// 解析后的客户端设置
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsParsed {
     pub chord_support: bool,
@@ -22,6 +23,10 @@ pub struct SettingsParsed {
 }
 
 /// 解析 settings entry
+///
+/// # Errors
+///
+/// 数据不足时返回 `CodecError::NotEnoughData`，字段解析失败时传播读取错误。
 pub fn parse_settings_entry(entry: &[u8]) -> Result<SettingsParsed> {
     if entry.is_empty() {
         return Err(CodecError::NotEnoughData);

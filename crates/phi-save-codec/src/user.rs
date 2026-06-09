@@ -15,6 +15,10 @@ pub struct UserParsed {
 }
 
 /// 解析 user entry
+///
+/// # Errors
+///
+/// 数据不足时返回 `CodecError::NotEnoughData`，字段解析失败时传播读取错误。
 pub fn parse_user_entry(entry: &[u8]) -> Result<UserParsed> {
     if entry.is_empty() {
         return Err(CodecError::NotEnoughData);

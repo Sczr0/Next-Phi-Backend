@@ -79,7 +79,7 @@ impl<'a> Reader<'a> {
         }
     }
 
-    /// 读取 VarInt 编码的字符串，可选择性地裁掉末尾 N 字节
+    /// 读取 `VarInt` 编码的字符串，可选择性地裁掉末尾 N 字节
     pub fn read_string(&mut self, trim_end: usize) -> Result<&'a str> {
         let len = self.read_varshort()?;
         let keep = len.saturating_sub(trim_end);
@@ -93,7 +93,7 @@ impl<'a> Reader<'a> {
 
     /// 读取字符串并拥有所有权
     pub fn read_owned_string(&mut self, trim_end: usize) -> Result<alloc::string::String> {
-        self.read_string(trim_end).map(|s| s.to_owned())
+        self.read_string(trim_end).map(str::to_owned)
     }
 
     /// 跳过指定字节数
@@ -103,12 +103,13 @@ impl<'a> Reader<'a> {
 }
 
 /// 位操作工具
-#[inline(always)]
+#[inline]
 pub fn get_bit(byte: u8, index: usize) -> bool {
     ((byte >> index) & 1) != 0
 }
 
-#[inline(always)]
+#[allow(dead_code)]
+#[inline]
 pub fn set_bit(byte: &mut u8, index: usize, value: bool) {
     if value {
         *byte |= 1 << index;
