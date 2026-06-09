@@ -52,8 +52,12 @@ pub fn parse_game_record_bytes(
     let mut result = BTreeMap::new();
 
     for _ in 0..length {
-        let Ok(song_id) = reader.read_owned_string(2) else { continue }; // 跳过损坏的 song_id
-        let Ok(first_len) = reader.read_u8() else { continue };
+        let Ok(song_id) = reader.read_owned_string(2) else {
+            continue;
+        }; // 跳过损坏的 song_id
+        let Ok(first_len) = reader.read_u8() else {
+            continue;
+        };
         let first_len = first_len as usize;
         let payload_start = reader.offset(); // 从 payload 开始计数
         let next = payload_start
@@ -64,7 +68,9 @@ pub fn parse_game_record_bytes(
         }
 
         let Ok(mask) = reader.read_u8() else { continue };
-        let Ok(fc_mask) = reader.read_u8() else { continue };
+        let Ok(fc_mask) = reader.read_u8() else {
+            continue;
+        };
         let mut records = Vec::with_capacity(4);
         let mut parse_ok = true;
 
@@ -170,10 +176,7 @@ pub fn parse_game_record_json(
                 .as_f64()
                 .or_else(|| chunk[1].as_i64().map(|i| i as f64))
                 .ok_or_else(|| format!("accuracy at '{song_id}'[{idx}] is not a number"))?;
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_precision_loss
-            )]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
             let accuracy_f32 = accuracy_f64 as f32;
 
             let is_full_combo = match chunk[2].as_i64() {
