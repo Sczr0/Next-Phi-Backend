@@ -141,6 +141,7 @@ pub fn parse_game_record_bytes(
 /// # Errors
 ///
 /// 当 JSON 结构不符合预期（类型错误、字段缺失等）时返回描述错误的 `String`。
+#[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 pub fn parse_game_record_json(
     record_value: &serde_json::Value,
     chart_lookup: impl Fn(&str, Difficulty) -> Option<f32>,
@@ -176,7 +177,6 @@ pub fn parse_game_record_json(
                 .as_f64()
                 .or_else(|| chunk[1].as_i64().map(|i| i as f64))
                 .ok_or_else(|| format!("accuracy at '{song_id}'[{idx}] is not a number"))?;
-            #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
             let accuracy_f32 = accuracy_f64 as f32;
 
             let is_full_combo = match chunk[2].as_i64() {

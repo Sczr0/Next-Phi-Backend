@@ -47,6 +47,7 @@ fn read_bool_array<const N: usize>(reader: &mut Reader) -> Result<[bool; N]> {
 /// # Errors
 ///
 /// 数据不足时返回 `CodecError::NotEnoughData`，字段解析失败时传播读取错误。
+#[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
 pub fn parse_game_progress_entry(entry: &[u8]) -> Result<GameProgressParsed> {
     if entry.is_empty() {
         return Err(CodecError::NotEnoughData);
@@ -87,7 +88,6 @@ pub fn parse_game_progress_entry(entry: &[u8]) -> Result<GameProgressParsed> {
         out.challenge_mode_rank = Some(r.read_u16_le()?);
         let mut money = [0_i32; 5];
         for slot in &mut money {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
             *slot = r.read_varshort()? as i32;
         }
         out.money = Some(money);
