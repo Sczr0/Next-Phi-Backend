@@ -87,13 +87,13 @@ where
 
             best27.consider(rks_value, scan_index, || ChartRankingScore {
                 song_id: song_id.clone(),
-                difficulty: rec.difficulty.clone(),
+                difficulty: rec.difficulty,
                 rks: rks_value,
             });
             if acc_percent >= 100.0 {
                 ap3.consider(rks_value, scan_index, || ChartRankingScore {
                     song_id: song_id.clone(),
-                    difficulty: rec.difficulty.clone(),
+                    difficulty: rec.difficulty,
                     rks: rks_value,
                 });
             }
@@ -111,6 +111,7 @@ where
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f32> {
     match diff {
         Difficulty::EZ => consts.ez,
@@ -120,6 +121,7 @@ fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f3
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn key_of_difficulty(diff: &Difficulty) -> u8 {
     match diff {
         Difficulty::EZ => 0,
@@ -536,7 +538,7 @@ where
             let chart_constant = f64::from(cc);
             all.push(RksRecord {
                 song_id: song_id.clone(),
-                difficulty: rec.difficulty.clone(),
+                difficulty: rec.difficulty,
                 score: rec.score,
                 acc: acc_percent,
                 rks: calculate_chart_rks(acc_percent, chart_constant),
@@ -1060,7 +1062,7 @@ mod tests {
             .take(27)
             .map(|r| ChartRankingScore {
                 song_id: r.song_id.clone(),
-                difficulty: r.difficulty.clone(),
+                difficulty: r.difficulty,
                 rks: r.rks,
             })
             .collect::<Vec<_>>();
@@ -1072,7 +1074,7 @@ mod tests {
             .take(3)
             .map(|r| ChartRankingScore {
                 song_id: r.song_id.clone(),
-                difficulty: r.difficulty.clone(),
+                difficulty: r.difficulty,
                 rks: r.rks,
             })
             .collect::<Vec<_>>();
@@ -1288,7 +1290,7 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..60 {
             let song_id = format!("song{i:03}");
-            for diff in diffs.iter().cloned() {
+            for diff in diffs.iter().copied() {
                 let acc = rng.gen_range(70.0..=100.0);
                 let constant = rng.gen_range(1.0..=16.0);
                 let rks = calculate_chart_rks(acc, constant);
@@ -1349,7 +1351,7 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..80 {
             let song_id = format!("song{i:03}");
-            for diff in diffs.iter().cloned() {
+            for diff in diffs.iter().copied() {
                 let acc = rng.gen_range(70.0..=100.0);
                 let constant = rng.gen_range(1.0..=16.0);
                 let rks = calculate_chart_rks(acc, constant);
@@ -1392,7 +1394,7 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..90 {
             let song_id = format!("song{i:03}");
-            for diff in diffs.iter().cloned() {
+            for diff in diffs.iter().copied() {
                 let acc = rng.gen_range(70.0..=100.0);
                 let constant = rng.gen_range(1.0..=16.0);
                 let rks = calculate_chart_rks(acc, constant);

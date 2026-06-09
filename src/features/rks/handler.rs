@@ -4,7 +4,38 @@ use axum::{Router, extract::State, response::Json, routing::post};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
 
-use crate::{error::AppError, state::AppState};
+use crate::{
+    error::AppError,
+    features::stats::storage::{RksHistoryCursor, RksHistoryEntry},
+    state::AppState,
+};
+
+fn parse_rks_history_cursor(raw: Option<&str>) -> Result<Option<RksHistoryCursor>, AppError> {
+    let Some(raw) = raw.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let Some((created_at, id_raw)) = raw.rsplit_once('|') else {
+        return Err(AppError::Validation(
+            "cursor 无效（期望格式：createdAt|id）".into(),
+        ));
+    };
+    let id = id_raw
+        .parse::<i64>()
+        .map_err(|e| AppError::Validation(format!("cursor id 无效: {e}")))?;
+    if created_at.trim().is_empty() || id <= 0 {
+        return Err(AppError::Validation(
+            "cursor 无效（createdAt 不能为空且 id 必须为正数）".into(),
+        ));
+    }
+    Ok(Some(RksHistoryCursor {
+        created_at: created_at.to_string(),
+        id,
+    }))
+}
+
+fn encode_rks_history_cursor(entry: Option<&RksHistoryEntry>) -> Option<String> {
+    entry.map(|entry| format!("{}|{}", entry.created_at, entry.id))
+}
 
 /// RKS 历史查询请求
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
@@ -12,7 +43,8 @@ use crate::{error::AppError, state::AppState};
 #[schema(example = json!({
     "auth": {"sessionToken": "r:abcdefg.hijklmn"},
     "limit": 50,
-    "offset": 0
+    "offset": 0,
+    "cursor": "2025-11-28T10:30:00Z|12345"
 }))]
 pub struct RksHistoryRequest {
     /// 认证信息
@@ -23,6 +55,9 @@ pub struct RksHistoryRequest {
     /// 分页偏移（默认 0）
     #[serde(default)]
     pub offset: Option<i64>,
+    /// 游标分页位置。存在时优先使用 cursor，并忽略 offset。
+    #[serde(default)]
+    pub cursor: Option<String>,
 }
 
 /// 单条 RKS 历史记录
@@ -52,7 +87,9 @@ pub struct RksHistoryItem {
     ],
     "total": 42,
     "currentRks": 14.73,
-    "peakRks": 14.73
+    "peakRks": 14.73,
+    "hasMore": true,
+    "nextCursor": "2025-11-27T15:20:00Z|12344"
 }))]
 pub struct RksHistoryResponse {
     /// 历史记录列表（按时间倒序）
@@ -63,6 +100,11 @@ pub struct RksHistoryResponse {
     pub current_rks: f64,
     /// 历史最高 RKS
     pub peak_rks: f64,
+    /// 是否还有下一页
+    pub has_more: bool,
+    /// 下一页游标；为空表示已到末尾
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 /// 查询用户 RKS 历史变化
@@ -125,14 +167,30 @@ pub async fn post_rks_history(
         user_hash_opt.ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
     storage.ensure_user_not_banned(&user_hash).await?;
 
-    // 分页参数
+    // 分页参数。cursor 存在时优先走 seek 分页，避免深页 OFFSET 扫描。
     let limit = req.limit.unwrap_or(50).clamp(1, 200);
     let offset = req.offset.unwrap_or(0).max(0);
+    let cursor = parse_rks_history_cursor(req.cursor.as_deref())?;
 
-    // 查询历史记录
     let t_query = Instant::now();
-    let (entries, total) = storage.query_rks_history(&user_hash, limit, offset).await?;
-    let items: Vec<RksHistoryItem> = entries
+    let history_fut = storage.query_rks_history_page(&user_hash, limit, offset, cursor.as_ref());
+    let current_fut = async {
+        storage
+            .get_prev_rks(&user_hash)
+            .await
+            .map(|value| value.map_or(0.0, |(rks, _)| rks))
+    };
+    let peak_fut = storage.get_peak_rks(&user_hash);
+    let (page, current_rks, peak_rks) = tokio::try_join!(history_fut, current_fut, peak_fut)?;
+    let next_cursor = if page.has_more {
+        encode_rks_history_cursor(page.entries.last())
+    } else {
+        None
+    };
+    let total = page.total;
+    let has_more = page.has_more;
+    let items: Vec<RksHistoryItem> = page
+        .entries
         .into_iter()
         .map(|entry| RksHistoryItem {
             rks: entry.rks,
@@ -140,15 +198,6 @@ pub async fn post_rks_history(
             created_at: entry.created_at,
         })
         .collect();
-
-    // 获取当前 RKS
-    let current_rks = storage
-        .get_prev_rks(&user_hash)
-        .await?
-        .map_or(0.0, |(rks, _)| rks);
-
-    // 获取历史最高 RKS
-    let peak_rks = storage.get_peak_rks(&user_hash).await?;
     let query_ms = t_query.elapsed().as_millis();
 
     tracing::info!(
@@ -168,6 +217,8 @@ pub async fn post_rks_history(
         total,
         current_rks,
         peak_rks,
+        has_more,
+        next_cursor,
     }))
 }
 
@@ -190,5 +241,21 @@ mod tests {
         let json = serde_json::to_string(&item).unwrap();
         assert!(json.contains("14.73"));
         assert!(json.contains("0.05"));
+    }
+
+    #[test]
+    fn rks_history_cursor_roundtrips_created_at_and_id() {
+        let cursor = parse_rks_history_cursor(Some("2025-11-28T10:30:00Z|12345"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cursor.created_at, "2025-11-28T10:30:00Z");
+        assert_eq!(cursor.id, 12345);
+    }
+
+    #[test]
+    fn rks_history_cursor_rejects_invalid_input() {
+        assert!(parse_rks_history_cursor(Some("2025-11-28T10:30:00Z")).is_err());
+        assert!(parse_rks_history_cursor(Some("2025-11-28T10:30:00Z|0")).is_err());
+        assert!(parse_rks_history_cursor(Some("2025-11-28T10:30:00Z|abc")).is_err());
     }
 }

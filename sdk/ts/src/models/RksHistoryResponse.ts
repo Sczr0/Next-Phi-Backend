@@ -12,9 +12,17 @@ export type RksHistoryResponse = {
      */
     currentRks: number;
     /**
+     * 是否还有下一页
+     */
+    hasMore: boolean;
+    /**
      * 历史记录列表（按时间倒序）
      */
     items: Array<RksHistoryItem>;
+    /**
+     * 下一页游标；为空表示已到末尾
+     */
+    nextCursor?: string | null;
     /**
      * 历史最高 RKS
      */
@@ -24,4 +32,3 @@ export type RksHistoryResponse = {
      */
     total: number;
 };
-
