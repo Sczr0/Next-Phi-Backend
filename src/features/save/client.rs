@@ -58,7 +58,7 @@ struct SaveInfoResponse {
 #[derive(Debug, Deserialize)]
 struct SaveInfoResult {
     #[serde(rename = "objectId")]
-    _object_id: String,
+    object_id: String,
     summary: String,
     #[serde(rename = "gameFile")]
     game_file: GameFile,
@@ -179,7 +179,7 @@ pub async fn fetch_from_official(
     let result = save_info
         .results
         .into_iter()
-        .filter(|r| {
+        .find(|r| {
             // 过滤 0608 事件残留的异常存档
             if is_cn
                 && r.user
@@ -188,14 +188,13 @@ pub async fn fetch_from_official(
             {
                 tracing::warn!(
                     target: "phi_backend::save::client",
-                    save_object_id = %r._object_id,
+                    save_object_id = %r.object_id,
                     "跳过异常存档 (bad user objectId)"
                 );
                 return false;
             }
             true
         })
-        .next()
         .ok_or_else(|| SaveProviderError::Metadata("未找到存档".to_string()))?;
 
     let download_url = if result.game_file.url.starts_with("http") {
