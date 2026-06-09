@@ -4,6 +4,7 @@ pub(super) const INACTIVE_ACC_TEXT: &str = "Acc: N/A";
 pub(super) const INACTIVE_RKS_TEXT: &str = "Lv.?? -> ??";
 
 #[derive(Debug, Clone)]
+#[allow(clippy::struct_field_names)]
 pub(super) struct SongScoreText {
     pub(super) score_text: String,
     pub(super) acc_text: String,

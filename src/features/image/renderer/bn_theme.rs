@@ -14,6 +14,7 @@ pub(super) struct BnThemePalette {
 }
 
 impl BnThemePalette {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     pub(super) fn from_theme(theme: &Theme) -> Self {
         let (
             bg_color,

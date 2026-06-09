@@ -51,6 +51,7 @@ fn is_supported_image_file(path: &Path) -> bool {
 fn insert_cover_metadata(
     cover_metadata: &mut HashMap<String, String>,
     path: &Path,
+    #[allow(clippy::trivially_copy_pass_by_ref)]
     mode: &CoverMetadataMode,
 ) {
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
@@ -167,6 +168,7 @@ fn get_illustration_index() -> &'static IllustrationIndex {
 }
 
 /// 获取背景图片缓存
+#[allow(dead_code)]
 pub(super) fn get_background_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, Arc<str>>> {
     let _ = get_illustration_index();
     super::resource_background::get_background_cache()

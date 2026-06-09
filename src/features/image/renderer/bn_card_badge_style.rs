@@ -38,6 +38,7 @@ pub(super) fn difficulty_badge_style(difficulty: &str) -> DifficultyBadgeStyle {
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 pub(super) fn fc_ap_badge_style(score: &RenderRecord, theme: &Theme) -> Option<FcApBadgeStyle> {
     let (ap_fill, fc_fill, ap_text_fill, fc_text_fill) = match theme {
         Theme::White => ("url(#ap-gradient-white)", "#4682B4", "white", "white"),

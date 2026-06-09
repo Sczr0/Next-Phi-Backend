@@ -20,6 +20,7 @@ mod tests {
     }
 }
 
+#[allow(clippy::needless_pass_by_value)]
 fn row_to_rks_history_entry(row: sqlx::sqlite::SqliteRow) -> RksHistoryEntry {
     let rks = row.try_get::<f64, _>("total_rks").unwrap_or(0.0);
     let rks_jump = row.try_get::<f64, _>("rks_jump").unwrap_or(0.0);
@@ -82,6 +83,7 @@ impl StatsStorage {
     /// 查询用户 RKS 历史页。
     ///
     /// `cursor` 存在时使用 `(created_at, id)` seek 分页；否则保留旧 offset 语义。
+    #[allow(clippy::cast_sign_loss)]
     pub async fn query_rks_history_page(
         &self,
         user_hash: &str,

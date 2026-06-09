@@ -136,6 +136,7 @@ pub fn get_global_font_db() -> Arc<fontdb::Database> {
 }
 
 /// 获取背景图片缓存
+#[allow(dead_code)]
 pub fn get_background_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, Arc<str>>> {
     resources::get_background_cache()
 }
@@ -180,6 +181,7 @@ pub fn render_svg_to_png(svg_data: &str, is_user_generated: bool) -> Result<Vec<
 }
 
 /// 按目标宽度下采样后编码为 PNG（未提供则使用 SVG 原始宽度）
+#[allow(dead_code)]
 pub fn render_svg_to_png_scaled(
     svg_data: &str,
     is_user_generated: bool,
@@ -189,6 +191,7 @@ pub fn render_svg_to_png_scaled(
 }
 
 /// 按目标宽度下采样后编码为 JPEG（quality 1-100，建议 80-90）
+#[allow(dead_code)]
 pub fn render_svg_to_jpeg(
     svg_data: &str,
     is_user_generated: bool,
@@ -207,6 +210,7 @@ pub fn render_svg_to_jpeg(
 /// * `lossless` - 是否使用无损模式（默认 false）
 /// # 返回
 /// WebP 格式的图片字节数据
+#[allow(dead_code)]
 pub fn render_svg_to_webp(
     svg_data: &str,
     is_user_generated: bool,
@@ -225,6 +229,7 @@ pub fn render_svg_to_webp(
 /// - width: 目标宽度（可选）
 /// - webp_quality: WebP 质量（1-100，缺省 80）
 /// - webp_lossless: WebP 无损（缺省 false）
+#[allow(dead_code)]
 pub fn render_svg_unified(
     svg: &str,
     is_user_generated: bool,

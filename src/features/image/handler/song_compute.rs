@@ -31,6 +31,7 @@ pub(super) struct SongComputeOutput {
     pub(super) update_time: DateTime<Utc>,
 }
 
+#[allow(clippy::unnecessary_wraps)]
 pub(super) fn build_song_compute_output(
     input: SongComputeInput,
 ) -> Result<SongComputeOutput, AppError> {

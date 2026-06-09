@@ -10,6 +10,7 @@ pub(super) async fn ensure_image_user_not_banned(
     Ok(())
 }
 
+#[allow(clippy::unnecessary_wraps)]
 pub(super) fn image_footer_text() -> Option<String> {
     Some(AppConfig::global().branding.footer_text.clone())
 }

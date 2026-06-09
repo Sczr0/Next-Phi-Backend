@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::Semaphore;
 
-use chrono::Utc;
+use chrono::{TimeZone, Utc};
 
 use super::time::parse_date_bound_utc;
 
@@ -62,7 +62,9 @@ async fn build_test_state(sqlite_path: &str) -> AppState {
 }
 
 fn dt_utc(y: i32, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> chrono::DateTime<Utc> {
-    Utc.with_ymd_and_hms(y, m, d, hh, mm, ss).single().unwrap()
+    Utc.with_ymd_and_hms(y, m, d, hh, mm, ss)
+        .single()
+        .unwrap()
 }
 
 #[test]

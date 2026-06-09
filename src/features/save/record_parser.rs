@@ -67,7 +67,7 @@ pub fn parse_game_record(
                 phi_save_codec::Difficulty::AT => c.at,
             })
         })
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.clone())?
         .into_iter()
         .collect();
 

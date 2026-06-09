@@ -12,6 +12,7 @@ pub(super) struct BnBackgroundSelection {
     pub(super) normal_card_stroke_color: String,
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 pub(super) fn select_random_background(
     theme: &Theme,
     embed_images: bool,

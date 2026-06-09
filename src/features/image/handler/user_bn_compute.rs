@@ -22,6 +22,7 @@ pub(super) struct UserBnComputeOutput {
     pub(super) ap_top_3_scores: Vec<RenderRecord>,
 }
 
+#[allow(clippy::needless_pass_by_value)]
 pub(super) fn build_user_bn_compute_output(
     scores: Vec<UserScoreItem>,
     song_catalog: Arc<SongCatalog>,

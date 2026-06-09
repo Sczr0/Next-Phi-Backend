@@ -87,13 +87,13 @@ where
 
             best27.consider(rks_value, scan_index, || ChartRankingScore {
                 song_id: song_id.clone(),
-                difficulty: rec.difficulty.clone(),
+                difficulty: rec.difficulty,
                 rks: rks_value,
             });
             if acc_percent >= 100.0 {
                 ap3.consider(rks_value, scan_index, || ChartRankingScore {
                     song_id: song_id.clone(),
-                    difficulty: rec.difficulty.clone(),
+                    difficulty: rec.difficulty,
                     rks: rks_value,
                 });
             }
@@ -111,6 +111,7 @@ where
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f32> {
     match diff {
         Difficulty::EZ => consts.ez,
@@ -120,6 +121,7 @@ fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f3
     }
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn key_of_difficulty(diff: &Difficulty) -> u8 {
     match diff {
         Difficulty::EZ => 0,
@@ -536,7 +538,7 @@ where
             let chart_constant = f64::from(cc);
             all.push(RksRecord {
                 song_id: song_id.clone(),
-                difficulty: rec.difficulty.clone(),
+                difficulty: rec.difficulty,
                 score: rec.score,
                 acc: acc_percent,
                 rks: calculate_chart_rks(acc_percent, chart_constant),
