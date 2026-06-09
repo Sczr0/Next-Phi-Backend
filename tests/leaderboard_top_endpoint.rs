@@ -42,6 +42,8 @@ fn dummy_taptap_cfg(default_version: TapTapVersion) -> TapTapMultiConfig {
 }
 
 fn new_test_state(storage: Arc<StatsStorage>) -> AppState {
+    // Ensure AppConfig is initialised before constructing state
+    let _ = phi_backend::config::AppConfig::init_global();
     let taptap_cfg = dummy_taptap_cfg(TapTapVersion::CN);
     let taptap_client = TapTapClient::new(&taptap_cfg).expect("TapTapClient::new");
 
