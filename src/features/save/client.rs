@@ -65,7 +65,15 @@ struct SaveInfoResult {
     #[serde(rename = "updatedAt")]
     updated_at: String,
     #[serde(default)]
+    user: Option<SaveUser>,
+    #[serde(default)]
     crypto: Option<SaveCryptoMeta>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SaveUser {
+    #[serde(rename = "objectId")]
+    object_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,16 +135,15 @@ pub async fn fetch_from_official(
 
     let tap_config = config.resolve(version);
 
-    let save_endpoint = if tap_config
-        .leancloud_base_url
-        .contains("rak3ffdi.cloud.tds1.tapapis.cn")
-    {
-        // 国服: 2025-06-08 TapTap 将 _GameSave 端点迁移至 /gamesaves/
-        "/gamesaves/?limit=1"
+    // 国服: 2025-06-08 TapTap 将 _GameSave 端点迁移至 /gamesaves/
+    let is_cn = tap_config.leancloud_base_url.contains("rak3ffdi.cloud.tds1.tapapis.cn");
+    let path = if is_cn {
+        "/gamesaves/"
     } else {
-        "/classes/_GameSave?limit=1"
+        "/classes/_GameSave"
     };
-    let url = format!("{}{}", tap_config.leancloud_base_url, save_endpoint);
+    // 不去 limit=1 —— 可能有需要跳过的坏数据
+    let url = format!("{}{}", tap_config.leancloud_base_url, path);
 
     let t_http = Instant::now();
     let response = client
@@ -170,6 +177,18 @@ pub async fn fetch_from_official(
     let result = save_info
         .results
         .into_iter()
+        .filter(|r| {
+            // 过滤 0608 事件残留的异常存档
+            if is_cn && r.user.as_ref().is_some_and(|u| u.object_id == "6a265effd774134774ac90d6") {
+                tracing::warn!(
+                    target: "phi_backend::save::client",
+                    save_object_id = %r._object_id,
+                    "跳过异常存档 (bad user objectId)"
+                );
+                return false;
+            }
+            true
+        })
         .next()
         .ok_or_else(|| SaveProviderError::Metadata("未找到存档".to_string()))?;
 
