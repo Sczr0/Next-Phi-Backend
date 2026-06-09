@@ -1290,7 +1290,7 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..60 {
             let song_id = format!("song{i:03}");
-            for diff in diffs.iter().cloned() {
+            for diff in diffs.iter().copied() {
                 let acc = rng.gen_range(70.0..=100.0);
                 let constant = rng.gen_range(1.0..=16.0);
                 let rks = calculate_chart_rks(acc, constant);
@@ -1351,7 +1351,7 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..80 {
             let song_id = format!("song{i:03}");
-            for diff in diffs.iter().cloned() {
+            for diff in diffs.iter().copied() {
                 let acc = rng.gen_range(70.0..=100.0);
                 let constant = rng.gen_range(1.0..=16.0);
                 let rks = calculate_chart_rks(acc, constant);
@@ -1394,7 +1394,7 @@ mod tests {
         let mut records = Vec::new();
         for i in 0..90 {
             let song_id = format!("song{i:03}");
-            for diff in diffs.iter().cloned() {
+            for diff in diffs.iter().copied() {
                 let acc = rng.gen_range(70.0..=100.0);
                 let constant = rng.gen_range(1.0..=16.0);
                 let rks = calculate_chart_rks(acc, constant);

@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use futures_util::TryStreamExt;
 use sqlx::{QueryBuilder, Row, Sqlite};
 

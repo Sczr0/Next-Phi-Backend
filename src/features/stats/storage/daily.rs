@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};

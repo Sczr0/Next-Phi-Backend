@@ -48,10 +48,11 @@ fn is_supported_image_file(path: &Path) -> bool {
     path.is_file() && super::resource_image::LocalImageKind::from_path(path).is_some()
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn insert_cover_metadata(
     cover_metadata: &mut HashMap<String, String>,
     path: &Path,
-    #[allow(clippy::trivially_copy_pass_by_ref)] mode: &CoverMetadataMode,
+    mode: &CoverMetadataMode,
 ) {
     let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
         return;

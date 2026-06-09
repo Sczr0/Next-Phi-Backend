@@ -189,6 +189,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::float_cmp)]
     fn leaderboard_cursor_seals_and_opens_sort_keys() {
         let cursor = LeaderboardCursor {
             score: 14.73,

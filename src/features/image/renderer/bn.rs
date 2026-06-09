@@ -21,11 +21,12 @@ use super::{PlayerStats, RenderRecord, template_bn};
 
 // --- SVG 生成函数 ---
 
+#[allow(clippy::trivially_copy_pass_by_ref)]
 pub(super) fn generate_svg_string<S>(
     scores: &[RenderRecord],
     stats: &PlayerStats,
     push_acc_map: Option<&HashMap<String, engine::PushAccHint, S>>, // 预先计算的推分提示映射，键为"曲目ID-难度"
-    #[allow(clippy::trivially_copy_pass_by_ref)] theme: &Theme,     // 渲染主题
+    theme: &Theme,                                                  // 渲染主题
     embed_images: bool,
     // 若提供，则将曲绘引用改为可被浏览器访问的 URL（例如 `/_ill`）
     public_illustration_base_url: Option<&str>,
