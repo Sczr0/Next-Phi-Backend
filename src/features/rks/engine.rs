@@ -1062,7 +1062,7 @@ mod tests {
             .take(27)
             .map(|r| ChartRankingScore {
                 song_id: r.song_id.clone(),
-                difficulty: r.difficulty.clone(),
+                difficulty: r.difficulty,
                 rks: r.rks,
             })
             .collect::<Vec<_>>();
@@ -1074,7 +1074,7 @@ mod tests {
             .take(3)
             .map(|r| ChartRankingScore {
                 song_id: r.song_id.clone(),
-                difficulty: r.difficulty.clone(),
+                difficulty: r.difficulty,
                 rks: r.rks,
             })
             .collect::<Vec<_>>();
