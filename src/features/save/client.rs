@@ -136,7 +136,9 @@ pub async fn fetch_from_official(
     let tap_config = config.resolve(version);
 
     // 国服: 2025-06-08 TapTap 将 _GameSave 端点迁移至 /gamesaves/
-    let is_cn = tap_config.leancloud_base_url.contains("rak3ffdi.cloud.tds1.tapapis.cn");
+    let is_cn = tap_config
+        .leancloud_base_url
+        .contains("rak3ffdi.cloud.tds1.tapapis.cn");
     let path = if is_cn {
         "/gamesaves/"
     } else {
@@ -179,7 +181,11 @@ pub async fn fetch_from_official(
         .into_iter()
         .filter(|r| {
             // 过滤 0608 事件残留的异常存档
-            if is_cn && r.user.as_ref().is_some_and(|u| u.object_id == "6a265effd774134774ac90d6") {
+            if is_cn
+                && r.user
+                    .as_ref()
+                    .is_some_and(|u| u.object_id == "6a265effd774134774ac90d6")
+            {
                 tracing::warn!(
                     target: "phi_backend::save::client",
                     save_object_id = %r._object_id,
