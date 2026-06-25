@@ -46,7 +46,8 @@ jobs:
   build-release:
     if: |
       (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/feat')) ||
-      (github.event_name == 'pull_request' && (github.base_ref == 'master' || github.base_ref == 'feat'))
+      (github.event_name == 'pull_request' && (github.base_ref == 'master' || github.base_ref == 'feat')) ||
+      github.event_name == 'workflow_dispatch'
     needs: quality-gate
     strategy:
       matrix:
