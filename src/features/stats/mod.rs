@@ -277,7 +277,9 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
             use chrono::Utc;
             let today = Utc::now().date_naive();
             for i in (1..=catchup_days).rev() {
-                let day = (today - chrono::Duration::days(i)).format("%Y-%m-%d").to_string();
+                let day = (today - chrono::Duration::days(i))
+                    .format("%Y-%m-%d")
+                    .to_string();
                 if let Err(e) = catchup_storage.aggregate_day(&day).await {
                     tracing::warn!("启动回填预聚合失败 ({day}): {e}");
                 }
