@@ -5,6 +5,7 @@ on:
     branches: [ "master", "feat" ]
   pull_request:
     branches: [ "master", "feat" ]
+  workflow_dispatch:
 
 jobs:
   quality-gate:
