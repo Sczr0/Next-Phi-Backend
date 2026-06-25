@@ -269,6 +269,23 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
         }
     });
 
+    // ── 启动时回填预聚合（避免首次启动后 summary 扫描全表）──
+    {
+        let catchup_storage = storage.clone();
+        let catchup_days = i64::from(config.stats.retention_hot_days);
+        tokio::spawn(async move {
+            use chrono::Utc;
+            let today = Utc::now().date_naive();
+            for i in (1..=catchup_days).rev() {
+                let day = (today - chrono::Duration::days(i)).format("%Y-%m-%d").to_string();
+                if let Err(e) = catchup_storage.aggregate_day(&day).await {
+                    tracing::warn!("启动回填预聚合失败 ({day}): {e}");
+                }
+            }
+            tracing::info!("启动回填预聚合完成 ({} 天)", catchup_days);
+        });
+    }
+
     // 每日归档任务
     if config.stats.archive.parquet {
         let archiver_storage = storage.clone();

@@ -8,8 +8,8 @@ use moka::future::Cache;
 use super::{daily_http::DailyHttpResponse, params::IncludeFlags, summary::StatsSummaryResponse};
 
 const STATS_SUMMARY_CACHE_MAX_ENTRIES: u64 = 256;
-const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 60;
-const STATS_SUMMARY_CACHE_TTI_SECS: u64 = 30;
+const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 300;
+const STATS_SUMMARY_CACHE_TTI_SECS: u64 = 120;
 const DAILY_HTTP_CACHE_MAX_ENTRIES: u64 = 256;
 const DAILY_HTTP_CACHE_TTL_SECS: u64 = 20;
 const DAILY_HTTP_CACHE_TTI_SECS: u64 = 10;
