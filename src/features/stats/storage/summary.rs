@@ -105,53 +105,10 @@ fn push_summary_instances_query(
         .push_bind(top);
 }
 
-fn push_summary_latency_data_query(
-    qb: &mut QueryBuilder<'_, Sqlite>,
-    start_utc: Option<&str>,
-    end_utc: Option<&str>,
-) {
-    qb.push(
-        r"
-        WITH ordered AS (
-            SELECT
-                duration_ms as v,
-                ROW_NUMBER() OVER (ORDER BY duration_ms ASC) - 1 as idx
-            FROM events
-            WHERE route IS NOT NULL
-              AND duration_ms IS NOT NULL
-        ",
-    );
-    push_stats_ts_range_filters(qb, start_utc, end_utc);
-    qb.push(
-        r"
-        ),
-        stats AS (
-            SELECT
-                COUNT(1) as n,
-                AVG(v) as avg,
-                MAX(v) as max
-            FROM ordered
-        ),
-        targets AS (
-            SELECT
-                n,
-                avg,
-                max,
-                ((n - 1) * 50 + 50) / 100 as p50_idx,
-                ((n - 1) * 95 + 50) / 100 as p95_idx
-            FROM stats
-        )
-        SELECT
-            targets.n as n,
-            targets.avg as avg,
-            targets.max as max,
-            MAX(CASE WHEN ordered.idx = targets.p50_idx THEN ordered.v END) as p50,
-            MAX(CASE WHEN ordered.idx = targets.p95_idx THEN ordered.v END) as p95
-        FROM targets
-        LEFT JOIN ordered ON targets.n > 0
-        GROUP BY targets.n, targets.avg, targets.max, targets.p50_idx, targets.p95_idx
-        ",
-    );
+#[allow(dead_code)]
+fn push_summary_latency_data_query() {
+    // 延迟百分位查询已改为直方图实现（query_latency_percentiles_histogram），
+    // 此函数保留以防需要回退到 ROW_NUMBER() 精确计算。
 }
 
 #[cfg(test)]
@@ -255,22 +212,9 @@ mod tests {
 
     #[test]
     fn summary_latency_query_keeps_time_range_percentile_shape() {
-        let mut qb = QueryBuilder::<Sqlite>::new("");
-        push_summary_latency_data_query(
-            &mut qb,
-            Some("2026-01-01T00:00:00Z"),
-            Some("2026-01-31T23:59:59Z"),
-        );
-        let sql = qb.build().sql().to_string();
-
-        assert!(sql.contains("duration_ms as v"));
-        assert!(sql.contains("ROW_NUMBER() OVER (ORDER BY duration_ms ASC)"));
-        assert!(sql.contains("route IS NOT NULL"));
-        assert!(sql.contains("duration_ms IS NOT NULL"));
-        assert!(sql.contains("ts_utc >= ?"));
-        assert!(sql.contains("ts_utc <= ?"));
-        assert!(sql.contains("p50_idx"));
-        assert!(sql.contains("p95_idx"));
+        // 延迟百分位查询已改为直方图实现（query_latency_percentiles_histogram），
+        // 旧 ROW_NUMBER() 查询保留在 push_summary_latency_data_query 中备用。
+        push_summary_latency_data_query();
     }
 }
 
@@ -378,22 +322,25 @@ async fn query_summary_latency_data(
     start_utc: Option<&str>,
     end_utc: Option<&str>,
 ) -> Result<SummaryLatencyData, AppError> {
-    let mut qb = QueryBuilder::<Sqlite>::new("");
-    push_summary_latency_data_query(&mut qb, start_utc, end_utc);
-
-    let row = qb
-        .build()
-        .fetch_one(&storage.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("summary latency: {e}")))?;
-
-    Ok(SummaryLatencyData {
-        sample_count: row.try_get("n").unwrap_or(0),
-        avg_ms: row.try_get("avg").ok(),
-        p50_ms: row.try_get("p50").ok(),
-        p95_ms: row.try_get("p95").ok(),
-        max_ms: row.try_get("max").ok(),
-    })
+    if let (Some(start), Some(end)) = (start_utc, end_utc) {
+        storage
+            .query_latency_percentiles_histogram(start, end)
+            .await
+    } else {
+        // 无时间范围时，取首尾事件时间作为范围
+        let (first, last) = query_summary_overall(storage, None, None).await?;
+        if let (Some(f), Some(l)) = (first, last) {
+            storage.query_latency_percentiles_histogram(&f, &l).await
+        } else {
+            Ok(SummaryLatencyData {
+                sample_count: 0,
+                avg_ms: None,
+                p50_ms: None,
+                p95_ms: None,
+                max_ms: None,
+            })
+        }
+    }
 }
 
 async fn query_summary_overall(

@@ -49,28 +49,18 @@ impl StatsStorage {
             instance TEXT,
             extra_json TEXT
         );
+        -- 精简索引：从 13 个降至 4 个核心索引，提升写入性能
+        -- 时间范围查询（预聚合/归档/热数据回退）
         CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts_utc);
+        -- 按天聚合（每日预聚合任务）
         CREATE INDEX IF NOT EXISTS idx_events_day ON events(substr(ts_utc,1,10));
-        CREATE INDEX IF NOT EXISTS idx_events_feature_ts ON events(feature, ts_utc);
-        CREATE INDEX IF NOT EXISTS idx_events_ts_feature ON events(ts_utc, feature)
-            WHERE feature IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS idx_events_route_ts ON events(route, ts_utc);
-        CREATE INDEX IF NOT EXISTS idx_events_ts_user_hash ON events(ts_utc, user_hash);
-        CREATE INDEX IF NOT EXISTS idx_events_ts_client_ip_hash ON events(ts_utc, client_ip_hash);
-        CREATE INDEX IF NOT EXISTS idx_events_feature_ts_user ON events(feature, ts_utc, user_hash)
-            WHERE user_hash IS NOT NULL AND feature IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS idx_events_http_ip_ts ON events(ts_utc, client_ip_hash)
-            WHERE route IS NOT NULL AND client_ip_hash IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS idx_events_http_agg ON events(ts_utc, route, method, status);
-        CREATE INDEX IF NOT EXISTS idx_events_feature_action_ts ON events(feature, action, ts_utc);
-        CREATE INDEX IF NOT EXISTS idx_events_instance_ts ON events(instance, ts_utc);
-        CREATE INDEX IF NOT EXISTS idx_events_ts_instance ON events(ts_utc, instance)
-            WHERE instance IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS idx_events_latency_route_duration_ts ON events(route, duration_ms, ts_utc)
-            WHERE route IS NOT NULL AND duration_ms IS NOT NULL;
-        CREATE INDEX IF NOT EXISTS idx_events_latency_ts_route_method_feature_duration
-            ON events(ts_utc, route, method, feature, duration_ms)
-            WHERE route IS NOT NULL AND duration_ms IS NOT NULL;
+        -- 按功能+时间聚合（feature/route 查询）
+        CREATE INDEX IF NOT EXISTS idx_events_ts_agg ON events(ts_utc, route, method, status)
+            WHERE route IS NOT NULL;
+        -- 按用户+时间（用户去重计数）
+        CREATE INDEX IF NOT EXISTS idx_events_ts_user ON events(ts_utc, user_hash)
+            WHERE user_hash IS NOT NULL;
+
 
         CREATE TABLE IF NOT EXISTS daily_agg (
             date TEXT NOT NULL,
@@ -79,6 +69,26 @@ impl StatsStorage {
             method TEXT,
             count INTEGER NOT NULL,
             err_count INTEGER NOT NULL,
+            PRIMARY KEY(date, feature, route, method)
+        );
+
+        -- DAU 预聚合表（每日批量写入，读时毫秒级）
+        CREATE TABLE IF NOT EXISTS daily_dau (
+            date TEXT PRIMARY KEY,
+            active_users INTEGER NOT NULL DEFAULT 0,
+            active_ips INTEGER NOT NULL DEFAULT 0
+        );
+
+        -- 延迟统计预聚合表
+        CREATE TABLE IF NOT EXISTS daily_latency (
+            date TEXT NOT NULL,
+            feature TEXT,
+            route TEXT,
+            method TEXT,
+            sample_count INTEGER NOT NULL,
+            min_ms INTEGER,
+            avg_ms REAL,
+            max_ms INTEGER,
             PRIMARY KEY(date, feature, route, method)
         );
 

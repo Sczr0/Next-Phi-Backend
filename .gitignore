@@ -63,6 +63,12 @@ cargo_cache/
 
 # 系统文件
 *.pid
+# Windows 保留设备名（避免 git add 失败）
+nul
+NUL
+nul.*
+NUL.*
+null
 
 # SDK 生成与前端构建产物
 /sdk/ts/node_modules/

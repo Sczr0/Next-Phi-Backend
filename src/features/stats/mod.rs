@@ -214,7 +214,62 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
         }
     });
 
-    // 每日聚合与归档任务
+    // ── 每日预聚合任务（凌晨写入 daily_agg / daily_dau / daily_latency）──
+    let agg_storage = storage.clone();
+    let agg_cfg = config.stats.clone();
+    tokio::spawn(async move {
+        use chrono::{Duration, Timelike, Utc};
+        use chrono_tz::Tz;
+        loop {
+            // 计算下次执行时间
+            let tz: Tz = agg_cfg
+                .timezone
+                .parse()
+                .unwrap_or(chrono_tz::Asia::Shanghai);
+            let now_local = Utc::now().with_timezone(&tz);
+            let (h, m) = parse_hour_min(&agg_cfg.daily_aggregate_time);
+            let next_run_local =
+                if now_local.hour() < h || (now_local.hour() == h && now_local.minute() < m) {
+                    // 今天的聚合时间还没到
+                    now_local
+                        .with_hour(h)
+                        .unwrap_or(now_local)
+                        .with_minute(m)
+                        .unwrap_or(now_local)
+                        .with_second(0)
+                        .unwrap_or(now_local)
+                } else {
+                    // 明天的
+                    (now_local + Duration::days(1))
+                        .with_hour(h)
+                        .unwrap_or(now_local)
+                        .with_minute(m)
+                        .unwrap_or(now_local)
+                        .with_second(0)
+                        .unwrap_or(now_local)
+                };
+            let next_run_utc = next_run_local.with_timezone(&Utc);
+            let delay = (next_run_utc - Utc::now())
+                .to_std()
+                .unwrap_or(std::time::Duration::from_mins(1));
+
+            tokio::time::sleep(delay).await;
+
+            // 聚合昨天的数据
+            let yesterday = (Utc::now() - Duration::days(1))
+                .format("%Y-%m-%d")
+                .to_string();
+
+            tracing::info!("开始每日预聚合: {yesterday}");
+            if let Err(e) = agg_storage.aggregate_day(&yesterday).await {
+                tracing::warn!("每日预聚合失败 ({yesterday}): {e}");
+            } else {
+                tracing::info!("每日预聚合完成: {yesterday}");
+            }
+        }
+    });
+
+    // 每日归档任务
     if config.stats.archive.parquet {
         let archiver_storage = storage.clone();
         let cfg = config.stats.clone();
@@ -237,6 +292,20 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
 #[must_use]
 pub fn hmac_hex16(salt: &str, value: &str) -> String {
     crate::identity_hash::hmac_hex16(salt, value)
+}
+
+/// 解析 "HH:MM" 格式的配置字符串为 (小时, 分钟)
+fn parse_hour_min(s: &str) -> (u32, u32) {
+    let parts: Vec<&str> = s.split(':').collect();
+    let h = parts
+        .first()
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(3);
+    let m = parts
+        .get(1)
+        .and_then(|v| v.parse::<u32>().ok())
+        .unwrap_or(0);
+    (h.min(23), m.min(59))
 }
 
 /// 依据 `UnifiedSaveRequest` 推导用户哈希（优先稳定标识）

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 
 use crate::error::AppError;
 
@@ -41,42 +41,66 @@ pub(super) async fn query_daily_agg(
     route: Option<&str>,
     method: Option<&str>,
 ) -> Result<Vec<DailyAggRow>, AppError> {
-    let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
-    let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+    let today = Utc::now().date_naive();
 
-    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
-        let modifier = sqlite_minutes_modifier(off_min);
+    // 快速路径：如果整个范围不含今天，直接从 daily_agg 读取（毫秒级）
+    if end < today {
         return storage
-            .query_daily_agg_with_offset(&modifier, &start_utc, &end_utc, feature, route, method)
-            .await;
-    }
-
-    // DST（或 offset 不固定）fallback：按天窗口聚合，确保本地日期口径正确
-    let mut out: Vec<DailyAggRow> = Vec::new();
-    let mut cur = start;
-    while cur <= end {
-        let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
-        let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-        let rows = storage
-            .query_daily_agg_slice(&day_start, &day_end, feature, route, method)
+            .query_daily_agg_fast(&start.to_string(), &end.to_string(), feature, route, method)
             .await
-            .map_err(|e| AppError::Internal(format!("query daily (fallback): {e}")))?;
-
-        for r in rows {
-            out.push(DailyAggRow {
-                date: cur.to_string(),
-                feature: r.feature,
-                route: r.route,
-                method: r.method,
-                count: r.count,
-                err_count: r.err_count,
-            });
-        }
-        cur += chrono::Duration::days(1);
+            .map_err(|e| AppError::Internal(format!("query daily agg fast: {e}")));
     }
 
-    // 保持与 fixed-offset 路径一致的输出顺序：按 date ASC
-    out.sort_by(|a, b| a.date.cmp(&b.date));
+    // 混合路径：已聚合的日期走 fast，今天走 events 表
+    // 先读预聚合日期
+    let mut out = if start < today {
+        let yesterday = today - chrono::Duration::days(1);
+        let agg_end = if end < today { end } else { yesterday };
+        storage
+            .query_daily_agg_fast(
+                &start.to_string(),
+                &agg_end.to_string(),
+                feature,
+                route,
+                method,
+            )
+            .await
+            .map_err(|e| AppError::Internal(format!("query daily agg fast (hybrid): {e}")))?
+    } else {
+        Vec::new()
+    };
+
+    // 今天的数据回退到 events 表
+    if end >= today {
+        let today_start = today;
+        let today_end = end;
+        let mut cur = today_start.max(start);
+        while cur <= today_end {
+            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+            let rows = storage
+                .query_daily_agg_slice(&day_start, &day_end, feature, route, method)
+                .await
+                .map_err(|e| AppError::Internal(format!("query daily (hot): {e}")))?;
+            for r in rows {
+                out.push(DailyAggRow {
+                    date: cur.to_string(),
+                    feature: r.feature,
+                    route: r.route,
+                    method: r.method,
+                    count: r.count,
+                    err_count: r.err_count,
+                });
+            }
+            cur += chrono::Duration::days(1);
+        }
+
+        // 非 fixed-offset 时也要保证排序
+        if fixed_offset_minutes_for_range(tz, start, end).is_none() {
+            out.sort_by(|a, b| a.date.cmp(&b.date));
+        }
+    }
+
     Ok(out)
 }
 
@@ -318,34 +342,33 @@ pub(super) async fn query_daily_dau(
     start: NaiveDate,
     end: NaiveDate,
 ) -> Result<Vec<DailyDauRow>, AppError> {
-    let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
-    let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+    let today = Utc::now().date_naive();
 
+    // 从 daily_dau 读取已聚合的历史数据
     let mut map: HashMap<String, (i64, i64)> = HashMap::new();
-
-    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
-        let modifier = sqlite_minutes_modifier(off_min);
-        let rows = storage
-            .query_daily_dau_with_offset(&modifier, &start_utc, &end_utc)
+    if start < today {
+        let agged = storage
+            .query_daily_dau_fast(
+                &start.to_string(),
+                &end.to_string()
+                    .min((today - chrono::Duration::days(1)).to_string()),
+            )
             .await
-            .map_err(|e| AppError::Internal(format!("daily dau: {e}")))?;
-
-        for r in rows {
+            .map_err(|e| AppError::Internal(format!("daily dau fast: {e}")))?;
+        for r in agged {
             map.insert(r.date, (r.active_users, r.active_ips));
         }
-    } else {
-        // DST fallback: per-day query
-        let mut cur = start;
-        while cur <= end {
-            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
-            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-            let (u, ip) = storage
-                .query_daily_dau_slice(&day_start, &day_end)
-                .await
-                .map_err(|e| AppError::Internal(format!("daily dau (fallback): {e}")))?;
-            map.insert(cur.to_string(), (u, ip));
-            cur += chrono::Duration::days(1);
-        }
+    }
+
+    // 今天的数据回退到 events 表
+    if end >= today {
+        let start_utc = parse_date_bound_utc(&today.to_string(), tz, false)?;
+        let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+        let (u, ip) = storage
+            .query_daily_dau_slice(&start_utc, &end_utc)
+            .await
+            .map_err(|e| AppError::Internal(format!("daily dau hot: {e}")))?;
+        map.insert(today.to_string(), (u, ip));
     }
 
     // 兜底补齐：确保 start..end 每天都有一条记录（无数据则为 0）

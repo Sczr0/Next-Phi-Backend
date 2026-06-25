@@ -465,4 +465,152 @@ impl StatsStorage {
         }
         Ok(out)
     }
+
+    // ── 每日预聚合 ──
+
+    /// 将指定日期（UTC）的 events 聚合写入 daily_agg / daily_dau
+    /// 幂等：可重复执行，不会重复计数
+    pub async fn aggregate_day(&self, day: &str) -> Result<(), AppError> {
+        let start = format!("{day}T00:00:00Z");
+        let end = format!("{day}T23:59:59Z");
+
+        // 聚合路由统计数据
+        sqlx::query(
+            r"
+            REPLACE INTO daily_agg (date, feature, route, method, count, err_count)
+            SELECT
+                ? AS date,
+                feature,
+                route,
+                method,
+                COUNT(1) AS count,
+                COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) AS err_count
+            FROM events
+            WHERE ts_utc >= ? AND ts_utc < ?
+            GROUP BY feature, route, method
+            ",
+        )
+        .bind(day)
+        .bind(&start)
+        .bind(&end)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_agg ({day}): {e}")))?;
+
+        // 聚合 DAU
+        sqlx::query(
+            r"
+            REPLACE INTO daily_dau (date, active_users, active_ips)
+            SELECT
+                ? AS date,
+                COUNT(DISTINCT user_hash) AS active_users,
+                COUNT(DISTINCT client_ip_hash) AS active_ips
+            FROM events
+            WHERE ts_utc >= ? AND ts_utc < ?
+            ",
+        )
+        .bind(day)
+        .bind(&start)
+        .bind(&end)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_dau ({day}): {e}")))?;
+
+        // 聚合延迟统计
+        sqlx::query(
+            r"
+            REPLACE INTO daily_latency (date, feature, route, method, sample_count, min_ms, avg_ms, max_ms)
+            SELECT
+                ? AS date,
+                feature,
+                route,
+                method,
+                COUNT(1) AS sample_count,
+                MIN(duration_ms) AS min_ms,
+                AVG(duration_ms) AS avg_ms,
+                MAX(duration_ms) AS max_ms
+            FROM events
+            WHERE route IS NOT NULL
+              AND duration_ms IS NOT NULL
+              AND ts_utc >= ? AND ts_utc < ?
+            GROUP BY feature, route, method
+            ",
+        )
+        .bind(day)
+        .bind(&start)
+        .bind(&end)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_latency ({day}): {e}")))?;
+
+        tracing::info!("daily_agg 预聚合完成: {day}");
+        Ok(())
+    }
+
+    // ── 快速查询路径（读预聚合表） ──
+
+    /// 从 daily_agg 表快速读取聚合数据（仅对已聚合日期可用）
+    pub async fn query_daily_agg_fast(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        feature: Option<&str>,
+        route: Option<&str>,
+        method: Option<&str>,
+    ) -> Result<Vec<DailyAggRow>, AppError> {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            "SELECT date, feature, route, method, count, err_count FROM daily_agg WHERE date BETWEEN ",
+        );
+        qb.push_bind(start_date.to_string())
+            .push(" AND ")
+            .push_bind(end_date.to_string());
+
+        push_daily_agg_filters(&mut qb, feature, route, method);
+        qb.push(" ORDER BY date ASC, feature ASC, route ASC, method ASC");
+
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("query daily_agg fast: {e}")))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(DailyAggRow {
+                date: r.get::<String, _>("date"),
+                feature: r.try_get::<String, _>("feature").ok(),
+                route: r.try_get::<String, _>("route").ok(),
+                method: r.try_get::<String, _>("method").ok(),
+                count: r.get::<i64, _>("count"),
+                err_count: r.get::<i64, _>("err_count"),
+            });
+        }
+        Ok(out)
+    }
+
+    /// 从 daily_dau 表快速读取 DAU 数据
+    pub async fn query_daily_dau_fast(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<Vec<super::DailyDauDateRow>, AppError> {
+        let rows = sqlx::query(
+            "SELECT date, active_users, active_ips FROM daily_dau WHERE date BETWEEN ? AND ? ORDER BY date ASC"
+        )
+        .bind(start_date.to_string())
+        .bind(end_date.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("query daily_dau fast: {e}")))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(super::DailyDauDateRow {
+                date: r.get::<String, _>("date"),
+                active_users: r.get::<i64, _>("active_users"),
+                active_ips: r.get::<i64, _>("active_ips"),
+            });
+        }
+        Ok(out)
+    }
 }
