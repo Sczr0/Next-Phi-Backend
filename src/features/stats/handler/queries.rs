@@ -49,22 +49,48 @@ pub(super) async fn query_daily_agg(
         let agg_end = end.min(today - chrono::Duration::days(1));
         // 尝试 daily_agg 快速路径
         if agg_end >= start {
-            let fast = storage.query_daily_agg_fast(&start.to_string(), &agg_end.to_string(), feature, route, method).await?;
+            let fast = storage
+                .query_daily_agg_fast(
+                    &start.to_string(),
+                    &agg_end.to_string(),
+                    feature,
+                    route,
+                    method,
+                )
+                .await?;
             if fast.is_empty() {
                 // daily_agg 为空 → 回退到 events
                 let hist_utc_start = parse_date_bound_utc(&start.to_string(), tz, false)?;
                 let hist_utc_end = parse_date_bound_utc(&agg_end.to_string(), tz, true)?;
                 if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, agg_end) {
                     let modifier = sqlite_minutes_modifier(off_min);
-                    out = storage.query_daily_agg_with_offset(&modifier, &hist_utc_start, &hist_utc_end, feature, route, method).await?;
+                    out = storage
+                        .query_daily_agg_with_offset(
+                            &modifier,
+                            &hist_utc_start,
+                            &hist_utc_end,
+                            feature,
+                            route,
+                            method,
+                        )
+                        .await?;
                 } else {
                     let mut cur = start;
                     while cur <= agg_end {
                         let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
                         let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
-                        let rows = storage.query_daily_agg_slice(&day_start, &day_end, feature, route, method).await?;
+                        let rows = storage
+                            .query_daily_agg_slice(&day_start, &day_end, feature, route, method)
+                            .await?;
                         for r in rows {
-                            out.push(DailyAggRow { date: cur.to_string(), feature: r.feature, route: r.route, method: r.method, count: r.count, err_count: r.err_count });
+                            out.push(DailyAggRow {
+                                date: cur.to_string(),
+                                feature: r.feature,
+                                route: r.route,
+                                method: r.method,
+                                count: r.count,
+                                err_count: r.err_count,
+                            });
                         }
                         cur += chrono::Duration::days(1);
                     }
@@ -352,14 +378,18 @@ pub(super) async fn query_daily_dau(
     if start < today {
         let agg_end = end.min(today - chrono::Duration::days(1));
         if agg_end >= start {
-            let agged = storage.query_daily_dau_fast(&start.to_string(), &agg_end.to_string()).await?;
+            let agged = storage
+                .query_daily_dau_fast(&start.to_string(), &agg_end.to_string())
+                .await?;
             if agged.is_empty() {
                 // daily_dau 无数据 → 回退到 events
                 let hist_utc_start = parse_date_bound_utc(&start.to_string(), tz, false)?;
                 let hist_utc_end = parse_date_bound_utc(&agg_end.to_string(), tz, true)?;
                 if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, agg_end) {
                     let modifier = sqlite_minutes_modifier(off_min);
-                    let rows = storage.query_daily_dau_with_offset(&modifier, &hist_utc_start, &hist_utc_end).await?;
+                    let rows = storage
+                        .query_daily_dau_with_offset(&modifier, &hist_utc_start, &hist_utc_end)
+                        .await?;
                     for r in rows {
                         map.insert(r.date, (r.active_users, r.active_ips));
                     }
@@ -373,8 +403,7 @@ pub(super) async fn query_daily_dau(
                         cur += chrono::Duration::days(1);
                     }
                 }
-            }
-            else {
+            } else {
                 for r in agged {
                     map.insert(r.date, (r.active_users, r.active_ips));
                 }
@@ -401,7 +430,11 @@ pub(super) async fn query_daily_dau(
     while cur <= end {
         let key = cur.to_string();
         let (u, ip) = map.get(&key).copied().unwrap_or((0, 0));
-        out.push(DailyDauRow { date: key, active_users: u, active_ips: ip });
+        out.push(DailyDauRow {
+            date: key,
+            active_users: u,
+            active_ips: ip,
+        });
         cur += chrono::Duration::days(1);
     }
     Ok(out)
