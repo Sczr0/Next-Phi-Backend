@@ -87,6 +87,7 @@ fn maps_category_to_lilith_remote_dir() {
 
 #[test]
 fn builds_remote_url_with_lilith_webp() {
+    ensure_config_inited();
     let url = build_remote_illustration_url_with_options(
         "https://example.com/lilith",
         "A B",

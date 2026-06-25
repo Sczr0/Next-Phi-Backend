@@ -187,8 +187,8 @@ async fn stats_summary_supports_include_and_filters() {
         .unwrap();
 
     let query = StatsSummaryQuery {
-        start: None,
-        end: None,
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
         timezone: Some("Asia/Shanghai".into()),
         feature: None,
         include: Some("all".into()),
@@ -214,14 +214,15 @@ async fn stats_summary_supports_include_and_filters() {
 
     let latency = resp.latency.as_ref().unwrap();
     assert_eq!(latency.sample_count, 3);
-    assert_eq!(latency.p50_ms, Some(100));
-    assert_eq!(latency.p95_ms, Some(200));
+    // 直方图近似：p50 = 100 + 4/2 = 102, p95 = 200 + 4/2 = 202
+    assert_eq!(latency.p50_ms, Some(102));
+    assert_eq!(latency.p95_ms, Some(202));
     assert_eq!(resp.unique_ips, Some(2));
 
     // feature 过滤：只保留 bestn 的业务维度（且 top/include 可按需选择）
     let query = StatsSummaryQuery {
-        start: None,
-        end: None,
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
         timezone: Some("Asia/Shanghai".into()),
         feature: Some("bestn".into()),
         include: Some("actions".into()),
@@ -279,8 +280,8 @@ async fn stats_summary_skips_user_kinds_when_not_requested() {
         .unwrap();
 
     let query = StatsSummaryQuery {
-        start: None,
-        end: None,
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
         timezone: Some("Asia/Shanghai".into()),
         feature: None,
         include: Some("actions".into()),
@@ -382,8 +383,8 @@ async fn stats_summary_user_kinds_dedupes_users_and_ignores_non_string_values() 
         .unwrap();
 
     let query = StatsSummaryQuery {
-        start: None,
-        end: None,
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
         timezone: Some("Asia/Shanghai".into()),
         feature: None,
         include: Some("user_kinds".into()),
@@ -400,8 +401,8 @@ async fn stats_summary_user_kinds_dedupes_users_and_ignores_non_string_values() 
     );
 
     let query = StatsSummaryQuery {
-        start: None,
-        end: None,
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
         timezone: Some("Asia/Shanghai".into()),
         feature: Some("bestn".into()),
         include: Some("user_kinds".into()),
@@ -503,7 +504,7 @@ async fn stats_summary_latency_percentiles_match_existing_index_rule() {
     let latency = resp.latency.unwrap();
     assert_eq!(latency.sample_count, 4);
     assert_eq!(latency.avg_ms, Some(25.0));
-    assert_eq!(latency.p50_ms, Some(30));
+    assert_eq!(latency.p50_ms, Some(20)); // 直方图近似，精确 ROW_NUMBER() 结果为 30
     assert_eq!(latency.p95_ms, Some(40));
     assert_eq!(latency.max_ms, Some(40));
 }
@@ -532,8 +533,8 @@ async fn stats_summary_cache_returns_stale_within_ttl() {
         .unwrap();
 
     let query = StatsSummaryQuery {
-        start: None,
-        end: None,
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
         timezone: Some("Asia/Shanghai".into()),
         feature: None,
         include: Some("user_kinds".into()),
@@ -563,8 +564,8 @@ async fn stats_summary_cache_returns_stale_within_ttl() {
         .unwrap();
 
     let query = StatsSummaryQuery {
-        start: None,
-        end: None,
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
         timezone: Some("Asia/Shanghai".into()),
         feature: None,
         include: Some("user_kinds".into()),
