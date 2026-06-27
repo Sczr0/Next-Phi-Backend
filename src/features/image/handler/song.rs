@@ -7,9 +7,11 @@ use axum::{
 };
 
 use crate::{
+    config::AppConfig,
     error::AppError,
     features::image::{
         renderer::{self, SongRenderData},
+        signing,
         types::RenderSongRequest,
     },
     state::AppState,
@@ -219,7 +221,24 @@ pub async fn render_song(
         )
     })
     .await?;
-    let (bytes, content_type) = render_svg_output_bytes(svg, fmt_code, false, &q).await?;
+
+    // 签名注入：对 SVG 内容签名并嵌入 lilith-sig 注释 + 可见校验码
+    let signed_svg = {
+        let signing_cfg = &AppConfig::global().image.signing;
+        if signing_cfg.is_usable() {
+            if let Some(sig) = signing::sign_svg(&svg, signing_cfg, user_hash_for_cache.as_deref())
+            {
+                let with_comment = signing::inject_svg_signature(&svg, &sig);
+                signing::inject_visible_checkcode(&with_comment, &sig)
+            } else {
+                svg
+            }
+        } else {
+            svg
+        }
+    };
+
+    let (bytes, content_type) = render_svg_output_bytes(signed_svg, fmt_code, false, &q).await?;
     let render_ms2 = duration_ms_i64(t_render2.elapsed());
     // 统计：单曲查询图片生成（带用户去敏哈希 + song_id + 用户凭证类型）
     if let Some(stats) = state.stats.as_ref() {

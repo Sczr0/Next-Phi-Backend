@@ -25,6 +25,9 @@ fn supports_svg_format_code_and_content_type() {
 
 #[test]
 fn output_cache_spec_normalizes_webp_cache_dimensions() {
+    // 避免测试并发初始化冲突：已初始化则忽略错误。
+    let _ = crate::config::AppConfig::init_global();
+
     let q = ImageQueryOpts {
         format: Some("webp".to_string()),
         template: Some("custom".to_string()),
@@ -45,11 +48,11 @@ fn output_cache_spec_normalizes_webp_cache_dimensions() {
     assert_eq!(spec.webp_lossless_code, 0);
     assert_eq!(
         spec.bn_cache_key("u", 30, "updated", crate::features::image::Theme::Black),
-        "u:bn:30:updated:b:1:custom:webp:720:95:0"
+        "u:bn:30:updated:b:1:custom:webp:720:95:0:0"
     );
     assert_eq!(
         spec.song_cache_key("u", "song-id", "updated"),
-        "u:song:song-id:updated:d:1:custom:webp:720:95:0"
+        "u:song:song-id:updated:d:1:custom:webp:720:95:0:0"
     );
 }
 
@@ -78,11 +81,11 @@ fn output_cache_spec_forces_svg_cache_dimensions() {
     assert_eq!(spec.webp_lossless_code, 0);
     assert_eq!(
         spec.bn_cache_key("u", 0, "updated", crate::features::image::Theme::White),
-        "u:bn:1:updated:w:0:legacy:svg:0:0:0"
+        "u:bn:1:updated:w:0:legacy:svg:0:0:0:0"
     );
     assert_eq!(
         spec.song_cache_key("u", "song-id", "updated"),
-        "u:song:song-id:updated:d:0:legacy:svg:0:0:0"
+        "u:song:song-id:updated:d:0:legacy:svg:0:0:0:0"
     );
 }
 

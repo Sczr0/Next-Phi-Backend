@@ -8,9 +8,11 @@ use axum::{
 use tracing::debug;
 
 use crate::{
+    config::AppConfig,
     error::AppError,
     features::image::{
         renderer::{self, PlayerStats},
+        signing,
         types::RenderBnRequest,
     },
     state::AppState,
@@ -268,9 +270,25 @@ pub async fn render_bn(
     let svg_size = svg.len();
     tracing::info!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
 
+    // 签名注入：对 SVG 内容签名并嵌入 lilith-sig 注释 + 可见校验码
+    let signed_svg = {
+        let signing_cfg = &AppConfig::global().image.signing;
+        if signing_cfg.is_usable() {
+            if let Some(sig) = signing::sign_svg(&svg, signing_cfg, user_hash_for_cache.as_deref())
+            {
+                let with_comment = signing::inject_svg_signature(&svg, &sig);
+                signing::inject_visible_checkcode(&with_comment, &sig)
+            } else {
+                svg
+            }
+        } else {
+            svg
+        }
+    };
+
     let t_render_start = Instant::now();
     // 输出格式与宽度处理（svg 直接返回，不做栅格化渲染）
-    let (bytes, content_type) = render_svg_output_bytes(svg, fmt_code, false, &q).await?;
+    let (bytes, content_type) = render_svg_output_bytes(signed_svg, fmt_code, false, &q).await?;
     let render_duration = t_render_start.elapsed();
     let render_ms = duration_ms_i64(render_duration);
     let bytes_len = bytes.len();

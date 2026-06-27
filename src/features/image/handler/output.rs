@@ -131,6 +131,7 @@ pub(super) struct ImageOutputCacheSpec {
     pub(super) tpl_code: String,
     pub(super) webp_quality_code: u8,
     pub(super) webp_lossless_code: u8,
+    pub(super) signing_enabled: bool,
 }
 
 impl ImageOutputCacheSpec {
@@ -148,6 +149,7 @@ impl ImageOutputCacheSpec {
         let width_code = if is_svg { 0 } else { q.width.unwrap_or(0) };
         let tpl_code = normalized_template_cache_code(q);
         let (webp_quality_code, webp_lossless_code) = normalized_webp_cache_params(fmt_code, q);
+        let signing_enabled = AppConfig::global().image.signing.is_usable();
 
         Self {
             fmt_code,
@@ -158,6 +160,7 @@ impl ImageOutputCacheSpec {
             tpl_code,
             webp_quality_code,
             webp_lossless_code,
+            signing_enabled,
         }
     }
 
@@ -169,7 +172,7 @@ impl ImageOutputCacheSpec {
         theme: Theme,
     ) -> String {
         format!(
-            "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{}:bn:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             user_hash,
             n.max(1),
             updated,
@@ -179,13 +182,14 @@ impl ImageOutputCacheSpec {
             self.fmt_code,
             self.width_code,
             self.webp_quality_code,
-            self.webp_lossless_code
+            self.webp_lossless_code,
+            i32::from(self.signing_enabled),
         )
     }
 
     pub(super) fn song_cache_key(&self, user_hash: &str, song_id: &str, updated: &str) -> String {
         format!(
-            "{}:song:{}:{}:{}:{}:{}:{}:{}:{}:{}",
+            "{}:song:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}",
             user_hash,
             song_id,
             updated,
@@ -195,7 +199,8 @@ impl ImageOutputCacheSpec {
             self.fmt_code,
             self.width_code,
             self.webp_quality_code,
-            self.webp_lossless_code
+            self.webp_lossless_code,
+            i32::from(self.signing_enabled),
         )
     }
 }

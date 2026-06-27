@@ -1,4 +1,7 @@
-use crate::config::{CdnAuthMode, IllustrationSigningConfig};
+use crate::config::{CdnAuthMode, IllustrationSigningConfig, ImageSigningConfig};
+use crate::error::AppError;
+use hmac::{Hmac, Mac};
+use sha2::Sha256;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 生成指定长度的随机字符串（大小写字母+数字）
@@ -104,6 +107,236 @@ fn format_timestamp_utc8(timestamp: u64) -> String {
     dt.format("%Y%m%d%H%M").to_string()
 }
 
+// ── SVG 内容签名（lilith-sig） ──
+
+/// SVG 签名协议的版本标识。
+/// - v2: 内容摘要使用 SHA-256（替换 v1 的 MD5，消除碰撞风险）
+const LILITH_SIG_VERSION: &str = "v2";
+/// SVG 签名在 XML 注释中的前缀模式。
+const LILITH_SIG_PREFIX: &str = "lilith-sig";
+
+/// 从 SVG 文本中提取的签名信息。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SvgSignature {
+    pub hmac: String,
+    pub timestamp: u64,
+    pub user_hash_prefix: Option<String>,
+}
+
+/// 计算 SVG 内容的 SHA-256 摘要用于签名 payload。
+fn svg_sha256(svg: &str) -> String {
+    use sha2::Digest;
+    let hash = Sha256::digest(svg.as_bytes());
+    hex::encode(hash)
+}
+
+/// 对 SVG 字符串签名。
+///
+/// 签名 payload = `{timestamp}:{user_hash_part}:{svg_sha256}`
+/// 使用 HMAC-SHA256 + server key 生成签名。
+pub fn sign_svg(
+    svg: &str,
+    config: &ImageSigningConfig,
+    user_hash: Option<&str>,
+) -> Option<SvgSignature> {
+    let key = config.effective_key()?;
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let summary = svg_sha256(svg);
+    let user_hash_part = user_hash.map_or("anon", |h| {
+        let end = h.char_indices().nth(8).map_or(h.len(), |(i, _)| i);
+        &h[..end]
+    });
+
+    let payload = format!("{timestamp}:{user_hash_part}:{summary}");
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).ok()?;
+    mac.update(payload.as_bytes());
+    let sig_bytes = mac.finalize().into_bytes();
+    let hmac = hex::encode(sig_bytes);
+
+    Some(SvgSignature {
+        hmac,
+        timestamp,
+        user_hash_prefix: Some(user_hash_part.to_string()),
+    })
+}
+
+/// 将签名注释注入到 SVG 字符串中（在 `</svg>` 之前直接插入，不添加换行）。
+///
+/// 格式：`<!-- lilith-sig:v2:hmac=<hex>:t=<unix_ts>:uid=<prefix> -->`
+pub fn inject_svg_signature(svg: &str, sig: &SvgSignature) -> String {
+    let uid = sig.user_hash_prefix.as_deref().unwrap_or("anon");
+    let comment = format!(
+        "<!-- {LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:hmac={}:t={}:uid={uid} -->",
+        sig.hmac, sig.timestamp
+    );
+    // 在 </svg> 闭合标签之前直接插入（不添加换行，避免破坏原始 SVG 结构）
+    if let Some(pos) = svg.rfind("</svg>") {
+        let mut out = String::with_capacity(svg.len() + comment.len());
+        out.push_str(&svg[..pos]);
+        out.push_str(&comment);
+        out.push_str(&svg[pos..]);
+        out
+    } else {
+        format!("{svg}{comment}")
+    }
+}
+
+/// 生成可见的人类可读校验码。
+///
+/// 格式：`v2-<hmac前8位>-<日期>`，例如 `v2-a1b2c3d4-20260628`
+pub fn visible_checkcode(sig: &SvgSignature) -> String {
+    let hmac_short = &sig.hmac[..sig.hmac.len().min(8)];
+    let date = chrono::DateTime::from_timestamp(sig.timestamp.cast_signed(), 0)
+        .map_or_else(|| "unknown".to_string(), |dt| dt.format("%Y%m%d").to_string());
+    format!("v2-{hmac_short}-{date}")
+}
+
+/// 可见校验码在 SVG 中的容器 class，用于 `strip_svg_signature` 识别。
+const VERIFY_BADGE_CLASS: &str = "lilith-verify-badge";
+
+/// 向 SVG 注入可见校验码（在底部居中显示）。
+///
+/// 生成一个 `<g class="lilith-verify-badge">` 包含校验码文字，
+/// 插入在 `</svg>` 之前、签名注释之后（不添加换行）。
+pub fn inject_visible_checkcode(svg: &str, sig: &SvgSignature) -> String {
+    let code = visible_checkcode(sig);
+    let badge = format!(
+        "<g class=\"{VERIFY_BADGE_CLASS}\" transform=\"translate(0,0)\"><rect x=\"0\" y=\"-22\" width=\"100%\" height=\"24\" fill=\"transparent\"/><text x=\"50%\" y=\"-6\" text-anchor=\"middle\" font-size=\"10\" font-family=\"monospace\" fill=\"#888\">校验码: {code}</text></g>"
+    );
+    if let Some(pos) = svg.rfind("</svg>") {
+        let mut out = String::with_capacity(svg.len() + badge.len());
+        out.push_str(&svg[..pos]);
+        out.push_str(&badge);
+        out.push_str(&svg[pos..]);
+        out
+    } else {
+        format!("{svg}{badge}")
+    }
+}
+
+/// 从 SVG 中移除签名注释和可见校验码，返回清理后的 SVG（用于验证时重新计算摘要）。
+///
+/// 保证：移除前后 SVG 字节完全一致（签名注释和校验码均无换行包裹）。
+fn strip_svg_signature(svg: &str) -> String {
+    // 1. 移除 lilith-sig 注释：`<!-- lilith-sig:v2:... -->`
+    let pattern = format!("{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:");
+    let start_marker = format!("<!-- {pattern}");
+    let mut cleaned = svg.to_string();
+    if let Some(start) = cleaned.find(&start_marker)
+        && let Some(end) = cleaned[start..].find(" -->")
+    {
+        let comment_end = start + end + 4;
+        cleaned.replace_range(start..comment_end, "");
+    }
+
+    // 2. 移除可见校验码：`<g class="lilith-verify-badge">...</g>`
+    let badge_start_marker = format!("<g class=\"{VERIFY_BADGE_CLASS}\"");
+    if let Some(start) = cleaned.find(&badge_start_marker)
+        && let Some(end) = cleaned[start..].find("</g>")
+    {
+        let badge_end = start + end + 4;
+        cleaned.replace_range(start..badge_end, "");
+    }
+
+    cleaned
+}
+
+/// 从 SVG 字符串中提取签名信息。
+///
+/// 匹配注释格式：`<!-- lilith-sig:v1:hmac=<hex>:t=<unix_ts>:uid=<prefix> -->`
+pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
+    let pattern = format!("{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:");
+    let start_marker = format!("<!-- {pattern}");
+
+    let start = svg.find(&start_marker)? + "<!-- ".len();
+    let end = svg[start..].find(" -->")?;
+    let body = &svg[start..start + end];
+
+    // body = "lilith-sig:v1:hmac=xxx:t=12345:uid=abcd1234"
+    let mut hmac: Option<String> = None;
+    let mut timestamp: Option<u64> = None;
+    let mut uid: Option<String> = None;
+
+    for part in body.split(':') {
+        if let Some(v) = part.strip_prefix("hmac=") {
+            hmac = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("t=") {
+            timestamp = v.parse::<u64>().ok();
+        } else if let Some(v) = part.strip_prefix("uid=") {
+            uid = Some(v.to_string());
+        }
+    }
+
+    Some(SvgSignature {
+        hmac: hmac?,
+        timestamp: timestamp?,
+        user_hash_prefix: uid,
+    })
+}
+
+/// 验证 SVG 签名是否有效。
+///
+/// 1. 从 SVG 中提取签名
+/// 2. 移除签名注释后重新计算原始 SVG 的 MD5
+/// 3. 用 server key 重新计算 HMAC
+/// 4. 对比（时间恒定比较）
+/// 5. 可选检查时间窗口
+pub fn verify_svg_signature(
+    svg: &str,
+    config: &ImageSigningConfig,
+) -> Result<SvgSignature, AppError> {
+    let key = config
+        .effective_key()
+        .ok_or_else(|| AppError::Validation("服务端未配置签名密钥".into()))?;
+
+    let extracted = extract_svg_signature(svg)
+        .ok_or_else(|| AppError::Validation("SVG 中未找到 lilith-sig 签名".into()))?;
+
+    // 重建 payload：使用去除签名注释后的原始 SVG 计算 SHA-256
+    let clean_svg = strip_svg_signature(svg);
+    let summary = svg_sha256(&clean_svg);
+    let uid = extracted.user_hash_prefix.as_deref().unwrap_or("anon");
+    let payload = format!("{}:{uid}:{summary}", extracted.timestamp);
+
+    let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
+        .map_err(|e| AppError::Internal(format!("HMAC 初始化失败: {e}")))?;
+    mac.update(payload.as_bytes());
+    let expected = hex::encode(mac.finalize().into_bytes());
+
+    // 恒定时间比较
+    if expected.len() != extracted.hmac.len() || {
+        let mut acc = 0u8;
+        for (a, b) in expected.bytes().zip(extracted.hmac.bytes()) {
+            acc |= a ^ b;
+        }
+        acc != 0
+    } {
+        return Err(AppError::Validation("签名校验失败：HMAC 不匹配".into()));
+    }
+
+    // 时间窗口检查
+    if config.ttl_secs > 0 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let age = now.saturating_sub(extracted.timestamp);
+        if age > config.ttl_secs {
+            return Err(AppError::Validation(format!(
+                "签名已过期（签发于 {}s 前，窗口 {}s）",
+                age, config.ttl_secs
+            )));
+        }
+    }
+
+    Ok(extracted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -172,5 +405,121 @@ mod tests {
         let ts = 1_721_028_830_u64;
         let formatted = format_timestamp_utc8(ts);
         assert_eq!(formatted.len(), 12); // YYYYMMDDHHMM
+    }
+
+    // ── SVG 签名测试 ──
+
+    fn test_signing_config() -> ImageSigningConfig {
+        ImageSigningConfig {
+            enabled: true,
+            key: "test-signing-key-32bytes-long!!".to_string(),
+            ttl_secs: 0,
+            public_verify: false,
+        }
+    }
+
+    #[test]
+    fn test_sign_and_inject_roundtrip() {
+        let cfg = test_signing_config();
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+  <text x="10" y="20">Hello</text>
+</svg>"#;
+        let sig = sign_svg(svg, &cfg, Some("abc123456789userhash")).expect("sign");
+        let signed = inject_svg_signature(svg, &sig);
+
+        // 签名应出现在 </svg> 之前（协议版本 v2）
+        assert!(signed.contains("<!-- lilith-sig:v2:hmac="));
+        assert!(signed.contains(":t="));
+        assert!(signed.contains(":uid=abc12345"));
+        // 签名后仍应以 </svg> 结尾
+        assert!(signed.trim_end().ends_with("</svg>"));
+    }
+
+    #[test]
+    fn test_extract_signature() {
+        let svg = r"<svg></svg>
+<!-- lilith-sig:v2:hmac=abcdef1234567890:t=1721029907:uid=test1234 -->
+";
+        let sig = extract_svg_signature(svg).expect("extract");
+        assert_eq!(sig.hmac, "abcdef1234567890");
+        assert_eq!(sig.timestamp, 1_721_029_907);
+        assert_eq!(sig.user_hash_prefix.as_deref(), Some("test1234"));
+    }
+
+    #[test]
+    fn test_verify_svg_signature() {
+        let cfg = test_signing_config();
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600">
+  <text x="10" y="20">Verify Me</text>
+</svg>"#;
+        let sig = sign_svg(svg, &cfg, Some("userABCD")).expect("sign");
+        let signed = inject_svg_signature(svg, &sig);
+
+        // 签名后的 SVG 在剥离注释后应与原始完全一致
+        assert_eq!(strip_svg_signature(&signed), svg);
+
+        // 应验证通过
+        let verified = verify_svg_signature(&signed, &cfg).expect("verify");
+        assert_eq!(verified.hmac, sig.hmac);
+        assert_eq!(verified.user_hash_prefix.as_deref(), Some("userABCD"));
+    }
+
+    #[test]
+    fn test_verify_tampered_svg_fails() {
+        let cfg = test_signing_config();
+        let svg = r"<svg></svg>";
+        let sig = sign_svg(svg, &cfg, None).expect("sign");
+        let signed = inject_svg_signature(svg, &sig);
+
+        // 篡改 SVG 内容
+        let tampered = signed.replace("<svg>", "<svg><rect x='0' y='0' width='100' height='100'/>");
+        assert!(verify_svg_signature(&tampered, &cfg).is_err());
+    }
+
+    #[test]
+    fn test_extract_none_for_unsigned_svg() {
+        let svg = "<svg></svg>";
+        assert!(extract_svg_signature(svg).is_none());
+    }
+
+    #[test]
+    fn test_visible_checkcode_and_full_roundtrip() {
+        let cfg = test_signing_config();
+        let svg = r#"<svg viewBox="0 0 800 600">
+  <text x="10" y="20">Best 30</text>
+</svg>"#;
+
+        // 1. 签名
+        let sig = sign_svg(svg, &cfg, Some("userABCD")).expect("sign");
+
+        // 2. 可见校验码格式
+        let code = visible_checkcode(&sig);
+        assert!(code.starts_with("v2-"));
+        assert_eq!(code.len(), "v2-12345678-20260628".len());
+
+        // 3. 注入全部标记（注释 + 可见校验码）
+        let with_comment = inject_svg_signature(svg, &sig);
+        let fully_signed = inject_visible_checkcode(&with_comment, &sig);
+
+        // 4. 输出应包含所有标记
+        assert!(fully_signed.contains("<!-- lilith-sig:v2:"));
+        assert!(fully_signed.contains("lilith-verify-badge"));
+        assert!(fully_signed.contains("校验码: v2-"));
+
+        // 5. 剥离后还原为原始 SVG
+        let stripped = strip_svg_signature(&fully_signed);
+        assert_eq!(stripped, svg);
+
+        // 6. 验证通过
+        let verified = verify_svg_signature(&fully_signed, &cfg).expect("verify");
+        assert_eq!(verified.hmac, sig.hmac);
+    }
+
+    #[test]
+    fn test_sign_no_user_hash() {
+        let cfg = test_signing_config();
+        let svg = "<svg></svg>";
+        let sig = sign_svg(svg, &cfg, None).expect("sign");
+        assert_eq!(sig.user_hash_prefix.as_deref(), Some("anon"));
     }
 }

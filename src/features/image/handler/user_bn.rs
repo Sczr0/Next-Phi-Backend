@@ -11,6 +11,7 @@ use crate::{
     error::AppError,
     features::image::{
         renderer::{self, PlayerStats},
+        signing,
         types::RenderUserBnRequest,
     },
     state::AppState,
@@ -180,7 +181,23 @@ pub async fn render_bn_user(
         )
     })
     .await?;
-    let (bytes, content_type) = render_svg_output_bytes(svg, fmt_code, implicit, &q).await?;
+
+    // 签名注入：用户自报成绩无 user_hash，uid 标记为 anon
+    let signed_svg = {
+        let signing_cfg = &AppConfig::global().image.signing;
+        if signing_cfg.is_usable() {
+            if let Some(sig) = signing::sign_svg(&svg, signing_cfg, None) {
+                let with_comment = signing::inject_svg_signature(&svg, &sig);
+                signing::inject_visible_checkcode(&with_comment, &sig)
+            } else {
+                svg
+            }
+        } else {
+            svg
+        }
+    };
+
+    let (bytes, content_type) = render_svg_output_bytes(signed_svg, fmt_code, implicit, &q).await?;
 
     // 统计：用户自报 BestN 图片生成
     if let Some(stats_handle) = state.stats.as_ref() {

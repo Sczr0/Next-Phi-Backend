@@ -165,6 +165,17 @@ max_parallel = 0
 # 用户自报成绩 BN：scores 条数硬上限（0=不限制，不建议）
 max_user_scores = 500
 
+# 图片内容签名（嵌入 SVG 的 HMAC 签名，供前端与第三方验证真伪）
+[image.signing]
+# 是否启用图片签名（默认关闭）
+enabled = false
+# HMAC-SHA256 签名密钥（建议通过 APP_IMAGE_SIGNING_KEY 环境变量覆盖）
+key = ""
+# 签名有效窗口期（秒），0=不限制（默认 0）
+ttl_secs = 0
+# 是否公开验证端点 GET/POST /api/v2/verify（默认 false）
+public_verify = false
+
 # /save 资源上限
 [save]
 # 下载存档最大字节数（默认 64MB）

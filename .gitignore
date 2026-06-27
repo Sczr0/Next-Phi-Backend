@@ -34,6 +34,7 @@ resources/ill
 resources/stats/
 
 # 配置覆盖（敏感信息）
+config.toml
 .env
 .env.local
 .env.production

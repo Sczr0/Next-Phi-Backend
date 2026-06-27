@@ -1,5 +1,11 @@
-use axum::{Router, routing::post};
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{get, post},
+};
+use serde::{Deserialize, Serialize};
 
+use crate::error::AppError;
 use crate::state::AppState;
 
 #[cfg(test)]
@@ -53,8 +59,133 @@ fn usize_from_u32(value: u32) -> usize {
 mod tests;
 
 pub fn create_image_router() -> Router<AppState> {
-    Router::new()
+    let mut router = Router::new()
         .route("/image/bn", post(render_bn))
         .route("/image/song", post(render_song))
-        .route("/image/bn/user", post(render_bn_user))
+        .route("/image/bn/user", post(render_bn_user));
+
+    // 签名验证端点（仅在配置 public_verify=true 时可用；
+    // 也可以在路由层始终注册，handler 内部根据配置决定是否响应）
+    if crate::config::AppConfig::global()
+        .image
+        .signing
+        .public_verify
+    {
+        router = router.route("/verify", post(verify_image));
+    }
+
+    // 始终注册 GET 版本（方便浏览器直接访问）
+    router = router.route("/verify", get(verify_image_get));
+
+    router
+}
+
+// ── 验证端点 ──
+
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyRequest {
+    /// SVG 字符串
+    pub svg: String,
+}
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyResponse {
+    pub valid: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_hash_prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[utoipa::path(
+    post,
+    path = "/verify",
+    summary = "验证图片签名",
+    description = "验证 SVG 中的 lilith-sig 签名，确保图片由本服务器合法生成。",
+    request_body = VerifyRequest,
+    responses(
+        (status = 200, description = "验证结果", body = VerifyResponse),
+        (status = 400, description = "请求参数错误", body = crate::error::ProblemDetails),
+        (status = 500, description = "服务器内部错误", body = crate::error::ProblemDetails)
+    ),
+    tag = "Image"
+)]
+pub async fn verify_image(
+    State(_state): State<AppState>,
+    Json(req): Json<VerifyRequest>,
+) -> Result<Json<VerifyResponse>, AppError> {
+    let cfg = &crate::config::AppConfig::global().image.signing;
+    if !cfg.is_usable() {
+        return Ok(Json(VerifyResponse {
+            valid: false,
+            signed_at: None,
+            user_hash_prefix: None,
+            error: Some("服务端未配置签名密钥".into()),
+        }));
+    }
+
+    match crate::features::image::signing::verify_svg_signature(&req.svg, cfg) {
+        Ok(sig) => {
+            let signed_at = chrono::DateTime::from_timestamp(sig.timestamp.cast_signed(), 0)
+                .map(|dt| dt.to_rfc3339());
+            Ok(Json(VerifyResponse {
+                valid: true,
+                signed_at,
+                user_hash_prefix: sig.user_hash_prefix,
+                error: None,
+            }))
+        }
+        Err(e) => Ok(Json(VerifyResponse {
+            valid: false,
+            signed_at: None,
+            user_hash_prefix: None,
+            error: Some(e.to_string()),
+        })),
+    }
+}
+
+/// GET 版本的验证端点（便于浏览器直接访问）。
+/// Query 参数：?svg=<url_encoded_svg>
+#[derive(Debug, Deserialize)]
+pub struct VerifyQuery {
+    pub svg: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/verify",
+    summary = "验证图片签名（GET）",
+    description = "通过 Query 参数 `svg` 传递 SVG 内容进行验证。",
+    params(
+        ("svg" = Option<String>, Query, description = "待验证的 SVG 字符串"),
+    ),
+    responses(
+        (status = 200, description = "验证结果", body = VerifyResponse),
+    ),
+    tag = "Image"
+)]
+pub async fn verify_image_get(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<VerifyQuery>,
+) -> Result<Json<VerifyResponse>, AppError> {
+    let svg = q.svg.as_deref().unwrap_or("");
+    if svg.is_empty() {
+        return Ok(Json(VerifyResponse {
+            valid: false,
+            signed_at: None,
+            user_hash_prefix: None,
+            error: Some("缺少 svg 参数".into()),
+        }));
+    }
+    verify_image(
+        State(state),
+        Json(VerifyRequest {
+            svg: svg.to_string(),
+        }),
+    )
+    .await
 }

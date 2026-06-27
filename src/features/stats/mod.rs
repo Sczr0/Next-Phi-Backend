@@ -272,7 +272,8 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
     // ── 启动时回填预聚合（避免首次启动后 summary 扫描全表）──
     {
         let catchup_storage = storage.clone();
-        let catchup_days = i64::from(config.stats.retention_hot_days);
+        // 启动时只回填最近 7 天，完整历史由每日聚合任务补齐
+        let catchup_days = 7i64.min(i64::from(config.stats.retention_hot_days));
         tokio::spawn(async move {
             use chrono::Utc;
             let today = Utc::now().date_naive();

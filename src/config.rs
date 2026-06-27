@@ -666,9 +666,16 @@ impl AppConfig {
         Ok(())
     }
 
-    /// 获取配置文件路径
+    /// 获取配置文件路径。
+    ///
+    /// 优先读取 `config.toml`（本地部署配置，不纳入版本控制）；
+    /// 若不存在则回退到 `config.example.toml`（模板，纳入 git）。
     fn get_config_path() -> PathBuf {
-        PathBuf::from("config.toml")
+        let local = PathBuf::from("config.toml");
+        if local.exists() {
+            return local;
+        }
+        PathBuf::from("config.example.toml")
     }
 
     /// 获取服务器监听地址
@@ -769,6 +776,62 @@ impl Default for AppConfig {
     }
 }
 
+/// 图片内容签名配置（嵌入 SVG 的 HMAC 签名，供前端与第三方验证真伪）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageSigningConfig {
+    /// 是否启用图片签名
+    #[serde(default = "ImageSigningConfig::default_enabled")]
+    pub enabled: bool,
+    /// HMAC-SHA256 签名密钥
+    #[serde(default)]
+    pub key: String,
+    /// 签名有效窗口期（秒），超出窗口的签名视为过期（0=不限制）
+    #[serde(default = "ImageSigningConfig::default_ttl_secs")]
+    pub ttl_secs: u64,
+    /// 是否公开验证端点（GET /verify）
+    #[serde(default = "ImageSigningConfig::default_public_verify")]
+    pub public_verify: bool,
+}
+
+impl ImageSigningConfig {
+    fn default_enabled() -> bool {
+        false
+    }
+    fn default_ttl_secs() -> u64 {
+        0
+    }
+    fn default_public_verify() -> bool {
+        false
+    }
+    fn default_key() -> String {
+        std::env::var("APP_IMAGE_SIGNING_KEY").unwrap_or_default()
+    }
+
+    /// 返回可用的签名密钥；优先使用环境变量，其次配置文件。
+    #[must_use]
+    pub fn effective_key(&self) -> Option<&str> {
+        let k = self.key.trim();
+        if k.is_empty() { None } else { Some(k) }
+    }
+
+    /// 是否实际可用（已启用 + 有密钥）。
+    #[must_use]
+    pub fn is_usable(&self) -> bool {
+        self.enabled && self.effective_key().is_some()
+    }
+}
+
+impl Default for ImageSigningConfig {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            key: Self::default_key(),
+            ttl_secs: Self::default_ttl_secs(),
+            public_verify: Self::default_public_verify(),
+        }
+    }
+}
+
 /// 图片渲染配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageRenderConfig {
@@ -793,6 +856,9 @@ pub struct ImageRenderConfig {
     /// 用户自报成绩 BN：scores 条数硬上限（0=不限制，不建议）
     #[serde(default = "ImageRenderConfig::default_max_user_scores")]
     pub max_user_scores: u32,
+    /// 图片内容签名配置
+    #[serde(default)]
+    pub signing: ImageSigningConfig,
 }
 
 impl ImageRenderConfig {
@@ -823,6 +889,7 @@ impl Default for ImageRenderConfig {
             cache_tti_secs: Self::default_cache_tti(),
             max_parallel: 0,
             max_user_scores: Self::default_max_user_scores(),
+            signing: ImageSigningConfig::default(),
         }
     }
 }
