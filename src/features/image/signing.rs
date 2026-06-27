@@ -201,14 +201,29 @@ pub fn visible_checkcode(sig: &SvgSignature) -> String {
 /// 可见校验码在 SVG 中的容器 class，用于 `strip_svg_signature` 识别。
 const VERIFY_BADGE_CLASS: &str = "lilith-verify-badge";
 
+/// 从 SVG 的 viewBox 属性中提取画布高度。
+fn parse_viewbox_height(svg: &str) -> Option<f64> {
+    let vb = svg.split("viewBox=").nth(1)?;
+    let val = vb.trim_start_matches('"').trim_start_matches('\'');
+    let parts: Vec<&str> = val.splitn(4, |c: char| c.is_whitespace()).collect();
+    if parts.len() >= 4 {
+        parts[3].parse::<f64>().ok()
+    } else {
+        None
+    }
+}
+
 /// 向 SVG 注入可见校验码（在底部居中显示）。
 ///
 /// 生成一个 `<g class="lilith-verify-badge">` 包含校验码文字，
 /// 插入在 `</svg>` 之前、签名注释之后（不添加换行）。
+/// 位置根据 viewBox 高度动态计算，贴底居中。
 pub fn inject_visible_checkcode(svg: &str, sig: &SvgSignature) -> String {
     let code = visible_checkcode(sig);
+    let canvas_h = parse_viewbox_height(svg).unwrap_or(600.0);
+    let badge_y = canvas_h - 6.0;
     let badge = format!(
-        "<g class=\"{VERIFY_BADGE_CLASS}\" transform=\"translate(0,0)\"><rect x=\"0\" y=\"-22\" width=\"100%\" height=\"24\" fill=\"transparent\"/><text x=\"50%\" y=\"-6\" text-anchor=\"middle\" font-size=\"10\" font-family=\"monospace\" fill=\"#888\">校验码: {code}</text></g>"
+        "<g class=\"{VERIFY_BADGE_CLASS}\"><rect x=\"0\" y=\"{badge_y}\" width=\"100%\" height=\"24\" fill=\"transparent\"/><text x=\"50%\" y=\"{badge_y}\" text-anchor=\"middle\" font-size=\"10\" font-family=\"monospace\" fill=\"#888\">校验码: {code}</text></g>"
     );
     if let Some(pos) = svg.rfind("</svg>") {
         let mut out = String::with_capacity(svg.len() + badge.len());
