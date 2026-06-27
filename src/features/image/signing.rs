@@ -124,30 +124,7 @@ const LILITH_SIG_PREFIX: &str = "lilith-sig";
 /// - 2 bits: variant 0b10
 /// - 62 bits: 随机
 fn uuid_v7() -> String {
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let ms = u64::try_from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis(),
-    )
-    .expect("millisecond timestamp should always fit in u64");
-
-    let ts_hi =
-        u32::try_from(ms >> 16).expect("shifted timestamp high bits should always fit in u32");
-    let ts_lo = (ms & 0xFFFF) as u16;
-    let rand_a: u16 = rng.r#gen();
-    let rand_b: u64 = rng.r#gen();
-
-    // time_low (32) | time_mid (16) | version_hi (12) | rand_a with variant (14) | rand_b (48)
-    let time_low = ts_hi;
-    let time_mid = ts_lo;
-    let version_hi = (rand_a & 0x0FFF) | 0x7000;
-    let variant_rand = ((rand_b >> 48) as u16 & 0x3FFF) | 0x8000;
-    let rand_lo = rand_b & 0xFFFF_FFFF_FFFF;
-
-    format!("{time_low:08x}-{time_mid:04x}-{version_hi:04x}-{variant_rand:04x}-{rand_lo:012x}")
+    uuid::Uuid::now_v7().to_string()
 }
 
 /// 从 SVG 文本中提取的签名信息。
