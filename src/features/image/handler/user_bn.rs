@@ -187,8 +187,7 @@ pub async fn render_bn_user(
         let signing_cfg = &AppConfig::global().image.signing;
         if signing_cfg.is_usable() {
             if let Some(sig) = signing::sign_svg(&svg, signing_cfg, None) {
-                let with_comment = signing::inject_svg_signature(&svg, &sig);
-                signing::inject_visible_checkcode(&with_comment, &sig)
+                signing::inject_sig_footer(&svg, &sig)
             } else {
                 svg
             }

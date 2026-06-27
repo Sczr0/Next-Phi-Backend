@@ -222,14 +222,13 @@ pub async fn render_song(
     })
     .await?;
 
-    // 签名注入：对 SVG 内容签名并嵌入 lilith-sig 注释 + 可见校验码
+    // 签名注入：在 SVG 底部追加签名行
     let signed_svg = {
         let signing_cfg = &AppConfig::global().image.signing;
         if signing_cfg.is_usable() {
             if let Some(sig) = signing::sign_svg(&svg, signing_cfg, user_hash_for_cache.as_deref())
             {
-                let with_comment = signing::inject_svg_signature(&svg, &sig);
-                signing::inject_visible_checkcode(&with_comment, &sig)
+                signing::inject_sig_footer(&svg, &sig)
             } else {
                 svg
             }
