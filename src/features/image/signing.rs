@@ -191,8 +191,10 @@ pub fn inject_svg_signature(svg: &str, sig: &SvgSignature) -> String {
 /// 格式：`v2-<hmac前8位>-<日期>`，例如 `v2-a1b2c3d4-20260628`
 pub fn visible_checkcode(sig: &SvgSignature) -> String {
     let hmac_short = &sig.hmac[..sig.hmac.len().min(8)];
-    let date = chrono::DateTime::from_timestamp(sig.timestamp.cast_signed(), 0)
-        .map_or_else(|| "unknown".to_string(), |dt| dt.format("%Y%m%d").to_string());
+    let date = chrono::DateTime::from_timestamp(sig.timestamp.cast_signed(), 0).map_or_else(
+        || "unknown".to_string(),
+        |dt| dt.format("%Y%m%d").to_string(),
+    );
     format!("v2-{hmac_short}-{date}")
 }
 
