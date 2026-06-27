@@ -110,10 +110,45 @@ fn format_timestamp_utc8(timestamp: u64) -> String {
 // ── SVG 内容签名（lilith-sig） ──
 
 /// SVG 签名协议的版本标识。
-/// - v2: 内容摘要使用 SHA-256（替换 v1 的 MD5，消除碰撞风险）
-const LILITH_SIG_VERSION: &str = "v2";
+/// - v3: 新增 hash（明文 SHA-256，客户端可本地校验）+ nonce（UUIDv7 防重放）
+const LILITH_SIG_VERSION: &str = "v3";
 /// SVG 签名在 XML 注释中的前缀模式。
 const LILITH_SIG_PREFIX: &str = "lilith-sig";
+
+/// 生成 UUIDv7（时间排序 UUID，毫秒精度）。
+///
+/// 布局：
+/// - 48 bits: Unix 毫秒时间戳
+/// - 4 bits: 版本 0x7
+/// - 12 bits: 随机
+/// - 2 bits: variant 0b10
+/// - 62 bits: 随机
+fn uuid_v7() -> String {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let ms = u64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis(),
+    )
+    .expect("millisecond timestamp should always fit in u64");
+
+    let ts_hi =
+        u32::try_from(ms >> 16).expect("shifted timestamp high bits should always fit in u32");
+    let ts_lo = (ms & 0xFFFF) as u16;
+    let rand_a: u16 = rng.r#gen();
+    let rand_b: u64 = rng.r#gen();
+
+    // time_low (32) | time_mid (16) | version_hi (12) | rand_a with variant (14) | rand_b (48)
+    let time_low = ts_hi;
+    let time_mid = ts_lo;
+    let version_hi = (rand_a & 0x0FFF) | 0x7000;
+    let variant_rand = ((rand_b >> 48) as u16 & 0x3FFF) | 0x8000;
+    let rand_lo = rand_b & 0xFFFF_FFFF_FFFF;
+
+    format!("{time_low:08x}-{time_mid:04x}-{version_hi:04x}-{variant_rand:04x}-{rand_lo:012x}")
+}
 
 /// 从 SVG 文本中提取的签名信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -121,6 +156,11 @@ pub struct SvgSignature {
     pub hmac: String,
     pub timestamp: u64,
     pub user_hash_prefix: Option<String>,
+    pub request_id: Option<String>,
+    /// SHA-256（去签名后的 SVG 正文），客户端可本地校验内容完整性
+    pub content_hash: String,
+    /// UUIDv7，防签名重放
+    pub nonce: String,
 }
 
 /// 计算 SVG 内容的 SHA-256 摘要用于签名 payload。
@@ -132,7 +172,7 @@ fn svg_sha256(svg: &str) -> String {
 
 /// 对 SVG 字符串签名。
 ///
-/// 签名 payload = `{timestamp}:{user_hash_part}:{svg_sha256}`
+/// 签名 payload = `{timestamp}:{uid}:{rid}:{nonce}:{content_hash}`
 /// 使用 HMAC-SHA256 + server key 生成签名。
 pub fn sign_svg(
     svg: &str,
@@ -145,13 +185,15 @@ pub fn sign_svg(
         .unwrap()
         .as_secs();
 
-    let summary = svg_sha256(svg);
+    let content_hash = svg_sha256(svg);
+    let nonce = uuid_v7();
     let user_hash_part = user_hash.map_or("anon", |h| {
         let end = h.char_indices().nth(8).map_or(h.len(), |(i, _)| i);
         &h[..end]
     });
+    let request_id = crate::request_id::current_request_id().unwrap_or_default();
 
-    let payload = format!("{timestamp}:{user_hash_part}:{summary}");
+    let payload = format!("{timestamp}:{user_hash_part}:{request_id}:{nonce}:{content_hash}");
 
     let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes()).ok()?;
     mac.update(payload.as_bytes());
@@ -162,19 +204,33 @@ pub fn sign_svg(
         hmac,
         timestamp,
         user_hash_prefix: Some(user_hash_part.to_string()),
+        request_id: if request_id.is_empty() {
+            None
+        } else {
+            Some(request_id)
+        },
+        content_hash,
+        nonce,
     })
 }
 
 /// 将签名注释注入到 SVG 字符串中（在 `</svg>` 之前直接插入，不添加换行）。
 ///
-/// 格式：`<!-- lilith-sig:v2:hmac=<hex>:t=<unix_ts>:uid=<prefix> -->`
+/// 格式：`<!-- lilith-sig:v3:hmac=<hex>:t=<unix_ts>:uid=<prefix>:rid=<req_id>:hash=<sha256>:nonce=<uuidv7> -->`
 pub fn inject_svg_signature(svg: &str, sig: &SvgSignature) -> String {
     let uid = sig.user_hash_prefix.as_deref().unwrap_or("anon");
-    let comment = format!(
-        "<!-- {LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:hmac={}:t={}:uid={uid} -->",
-        sig.hmac, sig.timestamp
-    );
-    // 在 </svg> 闭合标签之前直接插入（不添加换行，避免破坏原始 SVG 结构）
+    let rid = sig.request_id.as_deref().unwrap_or("");
+    let comment = if rid.is_empty() {
+        format!(
+            "<!-- {LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:hmac={}:t={}:uid={uid}:hash={}:nonce={} -->",
+            sig.hmac, sig.timestamp, sig.content_hash, sig.nonce
+        )
+    } else {
+        format!(
+            "<!-- {LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:hmac={}:t={}:uid={uid}:rid={rid}:hash={}:nonce={} -->",
+            sig.hmac, sig.timestamp, sig.content_hash, sig.nonce
+        )
+    };
     if let Some(pos) = svg.rfind("</svg>") {
         let mut out = String::with_capacity(svg.len() + comment.len());
         out.push_str(&svg[..pos]);
@@ -265,7 +321,7 @@ fn strip_svg_signature(svg: &str) -> String {
 
 /// 从 SVG 字符串中提取签名信息。
 ///
-/// 匹配注释格式：`<!-- lilith-sig:v1:hmac=<hex>:t=<unix_ts>:uid=<prefix> -->`
+/// 匹配注释格式：`<!-- lilith-sig:v3:hmac=<hex>:t=<unix_ts>:uid=<prefix>:rid=<req_id>:hash=<sha256>:nonce=<uuidv7> -->`
 pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
     let pattern = format!("{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:");
     let start_marker = format!("<!-- {pattern}");
@@ -274,10 +330,12 @@ pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
     let end = svg[start..].find(" -->")?;
     let body = &svg[start..start + end];
 
-    // body = "lilith-sig:v1:hmac=xxx:t=12345:uid=abcd1234"
     let mut hmac: Option<String> = None;
     let mut timestamp: Option<u64> = None;
     let mut uid: Option<String> = None;
+    let mut rid: Option<String> = None;
+    let mut content_hash: Option<String> = None;
+    let mut nonce: Option<String> = None;
 
     for part in body.split(':') {
         if let Some(v) = part.strip_prefix("hmac=") {
@@ -286,6 +344,12 @@ pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
             timestamp = v.parse::<u64>().ok();
         } else if let Some(v) = part.strip_prefix("uid=") {
             uid = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("rid=") {
+            rid = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("hash=") {
+            content_hash = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("nonce=") {
+            nonce = Some(v.to_string());
         }
     }
 
@@ -293,6 +357,9 @@ pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
         hmac: hmac?,
         timestamp: timestamp?,
         user_hash_prefix: uid,
+        request_id: rid,
+        content_hash: content_hash.unwrap_or_default(),
+        nonce: nonce.unwrap_or_default(),
     })
 }
 
@@ -314,11 +381,23 @@ pub fn verify_svg_signature(
     let extracted = extract_svg_signature(svg)
         .ok_or_else(|| AppError::Validation("SVG 中未找到 lilith-sig 签名".into()))?;
 
-    // 重建 payload：使用去除签名注释后的原始 SVG 计算 SHA-256
+    // 重建 payload：重算 SHA-256 并与签名字段交叉校验
     let clean_svg = strip_svg_signature(svg);
-    let summary = svg_sha256(&clean_svg);
+    let actual_hash = svg_sha256(&clean_svg);
+
+    // 客户端可独立校验：本地算的 hash 应与签名字段一致
+    if actual_hash != extracted.content_hash {
+        return Err(AppError::Validation(
+            "签名校验失败：内容 SHA-256 与签名中的 hash 不匹配（SVG 被篡改）".into(),
+        ));
+    }
+
     let uid = extracted.user_hash_prefix.as_deref().unwrap_or("anon");
-    let payload = format!("{}:{uid}:{summary}", extracted.timestamp);
+    let rid = extracted.request_id.as_deref().unwrap_or("");
+    let payload = format!(
+        "{}:{uid}:{rid}:{}:{actual_hash}",
+        extracted.timestamp, extracted.nonce
+    );
 
     let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
         .map_err(|e| AppError::Internal(format!("HMAC 初始化失败: {e}")))?;
@@ -444,8 +523,8 @@ mod tests {
         let sig = sign_svg(svg, &cfg, Some("abc123456789userhash")).expect("sign");
         let signed = inject_svg_signature(svg, &sig);
 
-        // 签名应出现在 </svg> 之前（协议版本 v2）
-        assert!(signed.contains("<!-- lilith-sig:v2:hmac="));
+        // 签名应出现在 </svg> 之前（协议版本 v3）
+        assert!(signed.contains("<!-- lilith-sig:v3:hmac="));
         assert!(signed.contains(":t="));
         assert!(signed.contains(":uid=abc12345"));
         // 签名后仍应以 </svg> 结尾
@@ -455,12 +534,14 @@ mod tests {
     #[test]
     fn test_extract_signature() {
         let svg = r"<svg></svg>
-<!-- lilith-sig:v2:hmac=abcdef1234567890:t=1721029907:uid=test1234 -->
+<!-- lilith-sig:v3:hmac=abcdef1234567890:t=1721029907:uid=test1234:hash=sha256abc:nonce=01900000-0000-7000-8000-000000000001 -->
 ";
         let sig = extract_svg_signature(svg).expect("extract");
         assert_eq!(sig.hmac, "abcdef1234567890");
         assert_eq!(sig.timestamp, 1_721_029_907);
         assert_eq!(sig.user_hash_prefix.as_deref(), Some("test1234"));
+        assert_eq!(sig.content_hash, "sha256abc");
+        assert_eq!(sig.nonce, "01900000-0000-7000-8000-000000000001");
     }
 
     #[test]
@@ -519,7 +600,7 @@ mod tests {
         let fully_signed = inject_visible_checkcode(&with_comment, &sig);
 
         // 4. 输出应包含所有标记
-        assert!(fully_signed.contains("<!-- lilith-sig:v2:"));
+        assert!(fully_signed.contains("<!-- lilith-sig:v3:"));
         assert!(fully_signed.contains("lilith-verify-badge"));
         assert!(fully_signed.contains("校验码: v2-"));
 

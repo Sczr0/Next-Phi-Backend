@@ -98,6 +98,12 @@ pub struct VerifyResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_hash_prefix: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
 
@@ -124,6 +130,9 @@ pub async fn verify_image(
             valid: false,
             signed_at: None,
             user_hash_prefix: None,
+            request_id: None,
+            content_hash: None,
+            nonce: None,
             error: Some("服务端未配置签名密钥".into()),
         }));
     }
@@ -136,6 +145,9 @@ pub async fn verify_image(
                 valid: true,
                 signed_at,
                 user_hash_prefix: sig.user_hash_prefix,
+                request_id: sig.request_id,
+                content_hash: Some(sig.content_hash),
+                nonce: Some(sig.nonce),
                 error: None,
             }))
         }
@@ -143,6 +155,9 @@ pub async fn verify_image(
             valid: false,
             signed_at: None,
             user_hash_prefix: None,
+            request_id: None,
+            content_hash: None,
+            nonce: None,
             error: Some(e.to_string()),
         })),
     }
@@ -178,6 +193,9 @@ pub async fn verify_image_get(
             valid: false,
             signed_at: None,
             user_hash_prefix: None,
+            request_id: None,
+            content_hash: None,
+            nonce: None,
             error: Some("缺少 svg 参数".into()),
         }));
     }
