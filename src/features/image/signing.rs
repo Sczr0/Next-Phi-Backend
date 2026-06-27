@@ -251,7 +251,7 @@ pub fn visible_checkcode(sig: &SvgSignature) -> String {
         || "unknown".to_string(),
         |dt| dt.format("%Y%m%d").to_string(),
     );
-    format!("v2-{hmac_short}-{date}")
+    format!("v3-{hmac_short}-{date}")
 }
 
 /// 可见校验码在 SVG 中的容器 class，用于 `strip_svg_signature` 识别。
@@ -592,7 +592,7 @@ mod tests {
 
         // 2. 可见校验码格式
         let code = visible_checkcode(&sig);
-        assert!(code.starts_with("v2-"));
+        assert!(code.starts_with("v3-"));
         assert_eq!(code.len(), "v2-12345678-20260628".len());
 
         // 3. 注入全部标记（注释 + 可见校验码）
@@ -602,7 +602,7 @@ mod tests {
         // 4. 输出应包含所有标记
         assert!(fully_signed.contains("<!-- lilith-sig:v3:"));
         assert!(fully_signed.contains("lilith-verify-badge"));
-        assert!(fully_signed.contains("校验码: v2-"));
+        assert!(fully_signed.contains("校验码: v3-"));
 
         // 5. 剥离后还原为原始 SVG
         let stripped = strip_svg_signature(&fully_signed);
