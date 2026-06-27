@@ -216,8 +216,11 @@ fn build_sig_line(sig: &SvgSignature) -> String {
 /// 放在原有 footer 下方，灰色小字，与 SVG 主体底部对齐。
 pub fn inject_sig_footer(svg: &str, sig: &SvgSignature) -> String {
     let line = build_sig_line(sig);
-    let canvas_h = parse_viewbox_height(svg).unwrap_or(600.0);
-    let y = canvas_h - 6.0;
+    let canvas_h = parse_viewbox_height(svg)
+        .or_else(|| parse_svg_attr(svg, "height"))
+        .unwrap_or(600.0);
+    // 字号 9，距底边留 12px baseline，避免压线/被裁切。
+    let y = (canvas_h - 12.0).max(0.0);
     let text_elem = format!(
         "<text x=\"50%\" y=\"{y}\" class=\"{SIG_FOOTER_CLASS}\" text-anchor=\"middle\" font-size=\"9\" font-family=\"monospace\" fill=\"#999\">{line}</text>"
     );
@@ -234,14 +237,44 @@ pub fn inject_sig_footer(svg: &str, sig: &SvgSignature) -> String {
 }
 
 /// 从 SVG 中提取 viewBox 高度。
+///
+/// 正确处理被单/双引号包裹的属性值，例如：
+/// `viewBox="0 0 800 1480"` / `viewBox='0 0 800 1480'`
+/// 未带引号的情形同样兼容（取到下一个空白/`>` 为止）。
 fn parse_viewbox_height(svg: &str) -> Option<f64> {
-    let vb = svg.split("viewBox=").nth(1)?;
-    let val = vb.trim_start_matches('"').trim_start_matches('\'');
+    let after = svg.split("viewBox=").nth(1)?;
+    let val = take_attr_value(after);
     let parts: Vec<&str> = val.splitn(4, |c: char| c.is_whitespace()).collect();
     if parts.len() >= 4 {
         parts[3].parse::<f64>().ok()
     } else {
         None
+    }
+}
+
+/// 从 `<svg>` 标签提取指定属性（如 `height` / `width`）的数值。
+/// 仅在 `<svg ...>` 开闭标签范围内查找，避免误命中后续元素的同名属性。
+fn parse_svg_attr(svg: &str, name: &str) -> Option<f64> {
+    let tag_end = svg.find('>')?;
+    let head = &svg[..tag_end];
+    let after = head.split(&format!("{name}=")).nth(1)?;
+    take_attr_value(after).parse::<f64>().ok()
+}
+
+/// 取出属性值首个 token：支持单/双引号定界或无引号裸值。
+fn take_attr_value(s: &str) -> &str {
+    let s = s.trim_start();
+    match s.as_bytes().first() {
+        Some(b'"') => s.split_once('"').map_or("", |(_, rest)| {
+            rest.split_once('"').map_or(rest, |(val, _)| val)
+        }),
+        Some(b'\'') => s.split_once('\'').map_or("", |(_, rest)| {
+            rest.split_once('\'').map_or(rest, |(val, _)| val)
+        }),
+        _ => s
+            .split(|c: char| c.is_whitespace() || c == '>')
+            .next()
+            .unwrap_or(""),
     }
 }
 
@@ -554,5 +587,66 @@ mod tests {
         let svg = "<svg></svg>";
         let sig = sign_svg(svg, &cfg, None).expect("sign");
         assert_eq!(sig.user_hash_prefix.as_deref(), Some("anon"));
+    }
+
+    // ── 回归：签名行必须落在画布底部，而非被 fallback 到 600 附近 ──
+
+    #[test]
+    fn test_parse_viewbox_height_double_quoted() {
+        // 与实际渲染器（bn_defs::write_svg_open）一致的带引号 viewBox。
+        let svg = r#"<svg width="820" height="1480" viewBox="0 0 820 1480" xmlns="http://www.w3.org/2000/svg">"#;
+        approx_eq(parse_viewbox_height(svg).unwrap(), 1480.0);
+    }
+
+    #[test]
+    fn test_parse_viewbox_height_single_quoted() {
+        let svg = "<svg viewBox='0 0 820 1480' xmlns='http://www.w3.org/2000/svg'>";
+        approx_eq(parse_viewbox_height(svg).unwrap(), 1480.0);
+    }
+
+    #[test]
+    fn test_parse_svg_attr_height() {
+        let svg = r#"<svg width="820" height="1480" viewBox="0 0 820 1480">"#;
+        approx_eq(parse_svg_attr(svg, "height").unwrap(), 1480.0);
+        approx_eq(parse_svg_attr(svg, "width").unwrap(), 820.0);
+    }
+
+    #[test]
+    fn test_sig_footer_y_is_at_canvas_bottom() {
+        let cfg = test_signing_config();
+        // 模拟真实 BestN 渲染器输出：高画布、带引号 viewBox。
+        let svg = r#"<svg width="820" height="1480" viewBox="0 0 820 1480" xmlns="http://www.w3.org/2000/svg">
+  <text x="10" y="20">Best 30</text>
+</svg>"#;
+
+        let sig = sign_svg(svg, &cfg, Some("userABCD")).expect("sign");
+        let signed = inject_sig_footer(svg, &sig);
+
+        // 注入元素应位于 y ≈ canvas_h - 12 ≈ 1468，而非 fallback 的 588 左右。
+        let y_val = extract_injected_y(&signed).expect("injected text has y attr");
+        approx_eq(y_val, 1480.0 - 12.0);
+        assert!(
+            y_val > 1400.0,
+            "footer must be near canvas bottom, got y={y_val}"
+        );
+
+        // 往返仍正确。
+        assert_eq!(strip_svg_signature(&signed), svg);
+        verify_svg_signature(&signed, &cfg).expect("verify");
+    }
+
+    fn extract_injected_y(signed: &str) -> Option<f64> {
+        let marker = "class=\"lilith-sig-footer\"";
+        let pos = signed.find(marker)?;
+        let head = &signed[..pos];
+        let tag_start = head.rfind("<text ")?;
+        let tag = &signed[tag_start..pos];
+        let after = tag.split("y=\"").nth(1)?;
+        let end = after.find('"')?;
+        after[..end].parse::<f64>().ok()
+    }
+
+    fn approx_eq(a: f64, b: f64) {
+        assert!((a - b).abs() < 1e-6, "{a} != {b}");
     }
 }
