@@ -159,9 +159,9 @@ pub(super) fn write_footer(ctx: BnFooterRenderContext<'_>) -> Result<(), AppErro
         footer_height: _,
     } = ctx;
 
-    // 垂直居中：3 行文本块（生成行 + 签名 2 行）视觉高 ≈ 52px，
-    // 在 84px 底栏区内上下均分 → 首行 baseline = total - 56。
-    let footer_y = f64::from(total_height) - 56.0;
+    // 垂直居中：4 行文本块（生成行 + 签名 3 行）视觉高 ≈ 68px，
+    // 在 104px 底栏区内上下均分 → 首行 baseline = total - 74。
+    let footer_y = f64::from(total_height) - 74.0;
 
     // 水平居中：x="50%" + text-anchor="middle"，签名继承此锚点。
     let generated_text = generated_at_utc8_text();
