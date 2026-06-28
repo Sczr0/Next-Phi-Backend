@@ -12,7 +12,7 @@ pub(super) fn bn_template_score_text(score: &RenderRecord) -> String {
 }
 
 pub(super) fn bn_level_text(score: &RenderRecord) -> String {
-    format!("Lv.{:.1} -> {:.2}", score.difficulty_value, score.rks)
+    format!("Lv.{:.1} → {:.2}", score.difficulty_value, score.rks)
 }
 
 pub(super) fn bn_rank_text(index: usize) -> String {

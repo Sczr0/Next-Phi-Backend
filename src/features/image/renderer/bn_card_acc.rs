@@ -41,18 +41,18 @@ pub(super) fn format_acc_text(
         match push_hint {
             Some(engine::PushAccHint::TargetAcc { acc: push_acc }) => {
                 if push_acc > 99.995 {
-                    format!("{base_text} <tspan class='push-acc'>-> 100.00%</tspan>")
+                    format!("{base_text} <tspan class='push-acc'>→ 100.00%</tspan>")
                 } else if (push_acc - score.acc).abs() < 0.005 {
-                    format!("{base_text} <tspan class='push-acc'>-> {push_acc:.3}%</tspan>")
+                    format!("{base_text} <tspan class='push-acc'>→ {push_acc:.3}%</tspan>")
                 } else {
-                    format!("{base_text} <tspan class='push-acc'>-> {push_acc:.2}%</tspan>")
+                    format!("{base_text} <tspan class='push-acc'>→ {push_acc:.2}%</tspan>")
                 }
             }
             Some(engine::PushAccHint::PhiOnly | engine::PushAccHint::AlreadyPhi) => {
-                format!("{base_text} <tspan class='push-acc push-acc-phi-only'>-> 100.00%</tspan>")
+                format!("{base_text} <tspan class='push-acc push-acc-phi-only'>→ 100.00%</tspan>")
             }
             Some(engine::PushAccHint::Unreachable) => format!(
-                "{base_text} <tspan class='push-acc push-acc-unreachable'>-> 无法推分</tspan>"
+                "{base_text} <tspan class='push-acc push-acc-unreachable'>→ 无法推分</tspan>"
             ),
             None => base_text,
         }
@@ -74,9 +74,9 @@ pub(super) fn format_plain_acc_text(
 
 fn plain_push_acc_suffix(hint: engine::PushAccHint) -> String {
     match hint {
-        engine::PushAccHint::TargetAcc { acc } => format!(" -> {acc:.2}%"),
-        engine::PushAccHint::PhiOnly | engine::PushAccHint::AlreadyPhi => " -> 100.00%".to_string(),
-        engine::PushAccHint::Unreachable => " -> 无法推分".to_string(),
+        engine::PushAccHint::TargetAcc { acc } => format!(" → {acc:.2}%"),
+        engine::PushAccHint::PhiOnly | engine::PushAccHint::AlreadyPhi => " → 100.00%".to_string(),
+        engine::PushAccHint::Unreachable => " → 无法推分".to_string(),
     }
 }
 

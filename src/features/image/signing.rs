@@ -384,11 +384,10 @@ pub(crate) fn build_sig_line_any(sig: &SvgSignature) -> String {
 }
 
 /// 将签名字符串拆为两行，适配宽度约 1120px。
-/// v3 在 `:hash=` 的 `:` 处拆分；v4 在 `:root=` 的 `:` 处拆分。
-/// line1 末尾保留 `:`，line2 起始为 `hash=` / `root=`。
+/// 分割优先级：`:rid=`（v4 最优平衡点）> `:root=` > `:hash=`（v3）。
+/// line1 末尾保留 `:`，line2 起始不含前导 `:`。
 fn wrap_sig_lines(full: &str) -> Vec<String> {
-    // 优先 v4 分隔符，其次 v3
-    for sep in [":root=", ":hash="] {
+    for sep in [":rid=", ":root=", ":hash="] {
         if let Some(idx) = full.find(sep) {
             let line1 = full[..idx].to_string();
             let line2 = full[idx + 1..].to_string();

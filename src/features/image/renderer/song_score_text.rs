@@ -79,9 +79,9 @@ fn push_acc_display(score_data: &SongDifficultyScore) -> Option<SongPushAccDispl
 fn push_acc_plain_suffix(display: SongPushAccDisplay) -> String {
     match display {
         SongPushAccDisplay::AlreadyPhi => " (已 Phi)".to_string(),
-        SongPushAccDisplay::TargetAcc { acc } => format!(" -> {acc:.2}%"),
-        SongPushAccDisplay::PhiTarget => " -> 100.00%".to_string(),
-        SongPushAccDisplay::Unreachable => " -> 无法推分".to_string(),
+        SongPushAccDisplay::TargetAcc { acc } => format!(" → {acc:.2}%"),
+        SongPushAccDisplay::PhiTarget => " → 100.00%".to_string(),
+        SongPushAccDisplay::Unreachable => " → 无法推分".to_string(),
     }
 }
 
