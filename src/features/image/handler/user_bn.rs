@@ -184,9 +184,10 @@ pub async fn render_bn_user(
     .await?;
 
     // 签名注入：用户自报成绩无 user_hash，uid 标记为 anon
-    let signed_svg = {
+    let (signed_svg, sig_header) = {
         let signing_cfg = &AppConfig::global().image.signing;
-        if signing_cfg.is_v4_usable() {
+        let mut maybe_sig: Option<signing::SvgSignature> = None;
+        let signed = if signing_cfg.is_v4_usable() {
             let score_tuples: Vec<(&str, &str, f64, f64)> = records_for_sig
                 .iter()
                 .map(|r| {
@@ -199,19 +200,23 @@ pub async fn render_bn_user(
                 })
                 .collect();
             if let Some(sig) = signing::sign_svg_v4(&svg, signing_cfg, &score_tuples, None) {
-                signing::inject_sig_footer(&svg, &sig)
+                maybe_sig = Some(sig);
+                signing::inject_sig_footer(&svg, maybe_sig.as_ref().unwrap())
             } else {
                 svg
             }
         } else if signing_cfg.is_usable() {
             if let Some(sig) = signing::sign_svg(&svg, signing_cfg, None) {
-                signing::inject_sig_footer(&svg, &sig)
+                maybe_sig = Some(sig);
+                signing::inject_sig_footer(&svg, maybe_sig.as_ref().unwrap())
             } else {
                 svg
             }
         } else {
             svg
-        }
+        };
+        let line = maybe_sig.map(|s| signing::build_sig_line_any(&s));
+        (signed, line)
     };
 
     let (bytes, content_type) = render_svg_output_bytes(signed_svg, fmt_code, implicit, &q).await?;
@@ -225,6 +230,9 @@ pub async fn render_bn_user(
         stats_handle.track_feature("bestn_user", "generate_image", None, Some(extra));
     }
 
-    let headers = image_content_headers(content_type);
+    let mut headers = image_content_headers(content_type);
+    if let Some(ref line) = sig_header {
+        headers.insert("X-Lilith-Sig", line.parse().unwrap());
+    }
     Ok((StatusCode::OK, headers, bytes))
 }

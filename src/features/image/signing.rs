@@ -375,7 +375,7 @@ fn build_sig_line_v4(sig: &SvgSignature) -> String {
 }
 
 /// 根据签名版本构建签名字符串。
-fn build_sig_line_any(sig: &SvgSignature) -> String {
+pub(crate) fn build_sig_line_any(sig: &SvgSignature) -> String {
     if sig.ed_sig.is_some() {
         build_sig_line_v4(sig)
     } else {
@@ -863,6 +863,7 @@ mod tests {
             ttl_secs: 0,
             public_verify: false,
             ed25519_seed_hex: String::new(),
+            ed25519_public_key_hex: String::new(),
             merkle_salt: String::new(),
         }
     }

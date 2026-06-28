@@ -660,6 +660,10 @@ impl AppConfig {
     /// 初始化全局配置
     pub fn init_global() -> Result<(), ConfigError> {
         let config = Self::load()?;
+        // v4-beta Ed25519 公钥日志（便于分发）
+        if let Some(pk) = config.image.signing.effective_ed25519_public_key() {
+            tracing::info!("Ed25519 公钥（v4-beta 签名验证用）: {pk}");
+        }
         CONFIG
             .set(config)
             .map_err(|_| ConfigError::Message("配置已经被初始化".to_string()))?;
@@ -797,6 +801,9 @@ pub struct ImageSigningConfig {
     /// 配置文件 / 环境变量 `APP_IMAGE_ED25519_SEED` 均可设置。
     #[serde(default = "ImageSigningConfig::default_ed25519_seed")]
     pub ed25519_seed_hex: String,
+    /// Ed25519 公钥（64 hex = 32 bytes）。不填则从 seed 自动派生并在启动时打印日志。
+    #[serde(default)]
+    pub ed25519_public_key_hex: String,
     /// HMAC-SHA256 盐值，用于盲化 Merkle 叶子哈希，防预计算攻击。
     /// 为空时使用 `key` 字段作为盐（向后兼容）；也可独立设置。
     #[serde(default)]
@@ -861,6 +868,19 @@ impl ImageSigningConfig {
     pub fn is_v4_usable(&self) -> bool {
         self.enabled && self.effective_ed25519_seed().is_some()
     }
+
+    /// 获取 Ed25519 公钥（64 hex）。优先用显式配置，否则从 seed 派生。
+    /// 仅在 v4 可用时返回 Some。
+    #[must_use]
+    pub fn effective_ed25519_public_key(&self) -> Option<String> {
+        if !self.ed25519_public_key_hex.trim().is_empty() {
+            return Some(self.ed25519_public_key_hex.trim().to_string());
+        }
+        let seed = self.effective_ed25519_seed()?;
+        let sk = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let pk = sk.verifying_key();
+        Some(hex::encode(pk.as_bytes()))
+    }
 }
 
 impl Default for ImageSigningConfig {
@@ -871,6 +891,7 @@ impl Default for ImageSigningConfig {
             ttl_secs: Self::default_ttl_secs(),
             public_verify: Self::default_public_verify(),
             ed25519_seed_hex: Self::default_ed25519_seed(),
+            ed25519_public_key_hex: String::new(),
             merkle_salt: String::new(),
         }
     }

@@ -77,6 +77,9 @@ pub fn create_image_router() -> Router<AppState> {
     // 始终注册 GET 版本（方便浏览器直接访问）
     router = router.route("/verify", get(verify_image_get));
 
+    // Ed25519 公钥查询（始终可用，便于客户端获取验签公钥）
+    router = router.route("/verify/public-key", get(get_public_key));
+
     router
 }
 
@@ -114,6 +117,9 @@ pub struct VerifyResponse {
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// 服务端 Ed25519 公钥（v4-beta），客户端可据此自行验签。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
 }
 
 #[utoipa::path(
@@ -146,6 +152,7 @@ pub async fn verify_image(
             score_count: None,
             ed_sig: None,
             version: None,
+            public_key: None,
             error: Some("服务端未配置签名密钥".into()),
         }));
     }
@@ -172,6 +179,7 @@ pub async fn verify_image(
                 score_count: sig.score_count,
                 ed_sig: sig.ed_sig,
                 version,
+                public_key: cfg.effective_ed25519_public_key(),
                 error: None,
             }))
         }
@@ -186,6 +194,7 @@ pub async fn verify_image(
             score_count: None,
             ed_sig: None,
             version: None,
+            public_key: None,
             error: Some(e.to_string()),
         })),
     }
@@ -228,6 +237,7 @@ pub async fn verify_image_get(
             score_count: None,
             ed_sig: None,
             version: None,
+            public_key: None,
             error: Some("缺少 svg 参数".into()),
         }));
     }
@@ -238,4 +248,40 @@ pub async fn verify_image_get(
         }),
     )
     .await
+}
+
+// ── Ed25519 公钥查询 ──
+
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PublicKeyResponse {
+    /// 签名协议版本（"v4-beta" 或 null）
+    pub version: Option<String>,
+    /// Ed25519 公钥（64 hex），未启用 v4 时为 null
+    pub public_key: Option<String>,
+}
+
+#[utoipa::path(
+    get,
+    path = "/verify/public-key",
+    summary = "获取 Ed25519 公钥",
+    description = "返回服务端 v4-beta 签名所用的 Ed25519 公钥。客户端拿到后即可脱离服务端独立验签。",
+    responses(
+        (status = 200, description = "公钥信息", body = PublicKeyResponse),
+    ),
+    tag = "Image"
+)]
+pub async fn get_public_key() -> Json<PublicKeyResponse> {
+    let cfg = &crate::config::AppConfig::global().image.signing;
+    let (version, pk) = if let Some(pk) = cfg.effective_ed25519_public_key() {
+        (Some("v4-beta".to_string()), Some(pk))
+    } else if cfg.effective_key().is_some() {
+        (Some("v3".to_string()), None)
+    } else {
+        (None, None)
+    };
+    Json(PublicKeyResponse {
+        version,
+        public_key: pk,
+    })
 }

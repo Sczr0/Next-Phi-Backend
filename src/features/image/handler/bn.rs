@@ -272,10 +272,11 @@ pub async fn render_bn(
     let svg_size = svg.len();
     tracing::info!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
 
-    // 签名注入：在 SVG 底部追加签名行
-    let signed_svg = {
+    // 签名注入：在 SVG 底部追加签名行，并提取签名字符串用于响应头
+    let (signed_svg, sig_header) = {
         let signing_cfg = &AppConfig::global().image.signing;
-        if signing_cfg.is_v4_usable() {
+        let mut maybe_sig: Option<signing::SvgSignature> = None;
+        let signed = if signing_cfg.is_v4_usable() {
             let score_tuples: Vec<(&str, &str, f64, f64)> = top_for_sig
                 .iter()
                 .map(|r| {
@@ -293,20 +294,24 @@ pub async fn render_bn(
                 &score_tuples,
                 user_hash_for_cache.as_deref(),
             ) {
-                signing::inject_sig_footer(&svg, &sig)
+                maybe_sig = Some(sig);
+                signing::inject_sig_footer(&svg, maybe_sig.as_ref().unwrap())
             } else {
                 svg
             }
         } else if signing_cfg.is_usable() {
             if let Some(sig) = signing::sign_svg(&svg, signing_cfg, user_hash_for_cache.as_deref())
             {
-                signing::inject_sig_footer(&svg, &sig)
+                maybe_sig = Some(sig);
+                signing::inject_sig_footer(&svg, maybe_sig.as_ref().unwrap())
             } else {
                 svg
             }
         } else {
             svg
-        }
+        };
+        let line = maybe_sig.map(|s| signing::build_sig_line_any(&s));
+        (signed, line)
     };
 
     let t_render_start = Instant::now();
@@ -329,7 +334,11 @@ pub async fn render_bn(
         );
     }
 
-    let headers = image_content_headers(content_type);
+    let mut headers = image_content_headers(content_type);
+    // 签名串放入响应头，便于客户端从任意格式（SVG/PNG/JPEG）直接提取验签字段。
+    if let Some(ref line) = sig_header {
+        headers.insert("X-Lilith-Sig", line.parse().unwrap());
+    }
 
     // Cache put
     let mut cache_put_duration = None;
