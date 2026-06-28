@@ -157,7 +157,9 @@ pub(super) fn write_footer(ctx: BnFooterRenderContext<'_>) -> Result<(), AppErro
         footer_height,
     } = ctx;
 
-    let footer_y = f64::from(total_height - footer_height / 2 + 10);
+    // 顶部对齐底栏区：generated 文本占用第 1 行，下方预留两行（18px×2）
+    // 供签名 tspan 接续，底部留出充足边距。
+    let footer_y = f64::from(total_height - footer_height) + 18.0;
     let footer_padding = 40.0;
 
     let generated_text = generated_at_utc8_text();

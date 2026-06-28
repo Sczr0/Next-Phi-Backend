@@ -184,7 +184,9 @@ pub(super) fn write_footer(ctx: SongFooterRenderContext<'_>) -> Result<(), AppEr
         padding,
     } = ctx;
 
-    let footer_y = f64::from(height) - padding / 2.0;
+    // 顶部对齐 footer 区（画布高度内仅给定 56px=1 生成行+18×2 签名行+边距）：
+    // generated 行 baseline 在 height-56，下方两行 tspan 由签名注入在 +18/+36 处接续。
+    let footer_y = f64::from(height) - 56.0;
     let footer_x = f64::from(width) - padding;
     let time_str = format_utc8_datetime(&data.update_time, "%Y-%m-%d %H:%M:%S UTC+8");
     let right_text = match data.custom_footer_text.as_deref() {
