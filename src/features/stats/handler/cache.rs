@@ -8,8 +8,11 @@ use moka::future::Cache;
 use super::{daily_http::DailyHttpResponse, params::IncludeFlags, summary::StatsSummaryResponse};
 
 const STATS_SUMMARY_CACHE_MAX_ENTRIES: u64 = 256;
-const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 300;
-const STATS_SUMMARY_CACHE_TTI_SECS: u64 = 120;
+/// 缓存存活时间。默认请求会持续被预聚合表 / 当日热数据填充，TTL 拉长过去了
+/// 仅在 5 分钟返回一次偏长的冷查询，之后反复命中正常请求体量。改为 30 分钟，
+/// 即便跨归档时段也要在一个聚合轮次内但不至于看到陈旧数据，在预聚合后主动失效。
+const STATS_SUMMARY_CACHE_TTL_SECS: u64 = 1800;
+const STATS_SUMMARY_CACHE_TTI_SECS: u64 = 1800;
 const DAILY_HTTP_CACHE_MAX_ENTRIES: u64 = 256;
 const DAILY_HTTP_CACHE_TTL_SECS: u64 = 20;
 const DAILY_HTTP_CACHE_TTI_SECS: u64 = 10;
@@ -23,6 +26,11 @@ pub(super) fn stats_summary_cache() -> &'static Cache<String, Arc<StatsSummaryRe
             .time_to_idle(Duration::from_secs(STATS_SUMMARY_CACHE_TTI_SECS))
             .build()
     })
+}
+
+/// 预聚合任务完成后调用，避免缓存返回“看不到刚刚聚合的新一天数据”的旧结果。
+pub fn invalidate_all_stats_summary_cache() {
+    stats_summary_cache().invalidate_all();
 }
 
 pub(super) fn build_stats_summary_cache_key(

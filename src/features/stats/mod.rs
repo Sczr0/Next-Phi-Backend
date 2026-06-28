@@ -261,31 +261,44 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
                 .to_string();
 
             tracing::info!("开始每日预聚合: {yesterday}");
-            if let Err(e) = agg_storage.aggregate_day(&yesterday).await {
-                tracing::warn!("每日预聚合失败 ({yesterday}): {e}");
-            } else {
-                tracing::info!("每日预聚合完成: {yesterday}");
+            match agg_storage.aggregate_day(&yesterday).await {
+                Ok(()) => tracing::info!("每日预聚合完成: {yesterday}"),
+                Err(e) => tracing::warn!("每日预聚合失败 ({yesterday}): {e}"),
             }
+            // 预聚合新写入后清理 summary 缓存，避免返回看不到上一日新增数据的旧结果。
+            crate::features::stats::handler::invalidate_all_stats_summary_cache();
         }
     });
 
-    // ── 启动时回填预聚合（避免首次启动后 summary 扫描全表）──
+    // ── 启动时后台补齐预聚合（覆盖热窗口内所有缺失日，保证 summary 快路径准确可用）──
     {
         let catchup_storage = storage.clone();
-        // 启动时只回填最近 7 天，完整历史由每日聚合任务补齐
-        let catchup_days = 7i64.min(i64::from(config.stats.retention_hot_days));
+        let catchup_retention = config.stats.retention_hot_days;
         tokio::spawn(async move {
-            use chrono::Utc;
-            let today = Utc::now().date_naive();
-            for i in (1..=catchup_days).rev() {
-                let day = (today - chrono::Duration::days(i))
-                    .format("%Y-%m-%d")
-                    .to_string();
-                if let Err(e) = catchup_storage.aggregate_day(&day).await {
-                    tracing::warn!("启动回填预聚合失败 ({day}): {e}");
+            tracing::info!(
+                "summary 预补齐启动：检查热窗口 {} 天内缺失 daily_agg",
+                catchup_retention
+            );
+            let done = match catchup_storage
+                .backfill_missing_daily_aggregate_days(catchup_retention)
+                .await
+            {
+                Ok(done) => done,
+                Err(e) => {
+                    tracing::warn!("summary 预补齐失败: {e}");
+                    return;
                 }
+            };
+            // 补齐完毕后写入哨兵，summary 才会启用快速路径。
+            if let Err(e) = catchup_storage
+                .set_stats_meta("backfill_complete", "true")
+                .await
+            {
+                tracing::warn!("backfill_complete 标记写入失败: {e}");
+                return;
             }
-            tracing::info!("启动回填预聚合完成 ({} 天)", catchup_days);
+            tracing::info!("summary 预补齐完成 (补齐 {} 天)", done.len());
+            crate::features::stats::handler::invalidate_all_stats_summary_cache();
         });
     }
 
