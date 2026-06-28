@@ -18,9 +18,9 @@ impl BnLayout {
     pub(super) fn new(score_count: usize, ap_scores_empty: bool) -> Self {
         let width = 1200;
         let header_height = 120;
-        // 92px：容纳三行 14px 底栏正文（生成时间行 + 签名两行），并留有上下边距。
-        // 签名行由 `image::signing::inject_sig_footer` 在 generated 行下方补两行 tspan。
-        let footer_height = 92;
+        // 84px：容纳三行 14px 底栏正文（生成时间行 + 签名两行），
+        // footer_y 公式使生成行到卡片底保持原始 45px 间距。
+        let footer_height = 84;
         let main_card_padding_outer = 12;
         let ap_card_padding_outer = 12;
         let columns = 3;

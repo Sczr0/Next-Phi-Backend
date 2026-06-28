@@ -157,9 +157,11 @@ pub(super) fn write_footer(ctx: BnFooterRenderContext<'_>) -> Result<(), AppErro
         footer_height,
     } = ctx;
 
-    // 顶部对齐底栏区：generated 文本占用第 1 行，下方预留两行（18px×2）
-    // 供签名 tspan 接续，底部留出充足边距。
-    let footer_y = f64::from(total_height - footer_height) + 18.0;
+    // 底栏第 1 行的基线 y，使它与上方卡片的间距保持为 45px（与原始设计一致），
+    // 同时签名 tspan 在第 2/3 行（+18/+36）落在底栏区域内、底部留边距。
+    // 公式推导：卡片底 = total - H - 10，距生成行 = (total - H + PAD) - (total - H - 10) = PAD + 10；
+    // H ≥ 75 时两行签名 baseline 不超画布（PAD = 35）。
+    let footer_y = f64::from(total_height - footer_height) + 35.0;
     let footer_padding = 40.0;
 
     let generated_text = generated_at_utc8_text();
