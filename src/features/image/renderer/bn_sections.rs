@@ -22,8 +22,10 @@ pub(super) struct BnHeaderRenderContext<'a> {
 pub(super) struct BnFooterRenderContext<'a> {
     pub(super) svg: &'a mut String,
     pub(super) stats: &'a PlayerStats,
+    #[allow(dead_code)]
     pub(super) width: u32,
     pub(super) total_height: u32,
+    #[allow(dead_code)]
     pub(super) footer_height: u32,
 }
 
@@ -152,37 +154,29 @@ pub(super) fn write_footer(ctx: BnFooterRenderContext<'_>) -> Result<(), AppErro
     let BnFooterRenderContext {
         svg,
         stats,
-        width,
+        width: _,
         total_height,
-        footer_height,
+        footer_height: _,
     } = ctx;
 
-    // 底栏第 1 行的基线 y，使它与上方卡片的间距保持为 45px（与原始设计一致），
-    // 同时签名 tspan 在第 2/3 行（+18/+36）落在底栏区域内、底部留边距。
-    // 公式推导：卡片底 = total - H - 10，距生成行 = (total - H + PAD) - (total - H - 10) = PAD + 10；
-    // H ≥ 75 时两行签名 baseline 不超画布（PAD = 35）。
-    let footer_y = f64::from(total_height - footer_height) + 35.0;
-    let footer_padding = 40.0;
+    // 垂直居中：3 行文本块（生成行 + 签名 2 行）视觉高 ≈ 52px，
+    // 在 84px 底栏区内上下均分 → 首行 baseline = total - 56。
+    let footer_y = f64::from(total_height) - 56.0;
 
+    // 水平居中：x="50%" + text-anchor="middle"，签名继承此锚点。
     let generated_text = generated_at_utc8_text();
+    let line_text = if let Some(custom) = &stats.custom_footer_text
+        && !custom.is_empty()
+    {
+        format!("{generated_text} · {}", escape_xml(custom))
+    } else {
+        generated_text
+    };
     writeln!(
         svg,
-        r#"<text x="{footer_padding}" y="{footer_y:.1}" class="text-footer" text-anchor="start">{generated_text}</text>"#
+        r#"<text x="50%" y="{footer_y:.1}" class="text-footer" text-anchor="middle">{line_text}</text>"#
     )
     .map_err(svg_fmt_error)?;
-
-    if let Some(custom_text) = &stats.custom_footer_text
-        && !custom_text.is_empty()
-    {
-        writeln!(
-            svg,
-            r#"<text x="{}" y="{:.1}" class="text-footer" text-anchor="end">{}</text>"#,
-            f64::from(width) - footer_padding,
-            footer_y,
-            escape_xml(custom_text)
-        )
-        .map_err(svg_fmt_error)?;
-    }
 
     Ok(())
 }
