@@ -103,6 +103,15 @@ pub struct VerifyResponse {
     pub content_hash: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nonce: Option<String>,
+    // ── v4-beta 字段 ──
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub merkle_root: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ed_sig: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -133,6 +142,10 @@ pub async fn verify_image(
             request_id: None,
             content_hash: None,
             nonce: None,
+            merkle_root: None,
+            score_count: None,
+            ed_sig: None,
+            version: None,
             error: Some("服务端未配置签名密钥".into()),
         }));
     }
@@ -141,6 +154,13 @@ pub async fn verify_image(
         Ok(sig) => {
             let signed_at = chrono::DateTime::from_timestamp(sig.timestamp.cast_signed(), 0)
                 .map(|dt| dt.to_rfc3339());
+            let version = if sig.ed_sig.is_some() {
+                Some("v4-beta".to_string())
+            } else if !sig.hmac.is_empty() {
+                Some("v3".to_string())
+            } else {
+                None
+            };
             Ok(Json(VerifyResponse {
                 valid: true,
                 signed_at,
@@ -148,6 +168,10 @@ pub async fn verify_image(
                 request_id: sig.request_id,
                 content_hash: Some(sig.content_hash),
                 nonce: Some(sig.nonce),
+                merkle_root: sig.merkle_root,
+                score_count: sig.score_count,
+                ed_sig: sig.ed_sig,
+                version,
                 error: None,
             }))
         }
@@ -158,6 +182,10 @@ pub async fn verify_image(
             request_id: None,
             content_hash: None,
             nonce: None,
+            merkle_root: None,
+            score_count: None,
+            ed_sig: None,
+            version: None,
             error: Some(e.to_string()),
         })),
     }
@@ -196,6 +224,10 @@ pub async fn verify_image_get(
             request_id: None,
             content_hash: None,
             nonce: None,
+            merkle_root: None,
+            score_count: None,
+            ed_sig: None,
+            version: None,
             error: Some("缺少 svg 参数".into()),
         }));
     }

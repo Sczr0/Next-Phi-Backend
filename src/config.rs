@@ -782,7 +782,7 @@ pub struct ImageSigningConfig {
     /// 是否启用图片签名
     #[serde(default = "ImageSigningConfig::default_enabled")]
     pub enabled: bool,
-    /// HMAC-SHA256 签名密钥
+    /// HMAC-SHA256 签名密钥（v3）
     #[serde(default)]
     pub key: String,
     /// 签名有效窗口期（秒），超出窗口的签名视为过期（0=不限制）
@@ -791,6 +791,16 @@ pub struct ImageSigningConfig {
     /// 是否公开验证端点（GET /verify）
     #[serde(default = "ImageSigningConfig::default_public_verify")]
     pub public_verify: bool,
+
+    // ── v4-beta 非对称签名 ──
+    /// Ed25519 签名密钥种子（64 hex = 32 bytes），为空时回退到 v3 HMAC。
+    /// 配置文件 / 环境变量 `APP_IMAGE_ED25519_SEED` 均可设置。
+    #[serde(default = "ImageSigningConfig::default_ed25519_seed")]
+    pub ed25519_seed_hex: String,
+    /// HMAC-SHA256 盐值，用于盲化 Merkle 叶子哈希，防预计算攻击。
+    /// 为空时使用 `key` 字段作为盐（向后兼容）；也可独立设置。
+    #[serde(default)]
+    pub merkle_salt: String,
 }
 
 impl ImageSigningConfig {
@@ -803,6 +813,9 @@ impl ImageSigningConfig {
     fn default_public_verify() -> bool {
         false
     }
+    fn default_ed25519_seed() -> String {
+        std::env::var("APP_IMAGE_ED25519_SEED").unwrap_or_default()
+    }
     fn default_key() -> String {
         std::env::var("APP_IMAGE_SIGNING_KEY").unwrap_or_default()
     }
@@ -814,10 +827,39 @@ impl ImageSigningConfig {
         if k.is_empty() { None } else { Some(k) }
     }
 
-    /// 是否实际可用（已启用 + 有密钥）。
+    /// 返回 Ed25519 种子（32 bytes），从 hex 解码。
+    #[must_use]
+    pub fn effective_ed25519_seed(&self) -> Option<[u8; 32]> {
+        let hex_str = if self.ed25519_seed_hex.trim().is_empty() {
+            std::env::var("APP_IMAGE_ED25519_SEED").ok()?
+        } else {
+            self.ed25519_seed_hex.trim().to_string()
+        };
+        let bytes = hex::decode(hex_str.trim()).ok()?;
+        bytes.try_into().ok()
+    }
+
+    /// 返回 Merkle 叶子盐值，优先使用独立配置，其次使用 `key`。
+    #[must_use]
+    pub fn effective_merkle_salt(&self) -> &str {
+        let salt = self.merkle_salt.trim();
+        if salt.is_empty() {
+            self.key.trim()
+        } else {
+            salt
+        }
+    }
+
+    /// 是否实际可用（已启用 + 有密钥或 Ed25519 种子）。
     #[must_use]
     pub fn is_usable(&self) -> bool {
-        self.enabled && self.effective_key().is_some()
+        self.enabled && (self.effective_key().is_some() || self.effective_ed25519_seed().is_some())
+    }
+
+    /// 是否启用 v4-beta（Ed25519 非对称签名）。
+    #[must_use]
+    pub fn is_v4_usable(&self) -> bool {
+        self.enabled && self.effective_ed25519_seed().is_some()
     }
 }
 
@@ -828,6 +870,8 @@ impl Default for ImageSigningConfig {
             key: Self::default_key(),
             ttl_secs: Self::default_ttl_secs(),
             public_verify: Self::default_public_verify(),
+            ed25519_seed_hex: Self::default_ed25519_seed(),
+            merkle_salt: String::new(),
         }
     }
 }

@@ -169,6 +169,7 @@ pub async fn render_bn_user(
 
     // SVG 生成会触发磁盘 IO/图片解码/目录索引等阻塞操作，必须移出 tokio worker。
     let svg_options = SvgRenderOptions::from_query(public_illustration_base_url, &q);
+    let records_for_sig = records.clone();
     let svg = spawn_blocking_svg_generation(move || {
         renderer::generate_svg_string(
             &records,
@@ -185,7 +186,24 @@ pub async fn render_bn_user(
     // 签名注入：用户自报成绩无 user_hash，uid 标记为 anon
     let signed_svg = {
         let signing_cfg = &AppConfig::global().image.signing;
-        if signing_cfg.is_usable() {
+        if signing_cfg.is_v4_usable() {
+            let score_tuples: Vec<(&str, &str, f64, f64)> = records_for_sig
+                .iter()
+                .map(|r| {
+                    (
+                        r.song_id.as_str(),
+                        r.difficulty.as_str(),
+                        r.score.unwrap_or(0.0),
+                        r.acc,
+                    )
+                })
+                .collect();
+            if let Some(sig) = signing::sign_svg_v4(&svg, signing_cfg, &score_tuples, None) {
+                signing::inject_sig_footer(&svg, &sig)
+            } else {
+                svg
+            }
+        } else if signing_cfg.is_usable() {
             if let Some(sig) = signing::sign_svg(&svg, signing_cfg, None) {
                 signing::inject_sig_footer(&svg, &sig)
             } else {

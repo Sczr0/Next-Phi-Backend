@@ -1,7 +1,9 @@
 use crate::config::{CdnAuthMode, IllustrationSigningConfig, ImageSigningConfig};
 use crate::error::AppError;
+use base64::Engine as _;
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier};
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 use std::fmt::Write as _;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -113,8 +115,13 @@ fn format_timestamp_utc8(timestamp: u64) -> String {
 /// SVG 签名协议的版本标识。
 /// - v3: 新增 hash（明文 SHA-256，客户端可本地校验）+ nonce（UUIDv7 防重放）
 const LILITH_SIG_VERSION: &str = "v3";
+/// - v4-beta: Ed25519 非对称签名 + 成绩 Merkle 树，不依赖 SVG 原文即可验证。
+const LILITH_SIG_VERSION_V4: &str = "v4-beta";
 /// SVG 签名在 XML 注释中的前缀模式。
 const LILITH_SIG_PREFIX: &str = "lilith-sig";
+
+/// v4-beta Merkle 叶子哈希结构版本字节，用于向前兼容字段扩展。
+const MERKLE_LEAF_VERSION: u8 = 0x01;
 
 /// 生成 UUIDv7（时间排序 UUID，毫秒精度）。
 ///
@@ -131,6 +138,7 @@ fn uuid_v7() -> String {
 /// 从 SVG 文本中提取的签名信息。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SvgSignature {
+    // ── v3 字段 ──
     pub hmac: String,
     pub timestamp: u64,
     pub user_hash_prefix: Option<String>,
@@ -139,6 +147,14 @@ pub struct SvgSignature {
     pub content_hash: String,
     /// UUIDv7，防签名重放
     pub nonce: String,
+
+    // ── v4-beta 字段（v3 时为 None）──
+    /// Ed25519 签名，base64 编码
+    pub ed_sig: Option<String>,
+    /// 成绩 Merkle 树根，64 hex
+    pub merkle_root: Option<String>,
+    /// 参与 Merkle 树的成绩条数
+    pub score_count: Option<usize>,
 }
 
 /// 计算 SVG 内容的 SHA-256 摘要用于签名 payload。
@@ -189,6 +205,123 @@ pub fn sign_svg(
         },
         content_hash,
         nonce,
+        ed_sig: None,
+        merkle_root: None,
+        score_count: None,
+    })
+}
+
+// ── v4-beta：成绩 Merkle 树 ──
+
+/// 构建成绩默克尔树根（64 hex）。
+///
+/// 叶节点 = HMAC-SHA256(salt, version_byte || song_id || difficulty || score || acc)
+/// 两两合并 SHA-256(nodeL || nodeR)，奇数时复制末叶。
+pub fn build_score_merkle(
+    scores: &[(impl AsRef<str>, impl AsRef<str>, f64, f64)],
+    salt: &str,
+) -> String {
+    let salt_bytes = salt.as_bytes();
+    let mut hashes: Vec<Vec<u8>> = Vec::with_capacity(scores.len());
+    for (song_id, diff, score, acc) in scores {
+        let leaf = hash_merkle_leaf(salt_bytes, song_id.as_ref(), diff.as_ref(), *score, *acc);
+        hashes.push(leaf);
+    }
+    if hashes.is_empty() {
+        return hex::encode([0u8; 32]);
+    }
+    while hashes.len() > 1 {
+        let mut next = Vec::with_capacity(hashes.len().div_ceil(2));
+        for chunk in hashes.chunks(2) {
+            let left = &chunk[0];
+            let right = chunk.get(1).unwrap_or(left);
+            let combined: Vec<u8> = left.iter().chain(right.iter()).copied().collect();
+            let parent = Sha256::digest(&combined);
+            next.push(parent.to_vec());
+        }
+        hashes = next;
+    }
+    hex::encode(&hashes[0])
+}
+
+/// HMAC-SHA256(salt, version || song_id || difficulty || score_bytes || acc_bytes)
+fn hash_merkle_leaf(salt: &[u8], song_id: &str, diff: &str, score: f64, acc: f64) -> Vec<u8> {
+    let mut mac = Hmac::<Sha256>::new_from_slice(salt).expect("HMAC key");
+    mac.update(&[MERKLE_LEAF_VERSION]);
+    mac.update(song_id.as_bytes());
+    mac.update(diff.as_bytes());
+    mac.update(&score.to_le_bytes());
+    mac.update(&acc.to_le_bytes());
+    mac.finalize().into_bytes().to_vec()
+}
+
+// ── v4-beta：Ed25519 签名 ──
+
+/// 用 Ed25519 对 payload 签名，返回 base64 字符串。
+fn sign_ed25519(seed: &[u8; 32], payload: &str) -> String {
+    let sk = SigningKey::from_bytes(seed);
+    let sig = sk.sign(payload.as_bytes());
+    base64::engine::general_purpose::STANDARD.encode(sig.to_bytes())
+}
+
+/// 从种子派生验证公钥并校验签名。
+fn verify_ed25519(seed: &[u8; 32], payload: &str, sig_b64: &str) -> bool {
+    let sk = SigningKey::from_bytes(seed);
+    let pk = sk.verifying_key();
+    let Ok(sig_bytes) = base64::engine::general_purpose::STANDARD.decode(sig_b64) else {
+        return false;
+    };
+    let Ok(sig) = Signature::from_slice(&sig_bytes) else {
+        return false;
+    };
+    pk.verify(payload.as_bytes(), &sig).is_ok()
+}
+
+/// 对 SVG 签名（v4-beta）。
+///
+/// 签名 payload = `{merkle_root}:{n}:{uid}:{timestamp}:{rid}:{nonce}`
+/// 使用 Ed25519 + server seed 签名。
+pub fn sign_svg_v4(
+    svg: &str,
+    config: &ImageSigningConfig,
+    scores: &[(impl AsRef<str>, impl AsRef<str>, f64, f64)],
+    user_hash: Option<&str>,
+) -> Option<SvgSignature> {
+    let seed = config.effective_ed25519_seed()?;
+    let salt = config.effective_merkle_salt();
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let merkle_root = build_score_merkle(scores, salt);
+    let n = scores.len();
+    let nonce = uuid_v7();
+    let user_hash_part = user_hash.map_or("anon", |h| {
+        let end = h.char_indices().nth(8).map_or(h.len(), |(i, _)| i);
+        &h[..end]
+    });
+    let request_id = crate::request_id::current_request_id().unwrap_or_default();
+
+    let payload = format!("{merkle_root}:{n}:{user_hash_part}:{timestamp}:{request_id}:{nonce}");
+    let ed_sig = sign_ed25519(&seed, &payload);
+
+    let content_hash = svg_sha256(svg);
+
+    Some(SvgSignature {
+        hmac: String::new(),
+        timestamp,
+        user_hash_prefix: Some(user_hash_part.to_string()),
+        request_id: if request_id.is_empty() {
+            None
+        } else {
+            Some(request_id)
+        },
+        content_hash,
+        nonce,
+        ed_sig: Some(ed_sig),
+        merkle_root: Some(merkle_root),
+        score_count: Some(n),
     })
 }
 
@@ -220,6 +353,51 @@ fn build_sig_line(sig: &SvgSignature) -> String {
     }
 }
 
+/// v4-beta 签名行的完整字符串。
+/// 格式：`lilith-sig:v4-beta:sig={base64}:t={unix}:uid={prefix}:rid={rid}:root={hex}:n={count}:nonce={uuidv7}`
+fn build_sig_line_v4(sig: &SvgSignature) -> String {
+    let uid = sig.user_hash_prefix.as_deref().unwrap_or("anon");
+    let rid = sig.request_id.as_deref().unwrap_or("");
+    let ed_sig = sig.ed_sig.as_deref().unwrap_or("");
+    let root = sig.merkle_root.as_deref().unwrap_or("");
+    let n = sig.score_count.unwrap_or(0);
+    if rid.is_empty() {
+        format!(
+            "{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION_V4}:sig={ed_sig}:t={}:uid={uid}:root={root}:n={n}:nonce={}",
+            sig.timestamp, sig.nonce
+        )
+    } else {
+        format!(
+            "{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION_V4}:sig={ed_sig}:t={}:uid={uid}:rid={rid}:root={root}:n={n}:nonce={}",
+            sig.timestamp, sig.nonce
+        )
+    }
+}
+
+/// 根据签名版本构建签名字符串。
+fn build_sig_line_any(sig: &SvgSignature) -> String {
+    if sig.ed_sig.is_some() {
+        build_sig_line_v4(sig)
+    } else {
+        build_sig_line(sig)
+    }
+}
+
+/// 将签名字符串拆为两行，适配宽度约 1120px。
+/// v3 在 `:hash=` 的 `:` 处拆分；v4 在 `:root=` 的 `:` 处拆分。
+/// line1 末尾保留 `:`，line2 起始为 `hash=` / `root=`。
+fn wrap_sig_lines(full: &str) -> Vec<String> {
+    // 优先 v4 分隔符，其次 v3
+    for sep in [":root=", ":hash="] {
+        if let Some(idx) = full.find(sep) {
+            let line1 = full[..idx].to_string();
+            let line2 = full[idx + 1..].to_string();
+            return vec![format!("{line1}:"), line2];
+        }
+    }
+    vec![full.to_string()]
+}
+
 /// 将签名行注入到 SVG 底栏：在现有 "Generated by Phi-Backend ..." 文本下方
 /// 换行，复用同一 `class`（即同字体、字号、颜色）与同一 `x` / `text-anchor`。
 ///
@@ -236,7 +414,7 @@ fn build_sig_line(sig: &SvgSignature) -> String {
 /// 不会修改画布尺寸：底栏须在渲染阶段已预留足够高度
 /// （见 `bn_layout::BnLayout::footer_height` 与 `song_sections::write_footer`）。
 pub fn inject_sig_footer(svg: &str, sig: &SvgSignature) -> String {
-    let full = build_sig_line(sig);
+    let full = build_sig_line_any(sig);
     let lines = wrap_sig_lines(&full);
     let lines: Vec<String> = lines.into_iter().map(|s| escape_xml_min(&s)).collect();
     let text_elem = match locate_generated_footer_tag(svg) {
@@ -253,20 +431,6 @@ pub fn inject_sig_footer(svg: &str, sig: &SvgSignature) -> String {
     } else {
         format!("{svg}{text_elem}")
     }
-}
-
-/// 将签名串拆为最多 `SIG_WRAP_LINES` 段，使拼接（line1 + line2 + ... 不补分隔符）后
-/// 还能还原原文。具体在 `:hash=` 的前导 `:` 处拆，line1 末尾保留 `:`，
-/// line2 起始为 `hash=…`，因此 line1 + line2 仍是合法签名串。
-/// 若找不到该分隔点则整串放进首行。
-fn wrap_sig_lines(full: &str) -> Vec<String> {
-    if let Some(idx) = full.find(":hash=") {
-        let line1 = full[..idx].to_string();
-        let line2 = full[idx + 1..].to_string(); // 跳过 ':'，保留 "hash=…"
-        // line1 末补 ':'，拼接 line1+':'+line2 才是原文。
-        return vec![format!("{line1}:"), line2];
-    }
-    vec![full.to_string()]
 }
 
 /// 构造紧接底栏正文下方的签名 `<text>` 元素，复用其 `x` / `class` / `text-anchor`，
@@ -447,18 +611,29 @@ fn strip_svg_signature(svg: &str) -> String {
     format!("{}{}", &svg[..effective_start], &svg[effective_end..])
 }
 
-/// 从 SVG 字符串中提取签名信息。
+/// 从 SVG 字符串中提取签名信息（v3 或 v4-beta）。
 ///
-/// 匹配 footer 中的签名行：`lilith-sig:v3:hmac=<hex>:t=<unix_ts>:uid=<prefix>:...`
+/// 自动检测版本：先尝试 v4-beta pattern，再回退 v3。
 pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
-    let pattern = format!("{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:");
-    let start = svg.find(&pattern)?;
+    let pattern_v4 = format!("{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION_V4}:");
+    if let Some(sig) = extract_svg_signature_inner(svg, &pattern_v4) {
+        return Some(sig);
+    }
+    let pattern_v3 = format!("{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION}:");
+    extract_svg_signature_inner(svg, &pattern_v3)
+}
+
+fn extract_svg_signature_inner(svg: &str, pattern: &str) -> Option<SvgSignature> {
+    let start = svg.find(pattern)?;
     // 签名可能被拆成多行 `<tspan>`；抽到包含签名的 `<text>` 结束为止，
-    // 去掉内部所有标签后拼接纯文本，即为 `build_sig_line` 原始输出。
+    // 去掉内部所有标签后拼接纯文本，即为 `build_sig_line` / `build_sig_line_v4` 原始输出。
     let text_close = svg[start..].find("</text>")?;
     let segment = &svg[start..start + text_close];
     let body = strip_xml_tags(segment);
-    // body = "lilith-sig:v3:hmac=xxx:t=12345:uid=abcd1234:hash=...:nonce=..."
+    // body v3: "lilith-sig:v3:hmac=xxx:t=12345:uid=abcd1234:hash=...:nonce=..."
+    // body v4: "lilith-sig:v4-beta:sig=base64...:t=12345:uid=abcd1234:root=...:n=30:nonce=..."
+
+    let is_v4 = body.contains(LILITH_SIG_VERSION_V4);
 
     let mut hmac: Option<String> = None;
     let mut timestamp: Option<u64> = None;
@@ -466,9 +641,14 @@ pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
     let mut rid: Option<String> = None;
     let mut content_hash: Option<String> = None;
     let mut nonce: Option<String> = None;
+    let mut ed_sig: Option<String> = None;
+    let mut merkle_root: Option<String> = None;
+    let mut score_count: Option<usize> = None;
 
     for part in body.split(':') {
-        if let Some(v) = part.strip_prefix("hmac=") {
+        if let Some(v) = part.strip_prefix("sig=") {
+            ed_sig = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("hmac=") {
             hmac = Some(v.to_string());
         } else if let Some(v) = part.strip_prefix("t=") {
             timestamp = v.parse::<u64>().ok();
@@ -478,19 +658,41 @@ pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
             rid = Some(v.to_string());
         } else if let Some(v) = part.strip_prefix("hash=") {
             content_hash = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("root=") {
+            merkle_root = Some(v.to_string());
+        } else if let Some(v) = part.strip_prefix("n=") {
+            score_count = v.parse::<usize>().ok();
         } else if let Some(v) = part.strip_prefix("nonce=") {
             nonce = Some(v.to_string());
         }
     }
 
-    Some(SvgSignature {
-        hmac: hmac?,
-        timestamp: timestamp?,
-        user_hash_prefix: uid,
-        request_id: rid,
-        content_hash: content_hash.unwrap_or_default(),
-        nonce: nonce.unwrap_or_default(),
-    })
+    if is_v4 {
+        let _ = hmac; // unused in v4
+        Some(SvgSignature {
+            hmac: String::new(),
+            timestamp: timestamp?,
+            user_hash_prefix: uid,
+            request_id: rid,
+            content_hash: content_hash.unwrap_or_default(),
+            nonce: nonce.unwrap_or_default(),
+            ed_sig: Some(ed_sig?),
+            merkle_root: Some(merkle_root?),
+            score_count,
+        })
+    } else {
+        Some(SvgSignature {
+            hmac: hmac?,
+            timestamp: timestamp?,
+            user_hash_prefix: uid,
+            request_id: rid,
+            content_hash: content_hash.unwrap_or_default(),
+            nonce: nonce.unwrap_or_default(),
+            ed_sig: None,
+            merkle_root: None,
+            score_count: None,
+        })
+    }
 }
 
 /// 验证 SVG 签名是否有效。
@@ -504,17 +706,12 @@ pub fn verify_svg_signature(
     svg: &str,
     config: &ImageSigningConfig,
 ) -> Result<SvgSignature, AppError> {
-    let key = config
-        .effective_key()
-        .ok_or_else(|| AppError::Validation("服务端未配置签名密钥".into()))?;
-
     let extracted = extract_svg_signature(svg)
         .ok_or_else(|| AppError::Validation("SVG 中未找到 lilith-sig 签名".into()))?;
 
-    // 重建 payload：重算 SHA-256 并与签名字段交叉校验
+    // 内容完整性校验（v3/v4 通用）：剥离签名后 SHA-256 须与 hash 字段一致。
     let clean_svg = strip_svg_signature(svg);
     let actual_hash = svg_sha256(&clean_svg);
-
     if actual_hash != extracted.content_hash {
         return Err(AppError::Validation(
             "签名校验失败：内容 SHA-256 与签名中的 hash 不匹配（SVG 被篡改）".into(),
@@ -523,17 +720,40 @@ pub fn verify_svg_signature(
 
     let uid = extracted.user_hash_prefix.as_deref().unwrap_or("anon");
     let rid = extracted.request_id.as_deref().unwrap_or("");
+
+    // ── v4-beta：Ed25519 验证 ──
+    if let Some(ed_sig) = &extracted.ed_sig {
+        let seed = config
+            .effective_ed25519_seed()
+            .ok_or_else(|| AppError::Validation("服务端未配置 Ed25519 签名种子".into()))?;
+        let root = extracted.merkle_root.as_deref().unwrap_or("");
+        let n = extracted.score_count.unwrap_or(0);
+        let payload = format!(
+            "{root}:{n}:{uid}:{}:{rid}:{}",
+            extracted.timestamp, extracted.nonce
+        );
+        if !verify_ed25519(&seed, &payload, ed_sig) {
+            return Err(AppError::Validation(
+                "签名校验失败：Ed25519 签名不匹配".into(),
+            ));
+        }
+        // 时间窗口
+        check_ttl(config, extracted.timestamp)?;
+        return Ok(extracted);
+    }
+
+    // ── v3：HMAC 验证 ──
+    let key = config
+        .effective_key()
+        .ok_or_else(|| AppError::Validation("服务端未配置签名密钥".into()))?;
     let payload = format!(
         "{}:{uid}:{rid}:{}:{actual_hash}",
         extracted.timestamp, extracted.nonce
     );
-
     let mut mac = Hmac::<Sha256>::new_from_slice(key.as_bytes())
         .map_err(|e| AppError::Internal(format!("HMAC 初始化失败: {e}")))?;
     mac.update(payload.as_bytes());
     let expected = hex::encode(mac.finalize().into_bytes());
-
-    // 恒定时间比较
     if expected.len() != extracted.hmac.len() || {
         let mut acc = 0u8;
         for (a, b) in expected.bytes().zip(extracted.hmac.bytes()) {
@@ -543,14 +763,17 @@ pub fn verify_svg_signature(
     } {
         return Err(AppError::Validation("签名校验失败：HMAC 不匹配".into()));
     }
+    check_ttl(config, extracted.timestamp)?;
+    Ok(extracted)
+}
 
-    // 时间窗口检查
+fn check_ttl(config: &ImageSigningConfig, timestamp: u64) -> Result<(), AppError> {
     if config.ttl_secs > 0 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        let age = now.saturating_sub(extracted.timestamp);
+        let age = now.saturating_sub(timestamp);
         if age > config.ttl_secs {
             return Err(AppError::Validation(format!(
                 "签名已过期（签发于 {}s 前，窗口 {}s）",
@@ -558,8 +781,7 @@ pub fn verify_svg_signature(
             )));
         }
     }
-
-    Ok(extracted)
+    Ok(())
 }
 
 #[cfg(test)]
@@ -640,6 +862,8 @@ mod tests {
             key: "test-signing-key-32bytes-long!!".to_string(),
             ttl_secs: 0,
             public_verify: false,
+            ed25519_seed_hex: String::new(),
+            merkle_salt: String::new(),
         }
     }
 
