@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use sqlx::{ConnectOptions, SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{ConnectOptions, Row, SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::error::AppError;
 
@@ -8,28 +8,22 @@ use super::StatsStorage;
 
 impl StatsStorage {
     pub async fn connect_sqlite(path: &str, wal: bool) -> Result<Self, AppError> {
-        let opt = SqliteConnectOptions::new()
+        // 关键：通过 `SqliteConnectOptions` 的 pragma/factories 设置，确保池中每条连接
+        // （含后台归档/清理、summary 读连接）都生效，避免旧实现里手动 PRAGMA
+        // 只作用于首条连接而导致其它连接仍走默认 synchronous=FULL 的开销。
+        let mut opt = SqliteConnectOptions::new()
             .filename(Path::new(path))
             .create_if_missing(true)
             .busy_timeout(Duration::from_secs(5))
+            .foreign_keys(true)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
             .log_statements(tracing::log::LevelFilter::Off);
+        if wal {
+            opt = opt.journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        }
         let pool = SqlitePool::connect_with(opt)
             .await
             .map_err(|e| AppError::Internal(format!("sqlite connect: {e}")))?;
-        if wal {
-            sqlx::query("PRAGMA journal_mode=WAL;")
-                .execute(&pool)
-                .await
-                .ok();
-        }
-        sqlx::query("PRAGMA synchronous=NORMAL;")
-            .execute(&pool)
-            .await
-            .ok();
-        sqlx::query("PRAGMA foreign_keys=ON;")
-            .execute(&pool)
-            .await
-            .ok();
         Ok(Self { pool })
     }
 
@@ -61,6 +55,43 @@ impl StatsStorage {
         CREATE INDEX IF NOT EXISTS idx_events_ts_user ON events(ts_utc, user_hash)
             WHERE user_hash IS NOT NULL;
 
+        -- 按状态码聚合（http 请求维度），用于 summary status_codes 快速路径
+        CREATE TABLE IF NOT EXISTS daily_status (
+            date TEXT NOT NULL,
+            status INTEGER NOT NULL,
+            count INTEGER NOT NULL,
+            PRIMARY KEY(date, status)
+        );
+        -- 按 instance 聚合（全量事件带 instance 的行），用于 summary instances 快速路径
+        CREATE TABLE IF NOT EXISTS daily_instance (
+            date TEXT NOT NULL,
+            instance TEXT NOT NULL,
+            count INTEGER NOT NULL,
+            last_ts TEXT,
+            PRIMARY KEY(date, instance)
+        );
+        -- 按 feature+action 聚合（业务打点维度），用于 summary actions 快速路径
+        CREATE TABLE IF NOT EXISTS daily_action (
+            date TEXT NOT NULL,
+            feature TEXT NOT NULL,
+            action TEXT NOT NULL,
+            count INTEGER NOT NULL,
+            last_ts TEXT,
+            PRIMARY KEY(date, feature, action)
+        );
+        -- 按 user_hash+kind 聚合（每日去重），用于 summary unique_users / by_kind 快速路径
+        CREATE TABLE IF NOT EXISTS daily_user (
+            date TEXT NOT NULL,
+            user_hash TEXT NOT NULL,
+            kind TEXT,
+            PRIMARY KEY(date, user_hash, kind)
+        );
+        -- 按 client_ip_hash 聚合（每日去重，仅 route NOT NULL 的 http 行），用于 summary unique_ips 快速路径
+        CREATE TABLE IF NOT EXISTS daily_ip (
+            date TEXT NOT NULL,
+            ip_hash TEXT NOT NULL,
+            PRIMARY KEY(date, ip_hash)
+        );
 
         CREATE TABLE IF NOT EXISTS daily_agg (
             date TEXT NOT NULL,
@@ -90,6 +121,13 @@ impl StatsStorage {
             avg_ms REAL,
             max_ms INTEGER,
             PRIMARY KEY(date, feature, route, method)
+        );
+        -- 记录已聚合的 UTC 日（用于 summary 快速路径检测 daily_agg 是否覆盖某段范围）
+        CREATE INDEX IF NOT EXISTS idx_daily_agg_date ON daily_agg(date);
+        -- summary 快速路径只会在「预聚合已补齐」的前提下开启，避免误取部分天 preagg 返回缺失
+        CREATE TABLE IF NOT EXISTS stats_meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
         );
 
         -- Leaderboard tables (no images, textual details only)
@@ -184,6 +222,63 @@ impl StatsStorage {
             .execute(&self.pool)
             .await
             .map_err(|e| AppError::Internal(format!("init schema: {e}")))?;
+        // `daily_agg` 在 fast-path 中需要按 feature/route/max(ts_utc) 输出 last_ts，
+        // 而初始建表不含该列，需幂等补一次。
+        self.ensure_daily_agg_last_ts_column().await?;
+        Ok(())
+    }
+
+    /// 读取 stats_meta 键值。不带缺失 key 返回 None。
+    pub async fn get_stats_meta(&self, key: &str) -> Result<Option<String>, AppError> {
+        let row = sqlx::query("SELECT value FROM stats_meta WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("read stats_meta {key}: {e}")))?;
+        match row {
+            Some(r) => r
+                .try_get::<String, _>("value")
+                .map(Some)
+                .map_err(|e| AppError::Internal(format!("decode stats_meta {key}: {e}"))),
+            None => Ok(None),
+        }
+    }
+
+    /// 写入 stats_meta 键值。
+    pub async fn set_stats_meta(&self, key: &str, value: &str) -> Result<(), AppError> {
+        sqlx::query(
+            "INSERT INTO stats_meta (key, value) VALUES (?, ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("write stats_meta {key}: {e}")))?;
+        Ok(())
+    }
+
+    /// 为历史上未包含 `last_ts` 列的 `daily_agg` 表幂等补列；已存在时跳过。
+    async fn ensure_daily_agg_last_ts_column(&self) -> Result<(), AppError> {
+        let rows = sqlx::query("PRAGMA table_info(daily_agg)")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("table_info daily_agg: {e}")))?;
+        let mut has_last_ts = false;
+        for r in rows {
+            if let Ok(name) = r.try_get::<String, _>("name")
+                && name == "last_ts"
+            {
+                has_last_ts = true;
+                break;
+            }
+        }
+        if !has_last_ts {
+            sqlx::query("ALTER TABLE daily_agg ADD COLUMN last_ts TEXT")
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("alter daily_agg last_ts: {e}")))?;
+        }
         Ok(())
     }
 }

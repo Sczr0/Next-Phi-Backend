@@ -65,6 +65,11 @@ fn dt_utc(y: i32, m: u32, d: u32, hh: u32, mm: u32, ss: u32) -> chrono::DateTime
     Utc.with_ymd_and_hms(y, m, d, hh, mm, ss).single().unwrap()
 }
 
+/// summary 缓存 / 失效逻辑共享进程全局的 moka cache；多个 cache 相关测试并发运行会
+/// 互相干扰（例如主动失效会击穿正在验证“缓存未过”所需的另一路）。用这一把锁串行跑
+/// 走失效机制的 summary cache 测试，避免跨测试不稳。
+static SUMMARY_CACHE_TEST_GUARD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[test]
 fn include_flags_parse_all_and_partials() {
     let a = parse_include_flags(Some("all"));
@@ -511,6 +516,7 @@ async fn stats_summary_latency_percentiles_match_existing_index_rule() {
 
 #[tokio::test]
 async fn stats_summary_cache_returns_stale_within_ttl() {
+    let _guard = SUMMARY_CACHE_TEST_GUARD.lock().await;
     let sqlite_path = tmp_sqlite_path("stats_summary_cache_hit");
     let state = build_test_state(&sqlite_path).await;
     let storage = state.stats_storage.as_ref().unwrap().clone();
@@ -575,6 +581,88 @@ async fn stats_summary_cache_returns_stale_within_ttl() {
 
     assert_eq!(second.unique_users.total, 1);
     assert_eq!(second.unique_users.by_kind.len(), 1);
+}
+
+#[tokio::test]
+async fn stats_summary_cache_invalidates_after_preaggregate_signal() {
+    let _guard = SUMMARY_CACHE_TEST_GUARD.lock().await;
+    let sqlite_path = tmp_sqlite_path("stats_summary_cache_invalidate");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[EventInsert {
+            ts_utc: dt_utc(2025, 12, 24, 0, 1, 0),
+            route: None,
+            feature: Some("bestn".into()),
+            action: Some("render".into()),
+            method: None,
+            status: None,
+            duration_ms: None,
+            user_hash: Some("u1".into()),
+            client_ip_hash: None,
+            instance: Some("inst-a".into()),
+            extra_json: Some(serde_json::json!({"user_kind":"official"})),
+        }])
+        .await
+        .unwrap();
+
+    let query = StatsSummaryQuery {
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
+        timezone: Some("Asia/Shanghai".into()),
+        feature: None,
+        include: Some("user_kinds".into()),
+        top: Some(10),
+    };
+    let Json(first) = get_stats_summary(State(state.clone()), Query(query))
+        .await
+        .unwrap();
+    assert_eq!(first.unique_users.total, 1);
+
+    // 填入新事件后仅缓存冷工作缓存仍返回旧值（应仍为 1），扇口令主动失效后下一轮重新查表。
+    storage
+        .insert_events(&[EventInsert {
+            ts_utc: dt_utc(2025, 12, 24, 0, 2, 0),
+            route: None,
+            feature: Some("save".into()),
+            action: Some("submit".into()),
+            method: None,
+            status: None,
+            duration_ms: None,
+            user_hash: Some("u2".into()),
+            client_ip_hash: None,
+            instance: Some("inst-b".into()),
+            extra_json: Some(serde_json::json!({"user_kind":"taptap"})),
+        }])
+        .await
+        .unwrap();
+
+    let query = StatsSummaryQuery {
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
+        timezone: Some("Asia/Shanghai".into()),
+        feature: None,
+        include: Some("user_kinds".into()),
+        top: Some(10),
+    };
+    let Json(stil_cached) = get_stats_summary(State(state.clone()), Query(query))
+        .await
+        .unwrap();
+    assert_eq!(stil_cached.unique_users.total, 1, " TTL 未过仍读缓存");
+
+    // 预聚合后主动失效，下一次查询应重新打出数据库。
+    invalidate_all_stats_summary_cache();
+    let query = StatsSummaryQuery {
+        start: Some("2025-12-01".into()),
+        end: Some("2025-12-31".into()),
+        timezone: Some("Asia/Shanghai".into()),
+        feature: None,
+        include: Some("user_kinds".into()),
+        top: Some(10),
+    };
+    let Json(refreshed) = get_stats_summary(State(state), Query(query)).await.unwrap();
+    assert_eq!(refreshed.unique_users.total, 2);
 }
 
 #[tokio::test]

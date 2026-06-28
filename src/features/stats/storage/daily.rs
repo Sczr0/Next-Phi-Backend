@@ -1,6 +1,6 @@
 #![allow(clippy::items_after_test_module)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
 use sqlx::{QueryBuilder, Row, Sqlite};
@@ -468,23 +468,32 @@ impl StatsStorage {
 
     // ── 每日预聚合 ──
 
-    /// 将指定日期（UTC）的 events 聚合写入 daily_agg / daily_dau
-    /// 幂等：可重复执行，不会重复计数
+    /// 将指定日期（UTC）的 events 聚合写入 daily_agg / daily_dau / daily_latency，
+    /// 并同步预聚 summary 快速路径所需的三新增表（daily_status / daily_instance /
+    /// daily_action / daily_user / daily_ip）。全部放入单一事务内完成，使 summary
+    /// 在判断“daily_agg 已覆盖某日”后，可信赖地认为该日所有预聚合表一致可见。
+    /// 幂等：可重复执行，不会重复计数。
     pub async fn aggregate_day(&self, day: &str) -> Result<(), AppError> {
         let start = format!("{day}T00:00:00Z");
         let end = format!("{day}T23:59:59Z");
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| AppError::Internal(format!("aggregate begin tx ({day}): {e}")))?;
 
-        // 聚合路由统计数据
+        // 1) daily_agg：按 feature/route/method 聚合计数与错误数，并保留 MAX(ts_utc) 以供 summary last_ts 输出
         sqlx::query(
             r"
-            REPLACE INTO daily_agg (date, feature, route, method, count, err_count)
+            REPLACE INTO daily_agg (date, feature, route, method, count, err_count, last_ts)
             SELECT
                 ? AS date,
                 feature,
                 route,
                 method,
                 COUNT(1) AS count,
-                COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) AS err_count
+                COALESCE(SUM(CASE WHEN status >= 400 THEN 1 ELSE 0 END), 0) AS err_count,
+                MAX(ts_utc) AS last_ts
             FROM events
             WHERE ts_utc >= ? AND ts_utc < ?
             GROUP BY feature, route, method
@@ -493,11 +502,11 @@ impl StatsStorage {
         .bind(day)
         .bind(&start)
         .bind(&end)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Internal(format!("aggregate daily_agg ({day}): {e}")))?;
 
-        // 聚合 DAU
+        // 2) daily_dau：每日去重用户/IP 计数。
         sqlx::query(
             r"
             REPLACE INTO daily_dau (date, active_users, active_ips)
@@ -512,11 +521,11 @@ impl StatsStorage {
         .bind(day)
         .bind(&start)
         .bind(&end)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Internal(format!("aggregate daily_dau ({day}): {e}")))?;
 
-        // 聚合延迟统计
+        // 3) daily_latency：按 feature/route/method 预聚延迟统计。
         sqlx::query(
             r"
             REPLACE INTO daily_latency (date, feature, route, method, sample_count, min_ms, avg_ms, max_ms)
@@ -539,11 +548,161 @@ impl StatsStorage {
         .bind(day)
         .bind(&start)
         .bind(&end)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Internal(format!("aggregate daily_latency ({day}): {e}")))?;
 
+        Self::compound_aggregate_preaggregate_tables(&mut tx, day, &start, &end).await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Internal(format!("aggregate commit ({day}): {e}")))?;
         tracing::info!("daily_agg 预聚合完成: {day}");
+        Ok(())
+    }
+
+    /// 为 summary 快速路径同步预聚三新增表（status / instance / action / user / ip）。
+    /// 复用于 summary 在检测到某日缺失预聚时的按需补齐。
+    async fn compound_aggregate_preaggregate_tables(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        day: &str,
+        start: &str,
+        end: &str,
+    ) -> Result<(), AppError> {
+        // daily_status：(date, status, count) 仅 route NOT NULL 的 http 事件，按状态码计数。
+        sqlx::query("DELETE FROM daily_status WHERE date = ?")
+            .bind(day)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("aggregate daily_status delete ({day}): {e}"))
+            })?;
+        let rows = sqlx::query(
+            r"
+            SELECT ? AS date, status, COUNT(1) AS cnt
+            FROM events
+            WHERE route IS NOT NULL AND status IS NOT NULL AND ts_utc >= ? AND ts_utc < ?
+            GROUP BY status
+            ",
+        )
+        .bind(day)
+        .bind(start)
+        .bind(end)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_status read ({day}): {e}")))?;
+        for r in rows {
+            let date: String = r.try_get("date").unwrap_or_else(|_| day.to_string());
+            let status: i64 = r.try_get("status").unwrap_or(0);
+            let cnt: i64 = r.try_get("cnt").unwrap_or(0);
+            sqlx::query("INSERT INTO daily_status (date, status, count) VALUES (?, ?, ?)")
+                .bind(date)
+                .bind(status)
+                .bind(cnt)
+                .execute(&mut **tx)
+                .await
+                .map_err(|e| {
+                    AppError::Internal(format!("aggregate daily_status insert ({day}): {e}"))
+                })?;
+        }
+
+        // daily_instance：按 instance 聚合（涵盖 http 与业务打点事件），保留 MAX(ts_utc)。
+        sqlx::query("DELETE FROM daily_instance WHERE date = ?")
+            .bind(day)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("aggregate daily_instance delete ({day}): {e}"))
+            })?;
+        sqlx::query(
+            r"
+            INSERT INTO daily_instance (date, instance, count, last_ts)
+            SELECT ? AS date, instance, COUNT(1) AS cnt, MAX(ts_utc) AS last_ts
+            FROM events
+            WHERE instance IS NOT NULL AND ts_utc >= ? AND ts_utc < ?
+            GROUP BY instance
+            ",
+        )
+        .bind(day)
+        .bind(start)
+        .bind(end)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_instance ({day}): {e}")))?;
+
+        // daily_action：按 feature+action 聚合（业务打点），保留 MAX(ts_utc)。
+        sqlx::query("DELETE FROM daily_action WHERE date = ?")
+            .bind(day)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("aggregate daily_action delete ({day}): {e}"))
+            })?;
+        sqlx::query(
+            r"        
+            INSERT INTO daily_action (date, feature, action, count, last_ts)
+            SELECT ? AS date, feature, action, COUNT(1) AS cnt, MAX(ts_utc) AS last_ts
+            FROM events
+            WHERE feature IS NOT NULL AND action IS NOT NULL AND ts_utc >= ? AND ts_utc < ?
+            GROUP BY feature, action
+            ",
+        )
+        .bind(day)
+        .bind(start)
+        .bind(end)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_action ({day}): {e}")))?;
+
+        // daily_user：按 (date, user_hash, kind) 每日去重，kind 从 extra_json 提取。
+        sqlx::query("DELETE FROM daily_user WHERE date = ?")
+            .bind(day)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| AppError::Internal(format!("aggregate daily_user delete ({day}): {e}")))?;
+        sqlx::query(
+            r"
+            INSERT INTO daily_user (date, user_hash, kind)
+            SELECT DISTINCT
+                ? AS date,
+                user_hash,
+                CASE
+                    WHEN json_valid(extra_json)
+                         AND json_type(extra_json, '$.user_kind') = 'text'
+                    THEN json_extract(extra_json, '$.user_kind')
+                    ELSE NULL
+                END AS kind
+            FROM events
+            WHERE user_hash IS NOT NULL AND ts_utc >= ? AND ts_utc < ?
+            ",
+        )
+        .bind(day)
+        .bind(start)
+        .bind(end)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_user ({day}): {e}")))?;
+
+        // daily_ip：按 (date, ip_hash) 每日去重，仅 route NOT NULL 的 http 行。
+        sqlx::query("DELETE FROM daily_ip WHERE date = ?")
+            .bind(day)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| AppError::Internal(format!("aggregate daily_ip delete ({day}): {e}")))?;
+        sqlx::query(
+            r"
+            INSERT INTO daily_ip (date, ip_hash)
+            SELECT DISTINCT ? AS date, client_ip_hash
+            FROM events
+            WHERE route IS NOT NULL AND client_ip_hash IS NOT NULL AND ts_utc >= ? AND ts_utc < ?
+            ",
+        )
+        .bind(day)
+        .bind(start)
+        .bind(end)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| AppError::Internal(format!("aggregate daily_ip ({day}): {e}")))?;
         Ok(())
     }
 
@@ -586,6 +745,77 @@ impl StatsStorage {
             });
         }
         Ok(out)
+    }
+
+    /// 补齐缺失于 `daily_agg` 且热窗口内尚未预聚的 UTC 日（逐天调用 `aggregate_day`）。
+    /// 返回本次补齐的日期列表。
+    pub async fn backfill_missing_daily_aggregate_days(
+        &self,
+        retention_hot_days: u32,
+    ) -> Result<Vec<NaiveDate>, AppError> {
+        let today = Utc::now().date_naive();
+        let lower = today - chrono::Duration::days(i64::from(retention_hot_days.saturating_sub(1)));
+        let upper = today - chrono::Duration::days(1);
+
+        let event_days = self.list_event_day_counts().await?;
+        let agg_day_rows = sqlx::query(
+            "SELECT DISTINCT date FROM daily_agg WHERE date BETWEEN ? AND ? ORDER BY date ASC",
+        )
+        .bind(lower.format("%Y-%m-%d").to_string())
+        .bind(upper.format("%Y-%m-%d").to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("backfill list daily_agg days: {e}")))?;
+        let agg_days: BTreeSet<String> = agg_day_rows
+            .iter()
+            .filter_map(|r| r.try_get::<String, _>("date").ok())
+            .collect();
+
+        let mut missing: Vec<NaiveDate> = Vec::new();
+        for (day_s, count) in event_days {
+            if count > 0
+                && !agg_days.contains(&day_s)
+                && let Ok(d) = NaiveDate::parse_from_str(&day_s, "%Y-%m-%d")
+                && (d >= lower)
+                && (d <= upper)
+            {
+                missing.push(d);
+            }
+        }
+        missing.sort_unstable();
+
+        let mut done = Vec::new();
+        for day in &missing {
+            if let Err(e) = self
+                .aggregate_day(&day.format("%Y-%m-%d").to_string())
+                .await
+            {
+                tracing::warn!("summary 背景补预聚失败 ({day}): {e}");
+                // 避免单个失败终止后续
+                continue;
+            }
+            done.push(*day);
+            // 限速，避免 IO 峰值干扰热路径。
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        Ok(done)
+    }
+
+    /// 用于 summary 快速路径检测：给定 UTC 起止日（含）区间内是否已有 daily_agg 行。
+    pub async fn daily_agg_has_rows_in_range(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<bool, AppError> {
+        let r = sqlx::query(
+            "SELECT EXISTS(SELECT 1 FROM daily_agg WHERE date BETWEEN ? AND ?) AS exists_flag",
+        )
+        .bind(start_date)
+        .bind(end_date)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("daily_agg has rows check: {e}")))?;
+        Ok(r.try_get::<i64, _>("exists_flag").unwrap_or(0) != 0)
     }
 
     /// 从 daily_dau 表快速读取 DAU 数据

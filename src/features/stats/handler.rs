@@ -13,6 +13,7 @@ use super::models::DailyAggRow;
 
 pub(crate) mod archive_now;
 mod cache;
+pub use cache::invalidate_all_stats_summary_cache;
 pub(crate) mod daily_http;
 pub(crate) mod latency;
 mod params;
