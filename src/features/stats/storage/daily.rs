@@ -91,6 +91,146 @@ fn merge_daily_dau_counts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
+
+    async fn build_tmp_storage_daily(label: &str) -> StatsStorage {
+        let path = std::env::temp_dir().join(format!(
+            "phi_daily_agg_{label}_{}.db",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        if let Some(p) = path.parent() {
+            std::fs::create_dir_all(p).ok();
+        }
+        let storage = StatsStorage::connect_sqlite(path.to_string_lossy().as_ref(), false)
+            .await
+            .expect("connect sqlite");
+        storage.init_schema().await.expect("init schema");
+        storage
+    }
+
+    fn evt_null_route(
+        ts: chrono::DateTime<chrono::Utc>,
+        feature: &str,
+        action: &str,
+        instance: &str,
+    ) -> crate::features::stats::models::EventInsert {
+        use std::borrow::Cow;
+        crate::features::stats::models::EventInsert {
+            ts_utc: ts,
+            route: None,
+            feature: Some(feature.to_string()),
+            action: Some(action.to_string()),
+            method: None,
+            status: None,
+            duration_ms: None,
+            user_hash: Some("u_test".to_string()),
+            client_ip_hash: None,
+            instance: Some(Cow::Owned(instance.to_string())),
+            extra_json: Some(serde_json::json!({"user_kind": "official"})),
+        }
+    }
+
+    #[tokio::test]
+    async fn aggregate_day_is_idempotent_for_null_route_method_primary_key() {
+        // 回归：daily_agg 主键 (date, feature, route, method) 在 route/method 为 NULL 时
+        // SQLite 不强制唯一，旧实现用 REPLACE INTO 会追加重复行、累加计数。
+        let storage = build_tmp_storage_daily("idempotent").await;
+        let day = (chrono::Utc::now().date_naive() - chrono::Duration::days(2))
+            .format("%Y-%m-%d")
+            .to_string();
+        let ts = chrono::Utc
+            .from_utc_datetime(
+                &chrono::NaiveDate::parse_from_str(&day, "%Y-%m-%d")
+                    .unwrap()
+                    .and_hms_opt(1, 0, 0)
+                    .unwrap(),
+            )
+            .naive_utc()
+            .and_utc();
+        storage
+            .insert_events(&[
+                evt_null_route(ts, "save", "submit", "inst-a"),
+                evt_null_route(ts, "save", "submit", "inst-a"),
+                evt_null_route(ts, "bestn", "render", "inst-a"),
+            ])
+            .await
+            .unwrap();
+
+        // 重复聚合多次，计数不应增长。
+        for _ in 0..5 {
+            storage.aggregate_day(&day).await.unwrap();
+        }
+        let rows = sqlx::query(
+            "SELECT feature, SUM(count) AS cnt FROM daily_agg WHERE date = ? GROUP BY feature",
+        )
+        .bind(&day)
+        .fetch_all(&storage.pool)
+        .await
+        .unwrap();
+        let mut counts: std::collections::HashMap<String, i64> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.try_get::<String, _>("feature").unwrap_or_default(),
+                    r.try_get::<i64, _>("cnt").unwrap_or(0),
+                )
+            })
+            .collect();
+        assert_eq!(
+            counts.remove("save"),
+            Some(2),
+            "save 应仅计 2，不应被重复累加"
+        );
+        assert_eq!(counts.remove("bestn"), Some(1));
+        assert!(counts.is_empty(), "无多余 feature 行: {counts:?}");
+
+        // daily_latency 同样不应有重复行（route IS NOT NULL 过滤后此例无行，但确保不报错）。
+        let lat = sqlx::query("SELECT COUNT(1) AS c FROM daily_latency WHERE date = ?")
+            .bind(&day)
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+        assert_eq!(lat.try_get::<i64, _>("c").unwrap_or(0), 0);
+    }
+
+    #[tokio::test]
+    async fn repair_daily_agg_duplicates_collapses_inflated_rows() {
+        // 模拟历史遗留：直接注入重复的 NULL-route 行，验证修复函数能归并为一行。
+        let storage = build_tmp_storage_daily("repair").await;
+        for _ in 0..10 {
+            sqlx::query(
+                "INSERT INTO daily_agg (date, feature, route, method, count, err_count, last_ts) \
+                 VALUES ('2026-01-01', 'save', NULL, NULL, 7, 0, '2026-01-01T01:00:00Z')",
+            )
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+        }
+        let before = sqlx::query("SELECT SUM(count) AS s FROM daily_agg WHERE date='2026-01-01'")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap()
+            .try_get::<i64, _>("s")
+            .unwrap_or(0);
+        assert_eq!(before, 70, "构造 10 行重复 ×7");
+
+        let repaired = storage.repair_daily_agg_duplicates_once().await.unwrap();
+        assert!(repaired, "首次应执行修复");
+        let after = sqlx::query("SELECT SUM(count) AS s FROM daily_agg WHERE date='2026-01-01'")
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap()
+            .try_get::<i64, _>("s")
+            .unwrap_or(0);
+        assert_eq!(after, 7, "去重后应仅保留一行 count=7");
+
+        // 再次调用应跳过（哨兵已写）。
+        let again = storage.repair_daily_agg_duplicates_once().await.unwrap();
+        assert!(!again, "哨兵存在时不应重复执行");
+    }
 
     #[test]
     fn daily_dau_queries_split_user_and_ip_distinct_counts() {
@@ -483,9 +623,18 @@ impl StatsStorage {
             .map_err(|e| AppError::Internal(format!("aggregate begin tx ({day}): {e}")))?;
 
         // 1) daily_agg：按 feature/route/method 聚合计数与错误数，并保留 MAX(ts_utc) 以供 summary last_ts 输出
+        // 关键：必须先 DELETE 再 INSERT，而不能用 REPLACE INTO。daily_agg 主键为
+        // (date, feature, route, method)，业务打点事件的 route/method 为 NULL，而 SQLite
+        // 主键列含 NULL 时不强制唯一性（NULL 在唯一索引中被视为互不相同），REPLACE INTO
+        // 无法命中既有行，每次重新聚合都会追加重复行，导致计数被反复累加而膨胀。
+        sqlx::query("DELETE FROM daily_agg WHERE date = ?")
+            .bind(day)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| AppError::Internal(format!("aggregate daily_agg delete ({day}): {e}")))?;
         sqlx::query(
             r"
-            REPLACE INTO daily_agg (date, feature, route, method, count, err_count, last_ts)
+            INSERT INTO daily_agg (date, feature, route, method, count, err_count, last_ts)
             SELECT
                 ? AS date,
                 feature,
@@ -526,9 +675,18 @@ impl StatsStorage {
         .map_err(|e| AppError::Internal(format!("aggregate daily_dau ({day}): {e}")))?;
 
         // 3) daily_latency：按 feature/route/method 预聚延迟统计。
+        // 同 daily_agg：主键含 NULL 时不强制唯一，必须 DELETE + INSERT 而非 REPLACE INTO，
+        // 否则 route/method 为 NULL 的分组会被重复聚合累加。
+        sqlx::query("DELETE FROM daily_latency WHERE date = ?")
+            .bind(day)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| {
+                AppError::Internal(format!("aggregate daily_latency delete ({day}): {e}"))
+            })?;
         sqlx::query(
             r"
-            REPLACE INTO daily_latency (date, feature, route, method, sample_count, min_ms, avg_ms, max_ms)
+            INSERT INTO daily_latency (date, feature, route, method, sample_count, min_ms, avg_ms, max_ms)
             SELECT
                 ? AS date,
                 feature,
@@ -799,6 +957,77 @@ impl StatsStorage {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         }
         Ok(done)
+    }
+
+    /// 一次性修复 `daily_agg` / `daily_latency` 中因历史 `REPLACE INTO` + NULL 主键
+    /// 不强制唯一而累积的重复行（业务打点事件 route/method 为 NULL，主键含 NULL 时
+    /// SQLite 不去重，每次重新聚合都追加一行，导致 summary 快路径计数成倍膨胀）。
+    ///
+    /// 策略：
+    /// 1. 仍在 `events` 表内的天（热窗口内）：直接重跑 `aggregate_day`（现已改为
+    ///    DELETE + INSERT），从 events 重建为正确计数。
+    /// 2. 已不在 `events` 表内的天（已归档清理）：events 已不可用，但这些天在归档后
+    ///    events 不再变化，重复行是精确副本，故按 (date, feature, route, method) 去重
+    ///    保留一行即可恢复正确计数（GROUP BY 将 NULL 视为相等，可正确归并）。
+    ///
+    /// 由 `stats_meta` 键 `daily_agg_dup_repaired` 守护，仅执行一次。
+    pub async fn repair_daily_agg_duplicates_once(&self) -> Result<bool, AppError> {
+        const META_KEY: &str = "daily_agg_dup_repaired";
+        if self.get_stats_meta(META_KEY).await? == Some("true".to_string()) {
+            return Ok(false);
+        }
+
+        // (1) 去重：保留每组 (date, feature, route, method) 的最早 rowid 一行。
+        //     GROUP BY 将 NULL 视为相等，能正确归并含 NULL 的业务打点分组。
+        let da_deleted = sqlx::query(
+            "DELETE FROM daily_agg
+             WHERE rowid NOT IN (
+                 SELECT MIN(rowid) FROM daily_agg
+                 GROUP BY date, feature, route, method
+             )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("repair daily_agg dedup: {e}")))?;
+        let dl_deleted = sqlx::query(
+            "DELETE FROM daily_latency
+             WHERE rowid NOT IN (
+                 SELECT MIN(rowid) FROM daily_latency
+                 GROUP BY date, feature, route, method
+             )",
+        )
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("repair daily_latency dedup: {e}")))?;
+
+        // (2) 仍在 events 内的天重跑 aggregate_day，用最新 events 重建精确计数。
+        let event_days = self.list_event_day_counts().await?;
+        let today = Utc::now().date_naive();
+        let mut reaggregated = 0usize;
+        for (day_s, _count) in &event_days {
+            let Ok(d) = NaiveDate::parse_from_str(day_s, "%Y-%m-%d") else {
+                continue;
+            };
+            // 不重聚今日（仍在写入）
+            if d >= today {
+                continue;
+            }
+            if let Err(e) = self.aggregate_day(day_s).await {
+                tracing::warn!("repair 重聚失败 ({day_s}): {e}");
+            } else {
+                reaggregated += 1;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+
+        tracing::info!(
+            "daily_agg 重复修复完成: 去重 daily_agg={}行 daily_latency={}行，从 events 重聚 {} 天",
+            da_deleted.rows_affected(),
+            dl_deleted.rows_affected(),
+            reaggregated
+        );
+        self.set_stats_meta(META_KEY, "true").await?;
+        Ok(true)
     }
 
     /// 用于 summary 快速路径检测：给定 UTC 起止日（含）区间内是否已有 daily_agg 行。

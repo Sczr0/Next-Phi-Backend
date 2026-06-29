@@ -275,6 +275,11 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
         let catchup_storage = storage.clone();
         let catchup_retention = config.stats.retention_hot_days;
         tokio::spawn(async move {
+            // 先一次性修复历史遗留的 daily_agg / daily_latency 重复行（NULL 主键不强制唯一
+            // 导致的重复累加），必须在启用快路径哨兵之前完成，否则 summary 仍会读到膨胀数据。
+            if let Err(e) = catchup_storage.repair_daily_agg_duplicates_once().await {
+                tracing::warn!("summary 预聚合重复修复失败: {e}");
+            }
             tracing::info!(
                 "summary 预补齐启动：检查热窗口 {} 天内缺失 daily_agg",
                 catchup_retention

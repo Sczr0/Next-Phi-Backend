@@ -1007,14 +1007,18 @@ async fn plan_fast_path(
         return Ok(None);
     }
 
-    // 今日热数据：若 end_utc 在今日之前，则热部分不在窗口内。
+    // 今日热数据：当 end_utc 未指定（开口上界）或显式 end >= 今日时，今日热部分在窗口内；
+    // 仅当 end < 今日时热部分才不在窗口内。原实现以 end_day 是否 Some 且 >= today 判断，
+    // 导致默认请求（end_utc=None）完全漏掉今日热数据。
     let hot_start_dt = Utc
         .from_utc_datetime(&today.and_hms_opt(0, 0, 0).expect("00:00:00"))
         .naive_utc()
         .and_utc();
-    let hot_start_utc = end_day
-        .filter(|d| *d >= today)
-        .map(|_| hot_start_dt.to_rfc3339());
+    let hot_start_utc = match end_day {
+        None => Some(hot_start_dt.to_rfc3339()),
+        Some(d) if d >= today => Some(hot_start_dt.to_rfc3339()),
+        _ => None,
+    };
 
     Ok(Some(FastPlan {
         hist_start_day: hist_start_s,
