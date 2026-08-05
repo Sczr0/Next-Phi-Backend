@@ -1907,7 +1907,10 @@ async fn dau_tz_alignment_uses_local_day_boundaries() {
     assert_eq!(resp.rows[0].date, "2025-12-25");
     assert_eq!(resp.rows[0].active_users, 1, "上海 12-25 应只有 u1");
     assert_eq!(resp.rows[1].date, "2025-12-26");
-    assert_eq!(resp.rows[1].active_users, 1, "上海 12-26 应只有 u2（events 补齐）");
+    assert_eq!(
+        resp.rows[1].active_users, 1,
+        "上海 12-26 应只有 u2（events 补齐）"
+    );
 }
 
 #[tokio::test]
@@ -2039,8 +2042,16 @@ async fn latency_day_bucket_uses_preagg_when_covered() {
         .iter()
         .map(|r| (r.bucket.clone(), r.count))
         .collect();
-    assert_eq!(by_bucket.remove("2025-12-24"), Some(1), "预聚合天应来自 daily_latency");
-    assert_eq!(by_bucket.remove("2025-12-25"), Some(1), "缺失天应从 events 补齐");
+    assert_eq!(
+        by_bucket.remove("2025-12-24"),
+        Some(1),
+        "预聚合天应来自 daily_latency"
+    );
+    assert_eq!(
+        by_bucket.remove("2025-12-25"),
+        Some(1),
+        "缺失天应从 events 补齐"
+    );
     let avg_24 = resp
         .rows
         .iter()

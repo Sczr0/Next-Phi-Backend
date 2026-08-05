@@ -263,7 +263,9 @@ pub(super) async fn query_latency_agg(
                             let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
                             let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
                             let srows = storage
-                                .query_latency_agg_slice(&day_start, &day_end, feature, route, method)
+                                .query_latency_agg_slice(
+                                    &day_start, &day_end, feature, route, method,
+                                )
                                 .await
                                 .map_err(|e| {
                                     AppError::Internal(format!(

@@ -327,9 +327,15 @@ mod tests {
     async fn plan_fast_path_requires_backfill_sentinel_and_aligned_bounds() {
         let storage = build_tmp_storage("plan_gate").await;
         // 无哨兵 → 不启用
-        let plan = plan_fast_path(&storage, Some("2025-01-01T00:00:00Z"), None, None, chrono_tz::UTC)
-            .await
-            .unwrap();
+        let plan = plan_fast_path(
+            &storage,
+            Some("2025-01-01T00:00:00Z"),
+            None,
+            None,
+            chrono_tz::UTC,
+        )
+        .await
+        .unwrap();
         assert!(plan.is_none(), "无 backfill_complete 哨兵不应启用");
 
         // 写入哨兵但 daily_agg 为空 → 仍不启用
@@ -337,9 +343,15 @@ mod tests {
             .set_stats_meta("backfill_complete", "true")
             .await
             .unwrap();
-        let plan = plan_fast_path(&storage, Some("2025-01-01T00:00:00Z"), None, None, chrono_tz::UTC)
-            .await
-            .unwrap();
+        let plan = plan_fast_path(
+            &storage,
+            Some("2025-01-01T00:00:00Z"),
+            None,
+            None,
+            chrono_tz::UTC,
+        )
+        .await
+        .unwrap();
         assert!(plan.is_none(), "daily_agg 空时不应启用");
 
         // feature 过滤 → 不启用
@@ -487,7 +499,15 @@ mod tests {
             user_kinds: true,
         };
         let fast = storage
-            .query_stats_summary_data(Some(&start_utc), Some(&end_utc), None, includes, 20, true, chrono_tz::UTC)
+            .query_stats_summary_data(
+                Some(&start_utc),
+                Some(&end_utc),
+                None,
+                includes,
+                20,
+                true,
+                chrono_tz::UTC,
+            )
             .await
             .unwrap();
 
@@ -497,7 +517,15 @@ mod tests {
             .await
             .unwrap();
         let slow = storage
-            .query_stats_summary_data(Some(&start_utc), Some(&end_utc), None, includes, 20, true, chrono_tz::UTC)
+            .query_stats_summary_data(
+                Some(&start_utc),
+                Some(&end_utc),
+                None,
+                includes,
+                20,
+                true,
+                chrono_tz::UTC,
+            )
             .await
             .unwrap();
 
@@ -621,7 +649,10 @@ mod tests {
         let plan = plan_fast_path(&storage, Some(&start), Some(&end), None, sh)
             .await
             .unwrap();
-        assert!(plan.is_some(), "上海本地日对齐应启用快速路径: {start} ~ {end}");
+        assert!(
+            plan.is_some(),
+            "上海本地日对齐应启用快速路径: {start} ~ {end}"
+        );
 
         // 非对齐（如 UTC 0 点）→ 不启用
         let mid = format!("{}T00:00:00Z", day.format("%Y-%m-%d"));

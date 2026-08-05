@@ -303,7 +303,10 @@ mod tests {
 
         let make_evt = |day: NaiveDate, user: &str| crate::features::stats::models::EventInsert {
             ts_utc: sh
-                .from_local_datetime(&NaiveDateTime::new(day, NaiveTime::from_hms_opt(12, 0, 0).unwrap()))
+                .from_local_datetime(&NaiveDateTime::new(
+                    day,
+                    NaiveTime::from_hms_opt(12, 0, 0).unwrap(),
+                ))
                 .single()
                 .unwrap()
                 .with_timezone(&Utc),
@@ -707,9 +710,8 @@ impl StatsStorage {
     /// [本地 00:00, 次日 00:00) 的 UTC 半开区间，与查询接口按 timezone 解释日期
     /// 的口径一致（此前按 UTC 日聚合会导致 Asia/Shanghai 等时区下数据错位 8 小时）。
     pub async fn aggregate_day(&self, day: &str, tz: Tz) -> Result<(), AppError> {
-        let day_date = NaiveDate::parse_from_str(day, "%Y-%m-%d").map_err(|e| {
-            AppError::Internal(format!("aggregate_day 无效日期 ({day}): {e}"))
-        })?;
+        let day_date = NaiveDate::parse_from_str(day, "%Y-%m-%d")
+            .map_err(|e| AppError::Internal(format!("aggregate_day 无效日期 ({day}): {e}")))?;
         let (start, end) = local_day_bounds_utc(tz, day_date)?;
         let mut tx = self
             .pool
