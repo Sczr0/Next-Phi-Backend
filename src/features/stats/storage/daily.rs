@@ -92,7 +92,7 @@ fn merge_daily_dau_counts(
 /// 计算本地日（配置时区）的 UTC 边界 `[start, end)`：start = 当日 00:00 转 UTC，
 /// end = 次日 00:00 转 UTC。半开区间避免依赖 `23:59:59Z` 这类与存储格式相关的
 /// 字典序巧合（详见聚合口径修复：预聚合表统一按本地日存储）。
-fn local_day_bounds_utc(tz: Tz, day: NaiveDate) -> Result<(String, String), AppError> {
+fn local_day_bounds_utc(tz: Tz, day: NaiveDate) -> (String, String) {
     let start_ndt = NaiveDateTime::new(day, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
     let end_ndt = NaiveDateTime::new(
         day + chrono::Duration::days(1),
@@ -108,10 +108,10 @@ fn local_day_bounds_utc(tz: Tz, day: NaiveDate) -> Result<(String, String), AppE
         chrono::LocalResult::Ambiguous(_, b) => b,
         chrono::LocalResult::None => tz.from_utc_datetime(&end_ndt),
     };
-    Ok((
+    (
         start_local.with_timezone(&Utc).to_rfc3339(),
         end_local.with_timezone(&Utc).to_rfc3339(),
-    ))
+    )
 }
 
 #[cfg(test)]
@@ -712,7 +712,7 @@ impl StatsStorage {
     pub async fn aggregate_day(&self, day: &str, tz: Tz) -> Result<(), AppError> {
         let day_date = NaiveDate::parse_from_str(day, "%Y-%m-%d")
             .map_err(|e| AppError::Internal(format!("aggregate_day 无效日期 ({day}): {e}")))?;
-        let (start, end) = local_day_bounds_utc(tz, day_date)?;
+        let (start, end) = local_day_bounds_utc(tz, day_date);
         let mut tx = self
             .pool
             .begin()

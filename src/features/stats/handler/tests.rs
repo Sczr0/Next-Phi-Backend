@@ -2058,5 +2058,5 @@ async fn latency_day_bucket_uses_preagg_when_covered() {
         .find(|r| r.bucket == "2025-12-24")
         .and_then(|r| r.avg_ms)
         .unwrap();
-    assert_eq!(avg_24, 50.0);
+    assert!((avg_24 - 50.0).abs() < f64::EPSILON, "avg_24 = {avg_24}");
 }
