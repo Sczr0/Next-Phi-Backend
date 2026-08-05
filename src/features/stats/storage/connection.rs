@@ -54,6 +54,10 @@ impl StatsStorage {
         -- 按用户+时间（用户去重计数）
         CREATE INDEX IF NOT EXISTS idx_events_ts_user ON events(ts_utc, user_hash)
             WHERE user_hash IS NOT NULL;
+        -- 按 IP+时间（IP 去重计数：DAU 回退路径 / summary unique_ips 的 COUNT(DISTINCT)
+        -- 此前无索引支撑，回退到 events 时是最贵的单点查询）
+        CREATE INDEX IF NOT EXISTS idx_events_ts_ip ON events(ts_utc, client_ip_hash)
+            WHERE client_ip_hash IS NOT NULL;
 
         -- 按状态码聚合（http 请求维度），用于 summary status_codes 快速路径
         CREATE TABLE IF NOT EXISTS daily_status (

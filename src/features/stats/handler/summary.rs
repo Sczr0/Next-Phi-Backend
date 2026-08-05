@@ -1,5 +1,5 @@
 use axum::{extract::Query, extract::State, response::Json};
-use chrono::{NaiveDateTime, NaiveTime, Utc};
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -195,12 +195,17 @@ pub async fn get_stats_summary(
         .as_deref()
         .map(|s| parse_date_bound_utc(s, tz, true))
         .transpose()?;
-    // 两端都未指定时回退到热数据保留窗口，并取整到 UTC 当天 0 点以稳定缓存 key。
+    // 两端都未指定时回退到热数据保留窗口；按配置时区的本地日 0 点构造（与预聚合
+    // 表的本地日口径一致，保证快速路径的"本地日对齐"检查可命中）。
     if start_utc.is_none() && end_utc.is_none() {
-        let today = Utc::now().date_naive();
-        let since = NaiveDateTime::new(today, NaiveTime::from_hms_opt(0, 0, 0).unwrap()).and_utc()
-            - chrono::Duration::days(i64::from(cfg.stats.retention_hot_days));
-        start_utc = Some(since.to_rfc3339());
+        let today_local = Utc::now().with_timezone(&tz).date_naive();
+        let since_local =
+            today_local - chrono::Duration::days(i64::from(cfg.stats.retention_hot_days));
+        start_utc = Some(parse_date_bound_utc(
+            &since_local.format("%Y-%m-%d").to_string(),
+            tz,
+            false,
+        )?);
     }
     let range_start_at = start_utc.as_deref().and_then(|s| convert_tz(s, tz));
     let range_end_at = end_utc.as_deref().and_then(|s| convert_tz(s, tz));
@@ -226,6 +231,11 @@ pub async fn get_stats_summary(
     let feature_ref = q.feature.as_deref();
     let want_meta =
         q.start.is_some() || q.end.is_some() || q.feature.is_some() || q.include.is_some();
+    let cfg_tz: chrono_tz::Tz = cfg
+        .stats
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::Asia::Shanghai);
     let summary = storage
         .query_stats_summary_data(
             start_utc_ref,
@@ -243,6 +253,7 @@ pub async fn get_stats_summary(
             },
             top,
             want_meta,
+            cfg_tz,
         )
         .await?;
 

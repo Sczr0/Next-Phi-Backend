@@ -41,25 +41,101 @@ pub(super) async fn query_daily_agg(
     route: Option<&str>,
     method: Option<&str>,
 ) -> Result<Vec<DailyAggRow>, AppError> {
-    let today = Utc::now().date_naive();
+    // 预聚合表按配置时区的本地日存储；查询时区与配置不一致时无法命中快速路径，
+    // 直接按 events 查询（避免错位）。
+    let cfg_tz: chrono_tz::Tz = crate::config::AppConfig::global()
+        .stats
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::Asia::Shanghai);
+    let fast_ok = tz == cfg_tz;
+    let today = Utc::now().with_timezone(&cfg_tz).date_naive();
     let mut out: Vec<DailyAggRow> = Vec::new();
 
     // ── 历史日期（< today） ──
     if start < today {
         let agg_end = end.min(today - chrono::Duration::days(1));
-        // 尝试 daily_agg 快速路径
         if agg_end >= start {
-            let fast = storage
-                .query_daily_agg_fast(
-                    &start.to_string(),
-                    &agg_end.to_string(),
-                    feature,
-                    route,
-                    method,
-                )
-                .await?;
-            if fast.is_empty() {
-                // daily_agg 为空 → 回退到 events
+            if fast_ok {
+                // 快速路径 + 覆盖完整性检查：daily_agg 缺失的天从 events 补齐，
+                // 避免"部分预聚合"时缺失天被静默跳过（输出缺少该天或计数为 0）。
+                let present = storage
+                    .daily_agg_dates_in_range(&start.to_string(), &agg_end.to_string())
+                    .await?;
+                if present.is_empty() {
+                    // 整个区间无预聚合：单次 events 查询（保持高效）
+                    let hist_utc_start = parse_date_bound_utc(&start.to_string(), tz, false)?;
+                    let hist_utc_end = parse_date_bound_utc(&agg_end.to_string(), tz, true)?;
+                    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, agg_end) {
+                        let modifier = sqlite_minutes_modifier(off_min);
+                        out = storage
+                            .query_daily_agg_with_offset(
+                                &modifier,
+                                &hist_utc_start,
+                                &hist_utc_end,
+                                feature,
+                                route,
+                                method,
+                            )
+                            .await?;
+                    } else {
+                        let mut cur = start;
+                        while cur <= agg_end {
+                            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+                            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+                            let rows = storage
+                                .query_daily_agg_slice(&day_start, &day_end, feature, route, method)
+                                .await?;
+                            for r in rows {
+                                out.push(DailyAggRow {
+                                    date: cur.to_string(),
+                                    feature: r.feature,
+                                    route: r.route,
+                                    method: r.method,
+                                    count: r.count,
+                                    err_count: r.err_count,
+                                });
+                            }
+                            cur += chrono::Duration::days(1);
+                        }
+                    }
+                } else {
+                    // 部分覆盖：已聚合天用 fast 行，缺失天逐日从 events 补齐
+                    let fast = storage
+                        .query_daily_agg_fast(
+                            &start.to_string(),
+                            &agg_end.to_string(),
+                            feature,
+                            route,
+                            method,
+                        )
+                        .await?;
+                    out.extend(fast);
+                    let mut cur = start;
+                    while cur <= agg_end {
+                        if !present.contains(&cur.to_string()) {
+                            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+                            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+                            let rows = storage
+                                .query_daily_agg_slice(&day_start, &day_end, feature, route, method)
+                                .await?;
+                            for r in rows {
+                                out.push(DailyAggRow {
+                                    date: cur.to_string(),
+                                    feature: r.feature,
+                                    route: r.route,
+                                    method: r.method,
+                                    count: r.count,
+                                    err_count: r.err_count,
+                                });
+                            }
+                        }
+                        cur += chrono::Duration::days(1);
+                    }
+                    out.sort_by(|a, b| a.date.cmp(&b.date));
+                }
+            } else {
+                // 时区与配置不一致：直接按 events 查询（正确性优先）
                 let hist_utc_start = parse_date_bound_utc(&start.to_string(), tz, false)?;
                 let hist_utc_end = parse_date_bound_utc(&agg_end.to_string(), tz, true)?;
                 if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, agg_end) {
@@ -96,8 +172,6 @@ pub(super) async fn query_daily_agg(
                     }
                     out.sort_by(|a, b| a.date.cmp(&b.date));
                 }
-            } else {
-                out = fast;
             }
         }
     }
@@ -151,6 +225,77 @@ pub(super) async fn query_latency_agg(
         LatencyBucket::Day => {
             let start_utc = parse_date_bound_utc(&start.to_string(), tz, false)?;
             let end_utc = parse_date_bound_utc(&end.to_string(), tz, true)?;
+
+            // 预聚合快速路径：daily_latency 按配置时区本地日存储；仅当查询时区与
+            // 配置一致且区间被完整覆盖时使用（缺失天从 events 补齐，避免静默为 0）。
+            let cfg_tz: chrono_tz::Tz = crate::config::AppConfig::global()
+                .stats
+                .timezone
+                .parse()
+                .unwrap_or(chrono_tz::Asia::Shanghai);
+            if tz == cfg_tz {
+                let start_s = start.to_string();
+                let end_s = end.to_string();
+                let present = storage
+                    .daily_latency_dates_in_range(&start_s, &end_s)
+                    .await?;
+                if !present.is_empty() {
+                    let rows = storage
+                        .query_latency_agg_fast(&start_s, &end_s, feature, route, method)
+                        .await?;
+                    let mut out = Vec::with_capacity(rows.len());
+                    for r in rows {
+                        out.push(LatencyAggRow {
+                            bucket: r.bucket,
+                            feature: r.feature,
+                            route: r.route,
+                            method: r.method,
+                            count: r.count,
+                            min_ms: r.min_ms,
+                            avg_ms: r.avg_ms,
+                            max_ms: r.max_ms,
+                        });
+                    }
+                    // 缺失天（未预聚合）从 events 补齐
+                    let mut cur = start;
+                    while cur <= end {
+                        if !present.contains(&cur.to_string()) {
+                            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+                            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+                            let srows = storage
+                                .query_latency_agg_slice(&day_start, &day_end, feature, route, method)
+                                .await
+                                .map_err(|e| {
+                                    AppError::Internal(format!(
+                                        "latency agg day (preagg 补齐): {e}"
+                                    ))
+                                })?;
+                            for r in srows {
+                                out.push(LatencyAggRow {
+                                    bucket: cur.to_string(),
+                                    feature: r.feature,
+                                    route: r.route,
+                                    method: r.method,
+                                    count: r.count,
+                                    min_ms: r.min_ms,
+                                    avg_ms: r.avg_ms,
+                                    max_ms: r.max_ms,
+                                });
+                            }
+                        }
+                        cur += chrono::Duration::days(1);
+                    }
+                    out.sort_by(|a, b| {
+                        a.bucket
+                            .cmp(&b.bucket)
+                            .then_with(|| a.route.cmp(&b.route))
+                            .then_with(|| a.method.cmp(&b.method))
+                            .then_with(|| a.feature.cmp(&b.feature))
+                    });
+                    return Ok(out);
+                }
+                // present 为空：整体回退到下面的 events 查询
+            }
 
             // fixed-offset（无 DST）优化：单 SQL 按天分组
             if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, end) {
@@ -371,18 +516,72 @@ pub(super) async fn query_daily_dau(
     start: NaiveDate,
     end: NaiveDate,
 ) -> Result<Vec<DailyDauRow>, AppError> {
-    let today = Utc::now().date_naive();
+    // 预聚合表按配置时区的本地日存储；查询时区与配置不一致时无法命中快速路径，
+    // 直接按 events 查询（避免错位）。
+    let cfg_tz: chrono_tz::Tz = crate::config::AppConfig::global()
+        .stats
+        .timezone
+        .parse()
+        .unwrap_or(chrono_tz::Asia::Shanghai);
+    let fast_ok = tz == cfg_tz;
+    let today = Utc::now().with_timezone(&cfg_tz).date_naive();
     let mut map: HashMap<String, (i64, i64)> = HashMap::new();
 
-    // ── 历史日期（< today）─ 优先走 daily_dau，回退到 events
+    // ── 历史日期（< today） ──
     if start < today {
         let agg_end = end.min(today - chrono::Duration::days(1));
         if agg_end >= start {
-            let agged = storage
-                .query_daily_dau_fast(&start.to_string(), &agg_end.to_string())
-                .await?;
-            if agged.is_empty() {
-                // daily_dau 无数据 → 回退到 events
+            if fast_ok {
+                // 快速路径 + 覆盖完整性检查：daily_dau 缺失的天从 events 补齐，
+                // 避免"部分预聚合"时缺失天被错误输出为 0（即使 events 有数据）。
+                let present = storage
+                    .daily_dau_dates_in_range(&start.to_string(), &agg_end.to_string())
+                    .await?;
+                if present.is_empty() {
+                    // 整个区间无预聚合：单次 events 查询（保持高效）
+                    let hist_utc_start = parse_date_bound_utc(&start.to_string(), tz, false)?;
+                    let hist_utc_end = parse_date_bound_utc(&agg_end.to_string(), tz, true)?;
+                    if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, agg_end) {
+                        let modifier = sqlite_minutes_modifier(off_min);
+                        let rows = storage
+                            .query_daily_dau_with_offset(&modifier, &hist_utc_start, &hist_utc_end)
+                            .await?;
+                        for r in rows {
+                            map.insert(r.date, (r.active_users, r.active_ips));
+                        }
+                    } else {
+                        let mut cur = start;
+                        while cur <= agg_end {
+                            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+                            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+                            let (u, ip) =
+                                storage.query_daily_dau_slice(&day_start, &day_end).await?;
+                            map.insert(cur.to_string(), (u, ip));
+                            cur += chrono::Duration::days(1);
+                        }
+                    }
+                } else {
+                    // 部分覆盖：已聚合天用 fast 行，缺失天逐日从 events 补齐
+                    let agged = storage
+                        .query_daily_dau_fast(&start.to_string(), &agg_end.to_string())
+                        .await?;
+                    for r in agged {
+                        map.insert(r.date, (r.active_users, r.active_ips));
+                    }
+                    let mut cur = start;
+                    while cur <= agg_end {
+                        if !present.contains(&cur.to_string()) {
+                            let day_start = parse_date_bound_utc(&cur.to_string(), tz, false)?;
+                            let day_end = parse_date_bound_utc(&cur.to_string(), tz, true)?;
+                            let (u, ip) =
+                                storage.query_daily_dau_slice(&day_start, &day_end).await?;
+                            map.insert(cur.to_string(), (u, ip));
+                        }
+                        cur += chrono::Duration::days(1);
+                    }
+                }
+            } else {
+                // 时区与配置不一致：直接按 events 查询（正确性优先）
                 let hist_utc_start = parse_date_bound_utc(&start.to_string(), tz, false)?;
                 let hist_utc_end = parse_date_bound_utc(&agg_end.to_string(), tz, true)?;
                 if let Some(off_min) = fixed_offset_minutes_for_range(tz, start, agg_end) {
@@ -402,10 +601,6 @@ pub(super) async fn query_daily_dau(
                         map.insert(cur.to_string(), (u, ip));
                         cur += chrono::Duration::days(1);
                     }
-                }
-            } else {
-                for r in agged {
-                    map.insert(r.date, (r.active_users, r.active_ips));
                 }
             }
         }

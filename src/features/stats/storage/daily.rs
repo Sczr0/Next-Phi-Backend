@@ -2,7 +2,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use sqlx::{QueryBuilder, Row, Sqlite};
 
 use crate::error::AppError;
@@ -88,6 +89,31 @@ fn merge_daily_dau_counts(
         .collect()
 }
 
+/// 计算本地日（配置时区）的 UTC 边界 `[start, end)`：start = 当日 00:00 转 UTC，
+/// end = 次日 00:00 转 UTC。半开区间避免依赖 `23:59:59Z` 这类与存储格式相关的
+/// 字典序巧合（详见聚合口径修复：预聚合表统一按本地日存储）。
+fn local_day_bounds_utc(tz: Tz, day: NaiveDate) -> Result<(String, String), AppError> {
+    let start_ndt = NaiveDateTime::new(day, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let end_ndt = NaiveDateTime::new(
+        day + chrono::Duration::days(1),
+        NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+    );
+    let start_local = match tz.from_local_datetime(&start_ndt) {
+        chrono::LocalResult::Single(v) => v,
+        chrono::LocalResult::Ambiguous(a, _) => a,
+        chrono::LocalResult::None => tz.from_utc_datetime(&start_ndt),
+    };
+    let end_local = match tz.from_local_datetime(&end_ndt) {
+        chrono::LocalResult::Single(v) => v,
+        chrono::LocalResult::Ambiguous(_, b) => b,
+        chrono::LocalResult::None => tz.from_utc_datetime(&end_ndt),
+    };
+    Ok((
+        start_local.with_timezone(&Utc).to_rfc3339(),
+        end_local.with_timezone(&Utc).to_rfc3339(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -161,7 +187,7 @@ mod tests {
 
         // 重复聚合多次，计数不应增长。
         for _ in 0..5 {
-            storage.aggregate_day(&day).await.unwrap();
+            storage.aggregate_day(&day, chrono_tz::UTC).await.unwrap();
         }
         let rows = sqlx::query(
             "SELECT feature, SUM(count) AS cnt FROM daily_agg WHERE date = ? GROUP BY feature",
@@ -265,6 +291,68 @@ mod tests {
         assert_eq!(merged[2].date, "2026-01-03");
         assert_eq!(merged[2].active_users, 0);
         assert_eq!(merged[2].active_ips, 4);
+    }
+    #[tokio::test]
+    async fn ensure_hot_window_migrates_old_rows_and_self_heals() {
+        // 回归：首次运行全量重聚（迁移旧口径行），后续只补缺失天（自愈）。
+        let storage = build_tmp_storage_daily("ensure").await;
+        let sh: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
+        let today = chrono::Utc::now().with_timezone(&sh).date_naive();
+        let d1 = today - chrono::Duration::days(2);
+        let d2 = today - chrono::Duration::days(1);
+
+        let make_evt = |day: NaiveDate, user: &str| crate::features::stats::models::EventInsert {
+            ts_utc: sh
+                .from_local_datetime(&NaiveDateTime::new(day, NaiveTime::from_hms_opt(12, 0, 0).unwrap()))
+                .single()
+                .unwrap()
+                .with_timezone(&Utc),
+            route: Some("/song/search".to_string()),
+            feature: None,
+            action: None,
+            method: Some("GET".to_string()),
+            status: Some(200),
+            duration_ms: Some(10),
+            user_hash: Some(user.to_string()),
+            client_ip_hash: Some("ip1".to_string()),
+            instance: Some("inst-a".into()),
+            extra_json: None,
+        };
+        storage
+            .insert_events(&[make_evt(d1, "u1"), make_evt(d2, "u2")])
+            .await
+            .unwrap();
+
+        // 模拟旧口径残留：手动写入错误行（值 999）
+        sqlx::query("INSERT INTO daily_dau (date, active_users, active_ips) VALUES (?, 999, 999)")
+            .bind(d1.format("%Y-%m-%d").to_string())
+            .execute(&storage.pool)
+            .await
+            .unwrap();
+
+        // 首次 ensure → 全量重聚（旧行被清除，重聚 d1/d2）
+        let done = storage.ensure_hot_window_aggregated(30, sh).await.unwrap();
+        assert_eq!(done, 2, "首次迁移应重聚全部有事件的天");
+        let r = sqlx::query("SELECT active_users FROM daily_dau WHERE date = ?")
+            .bind(d1.format("%Y-%m-%d").to_string())
+            .fetch_one(&storage.pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            r.try_get::<i64, _>("active_users").unwrap(),
+            1,
+            "旧口径残留行应被迁移重聚覆盖"
+        );
+
+        // 第二次 ensure → 无缺失，done = 0
+        let done2 = storage.ensure_hot_window_aggregated(30, sh).await.unwrap();
+        assert_eq!(done2, 0, "无缺失时不应重聚");
+
+        // 再插入 d0 事件（模拟凌晨聚合失败/停机漏掉的天）→ 第三次 ensure 自愈补齐
+        let d0 = today - chrono::Duration::days(3);
+        storage.insert_events(&[make_evt(d0, "u0")]).await.unwrap();
+        let done3 = storage.ensure_hot_window_aggregated(30, sh).await.unwrap();
+        assert_eq!(done3, 1, "缺失天应被自愈补齐");
     }
 }
 
@@ -608,14 +696,21 @@ impl StatsStorage {
 
     // ── 每日预聚合 ──
 
-    /// 将指定日期（UTC）的 events 聚合写入 daily_agg / daily_dau / daily_latency，
-    /// 并同步预聚 summary 快速路径所需的三新增表（daily_status / daily_instance /
-    /// daily_action / daily_user / daily_ip）。全部放入单一事务内完成，使 summary
-    /// 在判断“daily_agg 已覆盖某日”后，可信赖地认为该日所有预聚合表一致可见。
+    /// 将指定日期（按配置时区解释的本地日）的 events 聚合写入 daily_agg /
+    /// daily_dau / daily_latency，并同步预聚 summary 快速路径所需的三新增表
+    /// （daily_status / daily_instance / daily_action / daily_user / daily_ip）。
+    /// 全部放入单一事务内完成，使 summary 在判断"daily_agg 已覆盖某日"后，
+    /// 可信赖地认为该日所有预聚合表一致可见。
     /// 幂等：可重复执行，不会重复计数。
-    pub async fn aggregate_day(&self, day: &str) -> Result<(), AppError> {
-        let start = format!("{day}T00:00:00Z");
-        let end = format!("{day}T23:59:59Z");
+    ///
+    /// 口径说明：`day` 是配置时区（tz）下的本地日，聚合窗口取
+    /// [本地 00:00, 次日 00:00) 的 UTC 半开区间，与查询接口按 timezone 解释日期
+    /// 的口径一致（此前按 UTC 日聚合会导致 Asia/Shanghai 等时区下数据错位 8 小时）。
+    pub async fn aggregate_day(&self, day: &str, tz: Tz) -> Result<(), AppError> {
+        let day_date = NaiveDate::parse_from_str(day, "%Y-%m-%d").map_err(|e| {
+            AppError::Internal(format!("aggregate_day 无效日期 ({day}): {e}"))
+        })?;
+        let (start, end) = local_day_bounds_utc(tz, day_date)?;
         let mut tx = self
             .pool
             .begin()
@@ -905,70 +1000,171 @@ impl StatsStorage {
         Ok(out)
     }
 
-    /// 补齐缺失于 `daily_agg` 且热窗口内尚未预聚的 UTC 日（逐天调用 `aggregate_day`）。
-    /// 返回本次补齐的日期列表。
-    pub async fn backfill_missing_daily_aggregate_days(
+    /// 确保热窗口内所有本地日已预聚合（自愈 + 首次口径迁移）：
+    ///
+    /// - 首次运行（stats_meta `daily_agg_tz_v2` 未标记）：对热窗口内全部有事件的
+    ///   本地日全量重聚——先清空窗口内所有 daily_* 行再重建，将历史上按 UTC 日
+    ///   聚合的旧口径数据迁移为配置时区本地日口径（DELETE+INSERT 幂等，失败可重跑）。
+    /// - 后续运行：只补齐"有事件但 daily_agg 无行"的缺失天（凌晨聚合任务停机/
+    ///   失败后的自愈）。
+    ///
+    /// 返回本次实际聚合的天数。
+    pub async fn ensure_hot_window_aggregated(
         &self,
         retention_hot_days: u32,
-    ) -> Result<Vec<NaiveDate>, AppError> {
-        let today = Utc::now().date_naive();
+        tz: Tz,
+    ) -> Result<usize, AppError> {
+        let today = Utc::now().with_timezone(&tz).date_naive();
         let lower = today - chrono::Duration::days(i64::from(retention_hot_days.saturating_sub(1)));
         let upper = today - chrono::Duration::days(1);
+        let lower_s = lower.format("%Y-%m-%d").to_string();
+        let upper_s = upper.format("%Y-%m-%d").to_string();
 
-        let event_days = self.list_event_day_counts().await?;
-        let agg_day_rows = sqlx::query(
-            "SELECT DISTINCT date FROM daily_agg WHERE date BETWEEN ? AND ? ORDER BY date ASC",
-        )
-        .bind(lower.format("%Y-%m-%d").to_string())
-        .bind(upper.format("%Y-%m-%d").to_string())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("backfill list daily_agg days: {e}")))?;
-        let agg_days: BTreeSet<String> = agg_day_rows
-            .iter()
-            .filter_map(|r| r.try_get::<String, _>("date").ok())
-            .collect();
+        let event_days = self.local_event_day_counts(&lower_s, &upper_s, tz).await?;
+        let agg_days = self.daily_agg_dates_in_range(&lower_s, &upper_s).await?;
 
-        let mut missing: Vec<NaiveDate> = Vec::new();
-        for (day_s, count) in event_days {
-            if count > 0
-                && !agg_days.contains(&day_s)
-                && let Ok(d) = NaiveDate::parse_from_str(&day_s, "%Y-%m-%d")
-                && (d >= lower)
-                && (d <= upper)
-            {
-                missing.push(d);
+        let migrated = self.get_stats_meta("daily_agg_tz_v2").await? == Some("true".to_string());
+        let mut done = 0usize;
+
+        if !migrated {
+            // 首次迁移：清空热窗口内旧口径行，再按本地日逐日重建。
+            for table in [
+                "daily_agg",
+                "daily_dau",
+                "daily_latency",
+                "daily_status",
+                "daily_instance",
+                "daily_action",
+                "daily_user",
+                "daily_ip",
+            ] {
+                sqlx::query(&format!("DELETE FROM {table} WHERE date BETWEEN ? AND ?"))
+                    .bind(&lower_s)
+                    .bind(&upper_s)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| AppError::Internal(format!("ensure 迁移清理 {table}: {e}")))?;
+            }
+            for (day_s, count) in &event_days {
+                if *count == 0 {
+                    continue;
+                }
+                self.aggregate_day(day_s, tz).await?;
+                done += 1;
+                // 限速，避免 IO 峰值干扰热路径。
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            }
+            self.set_stats_meta("daily_agg_tz_v2", "true").await?;
+            tracing::info!("daily_agg 本地日口径迁移完成: 重聚 {done} 天");
+            return Ok(done);
+        }
+
+        // 常规自愈：补齐"有事件但未预聚合"的缺失天。
+        for (day_s, count) in &event_days {
+            if *count > 0 && !agg_days.contains(day_s) {
+                if let Err(e) = self.aggregate_day(day_s, tz).await {
+                    tracing::warn!("每日预聚合自愈失败 ({day_s}): {e}");
+                    // 避免单个失败终止后续
+                    continue;
+                }
+                done += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         }
-        missing.sort_unstable();
-
-        let mut done = Vec::new();
-        for day in &missing {
-            if let Err(e) = self
-                .aggregate_day(&day.format("%Y-%m-%d").to_string())
-                .await
-            {
-                tracing::warn!("summary 背景补预聚失败 ({day}): {e}");
-                // 避免单个失败终止后续
-                continue;
-            }
-            done.push(*day);
-            // 限速，避免 IO 峰值干扰热路径。
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if done > 0 {
+            tracing::info!("每日预聚合自愈补齐 {done} 天");
         }
         Ok(done)
+    }
+
+    /// 按配置时区的本地日统计热窗口内每天的事件数（用于缺失检测）。
+    /// 偏移取"当前时刻"的时区偏移；对 DST 时区的个别历史天可能误判，但自愈与
+    /// 查询覆盖检查会兜底，不影响最终正确性。
+    pub async fn local_event_day_counts(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        tz: Tz,
+    ) -> Result<Vec<(String, i64)>, AppError> {
+        let now_utc = Utc::now();
+        let off_min =
+            (now_utc.with_timezone(&tz).naive_local() - now_utc.naive_utc()).num_minutes();
+        let modifier = format!("{off_min:+} minutes");
+        let rows = sqlx::query(
+            "SELECT date(ts_utc, ?) as day, COUNT(1) as c
+             FROM events
+             WHERE ts_utc >= ? AND ts_utc < ?
+             GROUP BY day
+             ORDER BY day ASC",
+        )
+        .bind(&modifier)
+        .bind(format!("{start_date}T00:00:00Z"))
+        .bind(format!("{end_date}T23:59:59Z"))
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("local event day counts: {e}")))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            let day: String = r
+                .try_get("day")
+                .map_err(|e| AppError::Internal(format!("read day: {e}")))?;
+            let count: i64 = r
+                .try_get("c")
+                .map_err(|e| AppError::Internal(format!("read day count: {e}")))?;
+            out.push((day, count));
+        }
+        Ok(out)
+    }
+
+    /// 返回 `daily_agg` 中指定日期区间内已存在的日期集合（快速路径覆盖检查用）。
+    pub async fn daily_agg_dates_in_range(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<BTreeSet<String>, AppError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT date FROM daily_agg WHERE date BETWEEN ? AND ? ORDER BY date ASC",
+        )
+        .bind(start_date.to_string())
+        .bind(end_date.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("list daily_agg days: {e}")))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.try_get::<String, _>("date").ok())
+            .collect())
+    }
+
+    /// 返回 `daily_dau` 中指定日期区间内已存在的日期集合（快速路径覆盖检查用）。
+    pub async fn daily_dau_dates_in_range(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<BTreeSet<String>, AppError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT date FROM daily_dau WHERE date BETWEEN ? AND ? ORDER BY date ASC",
+        )
+        .bind(start_date.to_string())
+        .bind(end_date.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("list daily_dau days: {e}")))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.try_get::<String, _>("date").ok())
+            .collect())
     }
 
     /// 一次性修复 `daily_agg` / `daily_latency` 中因历史 `REPLACE INTO` + NULL 主键
     /// 不强制唯一而累积的重复行（业务打点事件 route/method 为 NULL，主键含 NULL 时
     /// SQLite 不去重，每次重新聚合都追加一行，导致 summary 快路径计数成倍膨胀）。
     ///
-    /// 策略：
-    /// 1. 仍在 `events` 表内的天（热窗口内）：直接重跑 `aggregate_day`（现已改为
-    ///    DELETE + INSERT），从 events 重建为正确计数。
-    /// 2. 已不在 `events` 表内的天（已归档清理）：events 已不可用，但这些天在归档后
-    ///    events 不再变化，重复行是精确副本，故按 (date, feature, route, method) 去重
-    ///    保留一行即可恢复正确计数（GROUP BY 将 NULL 视为相等，可正确归并）。
+    /// 策略：仅做去重（保留每组 (date, feature, route, method) 的最早 rowid 一行，
+    /// GROUP BY 将 NULL 视为相等，可正确归并含 NULL 的分组）。热窗口内天数的计数
+    /// 重建由 `ensure_hot_window_aggregated` 的 DELETE+INSERT 全量重聚完成；窗口外
+    /// 的天 events 已归档删除，去重是恢复正确计数的唯一手段。
     ///
     /// 由 `stats_meta` 键 `daily_agg_dup_repaired` 守护，仅执行一次。
     pub async fn repair_daily_agg_duplicates_once(&self) -> Result<bool, AppError> {
@@ -977,8 +1173,6 @@ impl StatsStorage {
             return Ok(false);
         }
 
-        // (1) 去重：保留每组 (date, feature, route, method) 的最早 rowid 一行。
-        //     GROUP BY 将 NULL 视为相等，能正确归并含 NULL 的业务打点分组。
         let da_deleted = sqlx::query(
             "DELETE FROM daily_agg
              WHERE rowid NOT IN (
@@ -1000,51 +1194,13 @@ impl StatsStorage {
         .await
         .map_err(|e| AppError::Internal(format!("repair daily_latency dedup: {e}")))?;
 
-        // (2) 仍在 events 内的天重跑 aggregate_day，用最新 events 重建精确计数。
-        let event_days = self.list_event_day_counts().await?;
-        let today = Utc::now().date_naive();
-        let mut reaggregated = 0usize;
-        for (day_s, _count) in &event_days {
-            let Ok(d) = NaiveDate::parse_from_str(day_s, "%Y-%m-%d") else {
-                continue;
-            };
-            // 不重聚今日（仍在写入）
-            if d >= today {
-                continue;
-            }
-            if let Err(e) = self.aggregate_day(day_s).await {
-                tracing::warn!("repair 重聚失败 ({day_s}): {e}");
-            } else {
-                reaggregated += 1;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
-
         tracing::info!(
-            "daily_agg 重复修复完成: 去重 daily_agg={}行 daily_latency={}行，从 events 重聚 {} 天",
+            "daily_agg 重复修复完成: 去重 daily_agg={}行 daily_latency={}行（热窗口内重建由 ensure_hot_window_aggregated 负责）",
             da_deleted.rows_affected(),
             dl_deleted.rows_affected(),
-            reaggregated
         );
         self.set_stats_meta(META_KEY, "true").await?;
         Ok(true)
-    }
-
-    /// 用于 summary 快速路径检测：给定 UTC 起止日（含）区间内是否已有 daily_agg 行。
-    pub async fn daily_agg_has_rows_in_range(
-        &self,
-        start_date: &str,
-        end_date: &str,
-    ) -> Result<bool, AppError> {
-        let r = sqlx::query(
-            "SELECT EXISTS(SELECT 1 FROM daily_agg WHERE date BETWEEN ? AND ?) AS exists_flag",
-        )
-        .bind(start_date)
-        .bind(end_date)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| AppError::Internal(format!("daily_agg has rows check: {e}")))?;
-        Ok(r.try_get::<i64, _>("exists_flag").unwrap_or(0) != 0)
     }
 
     /// 从 daily_dau 表快速读取 DAU 数据

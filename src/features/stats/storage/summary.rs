@@ -2,7 +2,8 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Tz;
 use futures_util::TryStreamExt;
 use sqlx::{QueryBuilder, Row, Sqlite};
 
@@ -14,11 +15,12 @@ use super::{
     SummaryStatusCodeRow,
 };
 
-/// summary 快速路径计划：历史区间走预聚合表，今日热数据 (start_utcS为齐 UTC 0 点与到达0 点的部分) 仍汇入 events 中。
+/// summary 快速路径计划：历史区间走预聚合表（按配置时区的本地日），今日热数据
+/// （本地今天 00:00 起）仍汇入 events 中。
 struct FastPlan {
-    /// 预聚合覆盖的历史区间起（含），YYYY-MM-DD。
+    /// 预聚合覆盖的历史区间起（含），YYYY-MM-DD（配置时区本地日）。
     hist_start_day: String,
-    /// 预聚合覆盖的历史区间止（含），YYYY-MM-DD。
+    /// 预聚合覆盖的历史区间止（含），YYYY-MM-DD（配置时区本地日）。
     hist_end_day: String,
     /// 今日热起点（含）：None 表示热部分不在查询窗口内。
     hot_start_utc: Option<String>,
@@ -42,6 +44,30 @@ fn mid_night() -> NaiveTime {
 
 fn end_of_day() -> NaiveTime {
     NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59")
+}
+
+/// 配置时区本地日 00:00 转 UTC（RFC3339）。与 handler 侧 `parse_date_bound_utc(is_end=false)`
+/// 语义一致，用于快速路径的"本地日对齐"检查。
+fn local_day_start_utc(tz: Tz, day: NaiveDate) -> String {
+    let ndt = NaiveDateTime::new(day, mid_night());
+    let local = match tz.from_local_datetime(&ndt) {
+        chrono::LocalResult::Single(v) => v,
+        chrono::LocalResult::Ambiguous(a, _) => a,
+        chrono::LocalResult::None => tz.from_utc_datetime(&ndt),
+    };
+    local.with_timezone(&Utc).to_rfc3339()
+}
+
+/// 配置时区本地日 23:59:59 转 UTC（RFC3339）。与 handler 侧 `parse_date_bound_utc(is_end=true)`
+/// 语义一致。
+fn local_day_end_utc(tz: Tz, day: NaiveDate) -> String {
+    let ndt = NaiveDateTime::new(day, end_of_day());
+    let local = match tz.from_local_datetime(&ndt) {
+        chrono::LocalResult::Single(v) => v,
+        chrono::LocalResult::Ambiguous(_, b) => b,
+        chrono::LocalResult::None => tz.from_utc_datetime(&ndt),
+    };
+    local.with_timezone(&Utc).to_rfc3339()
 }
 
 /// 将两个可选 last_ts (RFC3339 UTC) 取较大者。同格式时可直接按 lexicographic 比较。
@@ -301,7 +327,7 @@ mod tests {
     async fn plan_fast_path_requires_backfill_sentinel_and_aligned_bounds() {
         let storage = build_tmp_storage("plan_gate").await;
         // 无哨兵 → 不启用
-        let plan = plan_fast_path(&storage, Some("2025-01-01T00:00:00Z"), None, None)
+        let plan = plan_fast_path(&storage, Some("2025-01-01T00:00:00Z"), None, None, chrono_tz::UTC)
             .await
             .unwrap();
         assert!(plan.is_none(), "无 backfill_complete 哨兵不应启用");
@@ -311,7 +337,7 @@ mod tests {
             .set_stats_meta("backfill_complete", "true")
             .await
             .unwrap();
-        let plan = plan_fast_path(&storage, Some("2025-01-01T00:00:00Z"), None, None)
+        let plan = plan_fast_path(&storage, Some("2025-01-01T00:00:00Z"), None, None, chrono_tz::UTC)
             .await
             .unwrap();
         assert!(plan.is_none(), "daily_agg 空时不应启用");
@@ -342,24 +368,24 @@ mod tests {
             .await
             .unwrap();
         storage
-            .aggregate_day(&day.format("%Y-%m-%d").to_string())
+            .aggregate_day(&day.format("%Y-%m-%d").to_string(), chrono_tz::UTC)
             .await
             .unwrap();
         let start = format!("{}T00:00:00Z", day.format("%Y-%m-%d"));
-        let plan = plan_fast_path(&storage, Some(&start), None, Some("bestn"))
+        let plan = plan_fast_path(&storage, Some(&start), None, Some("bestn"), chrono_tz::UTC)
             .await
             .unwrap();
         assert!(plan.is_none(), "feature 过滤下不应启用");
 
         // 非对齐 start → 不启用
         let mid = format!("{}T12:00:00Z", day.format("%Y-%m-%d"));
-        let plan = plan_fast_path(&storage, Some(&mid), None, None)
+        let plan = plan_fast_path(&storage, Some(&mid), None, None, chrono_tz::UTC)
             .await
             .unwrap();
         assert!(plan.is_none(), "非 UTC 0 点对齐时不应启用");
 
         // 正确命中
-        let plan = plan_fast_path(&storage, Some(&start), None, None)
+        let plan = plan_fast_path(&storage, Some(&start), None, None, chrono_tz::UTC)
             .await
             .unwrap();
         assert!(plan.is_some(), "对齐、有预聚合、有哨兵 → 应启用");
@@ -436,11 +462,11 @@ mod tests {
 
         // 预聚合 d1 与 d2，写入哨兵 → 快路径可用。
         storage
-            .aggregate_day(&d1.format("%Y-%m-%d").to_string())
+            .aggregate_day(&d1.format("%Y-%m-%d").to_string(), chrono_tz::UTC)
             .await
             .unwrap();
         storage
-            .aggregate_day(&d2.format("%Y-%m-%d").to_string())
+            .aggregate_day(&d2.format("%Y-%m-%d").to_string(), chrono_tz::UTC)
             .await
             .unwrap();
         storage
@@ -461,7 +487,7 @@ mod tests {
             user_kinds: true,
         };
         let fast = storage
-            .query_stats_summary_data(Some(&start_utc), Some(&end_utc), None, includes, 20, true)
+            .query_stats_summary_data(Some(&start_utc), Some(&end_utc), None, includes, 20, true, chrono_tz::UTC)
             .await
             .unwrap();
 
@@ -471,7 +497,7 @@ mod tests {
             .await
             .unwrap();
         let slow = storage
-            .query_stats_summary_data(Some(&start_utc), Some(&end_utc), None, includes, 20, true)
+            .query_stats_summary_data(Some(&start_utc), Some(&end_utc), None, includes, 20, true, chrono_tz::UTC)
             .await
             .unwrap();
 
@@ -550,6 +576,59 @@ mod tests {
         let slow_methods_keys: std::collections::HashMap<String, i64> =
             collect_keyed(slow.methods.as_deref(), |r| r.method.clone());
         assert_eq!(fast_methods_keys, slow_methods_keys);
+    }
+    #[tokio::test]
+    async fn plan_fast_path_works_with_shanghai_local_days() {
+        // 回归：Asia/Shanghai 时区下，本地日对齐的日期参数应启用快速路径
+        //（修复前要求 UTC 0 点对齐，带日期参数的请求永远走慢路径）。
+        let storage = build_tmp_storage("plan_sh").await;
+        let sh: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
+        let today_local = chrono::Utc::now().with_timezone(&sh).date_naive();
+        let day = today_local - chrono::Duration::days(1);
+
+        let ts = chrono::Utc
+            .from_utc_datetime(&day.and_hms_opt(4, 0, 0).unwrap())
+            .naive_utc()
+            .and_utc();
+        storage
+            .insert_events(&[evt(
+                ts,
+                Some("/probe"),
+                Some("probe"),
+                Some("ping"),
+                Some("GET"),
+                Some(200),
+                Some(1),
+                Some("u_p"),
+                Some("ip_p"),
+                Some("inst-p"),
+                Some("official"),
+            )])
+            .await
+            .unwrap();
+        storage
+            .aggregate_day(&day.format("%Y-%m-%d").to_string(), sh)
+            .await
+            .unwrap();
+        storage
+            .set_stats_meta("backfill_complete", "true")
+            .await
+            .unwrap();
+
+        // start/end 按上海本地日边界（handler 层 parse_date_bound_utc 的语义）
+        let start = local_day_start_utc(sh, day);
+        let end = local_day_end_utc(sh, day);
+        let plan = plan_fast_path(&storage, Some(&start), Some(&end), None, sh)
+            .await
+            .unwrap();
+        assert!(plan.is_some(), "上海本地日对齐应启用快速路径: {start} ~ {end}");
+
+        // 非对齐（如 UTC 0 点）→ 不启用
+        let mid = format!("{}T00:00:00Z", day.format("%Y-%m-%d"));
+        let plan2 = plan_fast_path(&storage, Some(&mid), None, None, sh)
+            .await
+            .unwrap();
+        assert!(plan2.is_none(), "非本地日对齐不应启用");
     }
 }
 
@@ -960,6 +1039,7 @@ async fn plan_fast_path(
     start_utc: Option<&str>,
     end_utc: Option<&str>,
     feature: Option<&str>,
+    cfg_tz: Tz,
 ) -> Result<Option<FastPlan>, AppError> {
     // 快速路径不支持 feature 维度过滤。
     if feature.is_some() {
@@ -969,15 +1049,23 @@ async fn plan_fast_path(
         return Ok(None);
     };
     let start_dt = parse_utc(start_s)?;
-    if start_dt.naive_utc().time() != mid_night() {
+    // 起点必须对齐"配置时区的某个本地日 00:00"：预聚合表按配置时区本地日存储，
+    // 历史区间按本地日整日查询。原实现要求 UTC 0 点对齐，导致 Asia/Shanghai 等
+    // 时区下带日期参数的请求永远无法启用快速路径。
+    // 按时刻值比较（解析后），与 RFC3339 的 Z/+00:00 写法无关。
+    let start_day = start_dt.with_timezone(&cfg_tz).date_naive();
+    if start_dt != parse_utc(&local_day_start_utc(cfg_tz, start_day))? {
         return Ok(None);
     }
     let end_dt = match end_utc {
         None => None,
         Some(e) => Some(parse_utc(e)?),
     };
-    if end_dt.is_some_and(|d| d.naive_utc().time() != end_of_day()) {
-        return Ok(None);
+    if let Some(end_dt) = end_dt {
+        let end_day = end_dt.with_timezone(&cfg_tz).date_naive();
+        if end_dt != parse_utc(&local_day_end_utc(cfg_tz, end_day))? {
+            return Ok(None);
+        }
     }
 
     // 确保“预聚合背景补齐”至少运行过一次、避免只完成几天的错会。
@@ -987,10 +1075,9 @@ async fn plan_fast_path(
         return Ok(None);
     }
 
-    let today = Utc::now().date_naive();
+    let today = Utc::now().with_timezone(&cfg_tz).date_naive();
     let yesterday = today - chrono::Duration::days(1);
-    let start_day = start_dt.date_naive();
-    let end_day = end_dt.map(|d| d.date_naive());
+    let end_day = end_dt.map(|d| d.with_timezone(&cfg_tz).date_naive());
     let hist_end_day = end_day.map_or(yesterday, |d| d.min(yesterday));
 
     // 快速路径贵在干掉 OPCScan，如果历史区间为空或仅不是完整一天画质较低，仅 走默认一查。
@@ -1000,23 +1087,22 @@ async fn plan_fast_path(
 
     let hist_start_s = start_day.format("%Y-%m-%d").to_string();
     let hist_end_s = hist_end_day.format("%Y-%m-%d").to_string();
-    if !storage
-        .daily_agg_has_rows_in_range(&hist_start_s, &hist_end_s)
-        .await?
-    {
+    // 完整覆盖检查：daily_agg 必须逐日覆盖历史区间（部分覆盖时走慢路径，正确性优先，
+    // 避免缺失天被当作 0）。
+    let agg_days = storage
+        .daily_agg_dates_in_range(&hist_start_s, &hist_end_s)
+        .await?;
+    let expected_days = (hist_end_day - start_day).num_days() + 1;
+    if agg_days.len() < usize::try_from(expected_days).unwrap_or(usize::MAX) {
         return Ok(None);
     }
 
     // 今日热数据：当 end_utc 未指定（开口上界）或显式 end >= 今日时，今日热部分在窗口内；
     // 仅当 end < 今日时热部分才不在窗口内。原实现以 end_day 是否 Some 且 >= today 判断，
     // 导致默认请求（end_utc=None）完全漏掉今日热数据。
-    let hot_start_dt = Utc
-        .from_utc_datetime(&today.and_hms_opt(0, 0, 0).expect("00:00:00"))
-        .naive_utc()
-        .and_utc();
     let hot_start_utc = match end_day {
-        None => Some(hot_start_dt.to_rfc3339()),
-        Some(d) if d >= today => Some(hot_start_dt.to_rfc3339()),
+        None => Some(local_day_start_utc(cfg_tz, today)),
+        Some(d) if d >= today => Some(local_day_start_utc(cfg_tz, today)),
         _ => None,
     };
 
@@ -1476,6 +1562,7 @@ async fn query_summary_actions_fast(
 }
 
 impl StatsStorage {
+    #[allow(clippy::too_many_arguments)]
     pub async fn query_stats_summary_data(
         &self,
         start_utc: Option<&str>,
@@ -1484,10 +1571,11 @@ impl StatsStorage {
         include: SummaryIncludeFlags,
         top: i64,
         want_meta: bool,
+        cfg_tz: Tz,
     ) -> Result<StatsSummaryData, AppError> {
         // 先尝试基于预聚合表的快速路径；未激活、不成就回退于 events 直扫。保证启用上以
         // 预聚合于齐齐的说作为安全门，避免部分预聚的区间错输出。
-        let plan = match plan_fast_path(self, start_utc, end_utc, feature).await {
+        let plan = match plan_fast_path(self, start_utc, end_utc, feature, cfg_tz).await {
             Ok(Some(p)) => Some(p),
             Ok(None) => None,
             Err(e) => {

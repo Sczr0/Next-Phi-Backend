@@ -255,15 +255,25 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
 
             tokio::time::sleep(delay).await;
 
-            // 聚合昨天的数据
-            let yesterday = (Utc::now() - Duration::days(1))
+            // 聚合昨天的数据（配置时区的本地昨天；预聚合表统一按本地日口径存储）
+            let yesterday = (Utc::now().with_timezone(&tz).date_naive() - Duration::days(1))
                 .format("%Y-%m-%d")
                 .to_string();
 
             tracing::info!("开始每日预聚合: {yesterday}");
-            match agg_storage.aggregate_day(&yesterday).await {
+            match agg_storage.aggregate_day(&yesterday, tz).await {
                 Ok(()) => tracing::info!("每日预聚合完成: {yesterday}"),
                 Err(e) => tracing::warn!("每日预聚合失败 ({yesterday}): {e}"),
+            }
+            // 自愈：补齐热窗口内缺失的本地日（凌晨聚合停机/失败后的补救，
+            // 避免某天预聚合永久缺失导致查询端回退甚至输出 0）。
+            match agg_storage
+                .ensure_hot_window_aggregated(agg_cfg.retention_hot_days, tz)
+                .await
+            {
+                Ok(0) => {}
+                Ok(n) => tracing::info!("每日预聚合自愈补齐 {n} 天"),
+                Err(e) => tracing::warn!("每日预聚合自愈失败: {e}"),
             }
             // 预聚合新写入后清理 summary 缓存，避免返回看不到上一日新增数据的旧结果。
             crate::features::stats::handler::invalidate_all_stats_summary_cache();
@@ -274,6 +284,11 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
     {
         let catchup_storage = storage.clone();
         let catchup_retention = config.stats.retention_hot_days;
+        let catchup_tz: chrono_tz::Tz = config
+            .stats
+            .timezone
+            .parse()
+            .unwrap_or(chrono_tz::Asia::Shanghai);
         tokio::spawn(async move {
             // 先一次性修复历史遗留的 daily_agg / daily_latency 重复行（NULL 主键不强制唯一
             // 导致的重复累加），必须在启用快路径哨兵之前完成，否则 summary 仍会读到膨胀数据。
@@ -285,7 +300,7 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
                 catchup_retention
             );
             let done = match catchup_storage
-                .backfill_missing_daily_aggregate_days(catchup_retention)
+                .ensure_hot_window_aggregated(catchup_retention, catchup_tz)
                 .await
             {
                 Ok(done) => done,
@@ -302,7 +317,7 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
                 tracing::warn!("backfill_complete 标记写入失败: {e}");
                 return;
             }
-            tracing::info!("summary 预补齐完成 (补齐 {} 天)", done.len());
+            tracing::info!("summary 预补齐完成 (补齐 {done} 天)");
             crate::features::stats::handler::invalidate_all_stats_summary_cache();
         });
     }

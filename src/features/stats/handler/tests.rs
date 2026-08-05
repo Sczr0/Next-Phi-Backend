@@ -1825,3 +1825,227 @@ async fn latency_agg_respects_timezone_day_boundary() {
     assert_eq!(resp.rows[0].bucket, "2025-12-25");
     assert_eq!(resp.rows[0].count, 1);
 }
+
+// ── 修复回归测试：预聚合部分覆盖 / 时区口径 ──
+
+fn dau_event(d: u32, hh: u32, user: &str, ip: &str) -> EventInsert {
+    EventInsert {
+        ts_utc: dt_utc(2025, 12, d, hh, 0, 0),
+        route: Some("/song/search".into()),
+        feature: None,
+        action: None,
+        method: Some("GET".into()),
+        status: Some(200),
+        duration_ms: Some(10),
+        user_hash: Some(user.to_string()),
+        client_ip_hash: Some(ip.to_string()),
+        instance: Some("inst-a".into()),
+        extra_json: None,
+    }
+}
+
+#[tokio::test]
+async fn dau_partial_preagg_fills_missing_days_from_events() {
+    // 回归：daily_dau 仅部分覆盖查询区间时，缺失天即使 events 有数据也必须从
+    // events 补齐，而不是被输出为 0（修复前：只聚合中间一天时两侧输出 0）。
+    let sqlite_path = tmp_sqlite_path("dau_partial_fill");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            dau_event(24, 10, "u24", "ip24"),
+            dau_event(25, 10, "u25", "ip25"),
+            dau_event(26, 10, "u26", "ip26"),
+        ])
+        .await
+        .unwrap();
+
+    // 只聚合中间一天（上海本地日 12-25 窗口 = UTC 12-24 16:00 ~ 12-25 16:00）
+    let sh: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
+    storage.aggregate_day("2025-12-25", sh).await.unwrap();
+
+    let q = DailyDauQuery {
+        start: "2025-12-24".into(),
+        end: "2025-12-26".into(),
+        timezone: Some("Asia/Shanghai".into()),
+    };
+    let Json(resp) = get_daily_dau(State(state), Query(q)).await.unwrap();
+    assert_eq!(resp.rows.len(), 3);
+    for r in &resp.rows {
+        assert_eq!(r.active_users, 1, "{} 有数据不应为 0", r.date);
+        assert_eq!(r.active_ips, 1, "{} 有数据不应为 0", r.date);
+    }
+}
+
+#[tokio::test]
+async fn dau_tz_alignment_uses_local_day_boundaries() {
+    // 回归：预聚合按配置时区本地日聚合（修复前按 UTC 日，上海 12-25 会吞掉
+    // UTC 12-25 全天数据：u1、u2 都算进 12-25，12-26 为 0）。
+    let sqlite_path = tmp_sqlite_path("dau_tz_align");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    // UTC 12-25 01:00 = 上海 12-25 09:00 → 属上海 12-25
+    // UTC 12-25 20:00 = 上海 12-26 04:00 → 属上海 12-26
+    storage
+        .insert_events(&[
+            dau_event(25, 1, "u1", "ip1"),
+            dau_event(25, 20, "u2", "ip2"),
+        ])
+        .await
+        .unwrap();
+    let sh: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
+    storage.aggregate_day("2025-12-25", sh).await.unwrap();
+
+    let q = DailyDauQuery {
+        start: "2025-12-25".into(),
+        end: "2025-12-26".into(),
+        timezone: Some("Asia/Shanghai".into()),
+    };
+    let Json(resp) = get_daily_dau(State(state), Query(q)).await.unwrap();
+    assert_eq!(resp.rows[0].date, "2025-12-25");
+    assert_eq!(resp.rows[0].active_users, 1, "上海 12-25 应只有 u1");
+    assert_eq!(resp.rows[1].date, "2025-12-26");
+    assert_eq!(resp.rows[1].active_users, 1, "上海 12-26 应只有 u2（events 补齐）");
+}
+
+#[tokio::test]
+async fn daily_agg_partial_preagg_fills_missing_days() {
+    // 回归：daily_agg 仅部分覆盖时，缺失天从 events 补齐（修复前缺失天没有行）。
+    let sqlite_path = tmp_sqlite_path("daily_partial_fill");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    storage
+        .insert_events(&[
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 10, 0, 0),
+                route: None,
+                feature: Some("save".into()),
+                action: Some("submit".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u1".into()),
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 25, 10, 0, 0),
+                route: None,
+                feature: Some("save".into()),
+                action: Some("submit".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u2".into()),
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 26, 10, 0, 0),
+                route: None,
+                feature: Some("save".into()),
+                action: Some("submit".into()),
+                method: None,
+                status: None,
+                duration_ms: None,
+                user_hash: Some("u3".into()),
+                client_ip_hash: None,
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let sh: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
+    storage.aggregate_day("2025-12-25", sh).await.unwrap();
+
+    let q = DailyQuery {
+        start: "2025-12-24".into(),
+        end: "2025-12-26".into(),
+        timezone: Some("Asia/Shanghai".into()),
+        feature: None,
+        route: None,
+        method: None,
+    };
+    let Json(rows) = get_daily_stats(State(state), Query(q)).await.unwrap();
+    assert_eq!(rows.len(), 3, "缺失天应从 events 补齐");
+    for r in &rows {
+        assert_eq!(r.count, 1, "{} 有数据不应缺失", r.date);
+    }
+}
+
+#[tokio::test]
+async fn latency_day_bucket_uses_preagg_when_covered() {
+    // 回归：latency day bucket 在预聚合覆盖时应读取 daily_latency（缺失天回退 events）。
+    let sqlite_path = tmp_sqlite_path("latency_preagg");
+    let state = build_test_state(&sqlite_path).await;
+    let storage = state.stats_storage.as_ref().unwrap().clone();
+
+    // 12-24 事件（仅此天预聚合），12-25 事件（不预聚合，验证补齐路径）
+    storage
+        .insert_events(&[
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 24, 10, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(50),
+                user_hash: None,
+                client_ip_hash: Some("ip1".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+            EventInsert {
+                ts_utc: dt_utc(2025, 12, 25, 10, 0, 0),
+                route: Some("/image/bn".into()),
+                feature: None,
+                action: None,
+                method: Some("GET".into()),
+                status: Some(200),
+                duration_ms: Some(120),
+                user_hash: None,
+                client_ip_hash: Some("ip2".into()),
+                instance: Some("inst-a".into()),
+                extra_json: None,
+            },
+        ])
+        .await
+        .unwrap();
+
+    let sh: chrono_tz::Tz = "Asia/Shanghai".parse().unwrap();
+    storage.aggregate_day("2025-12-24", sh).await.unwrap();
+
+    let q = LatencyAggQuery {
+        start: "2025-12-24".into(),
+        end: "2025-12-25".into(),
+        timezone: Some("Asia/Shanghai".into()),
+        bucket: Some("day".into()),
+        feature: None,
+        route: None,
+        method: None,
+    };
+    let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+    assert_eq!(resp.rows.len(), 2, "两天的 latency 行都应存在");
+    let mut by_bucket: std::collections::HashMap<String, i64> = resp
+        .rows
+        .iter()
+        .map(|r| (r.bucket.clone(), r.count))
+        .collect();
+    assert_eq!(by_bucket.remove("2025-12-24"), Some(1), "预聚合天应来自 daily_latency");
+    assert_eq!(by_bucket.remove("2025-12-25"), Some(1), "缺失天应从 events 补齐");
+    let avg_24 = resp
+        .rows
+        .iter()
+        .find(|r| r.bucket == "2025-12-24")
+        .and_then(|r| r.avg_ms)
+        .unwrap();
+    assert_eq!(avg_24, 50.0);
+}

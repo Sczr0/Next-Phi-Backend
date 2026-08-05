@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+
 use sqlx::{QueryBuilder, Row, Sqlite};
 
 use crate::error::AppError;
@@ -138,9 +140,83 @@ impl StatsStorage {
         Ok(out)
     }
 
-    // ── 延迟百分位近似查询（直方图，避免全量排序） ──
+    // ── 延迟快速路径（读 daily_latency 预聚合表） ──
 
-    /// 用等宽直方图近似延迟分布的 p50/p95，避免 ROW_NUMBER() OVER (ORDER BY) 全量排序。
+    /// 从 `daily_latency` 预聚合表读取按天延迟统计（date 为配置时区本地日）。
+    pub async fn query_latency_agg_fast(
+        &self,
+        start_date: &str,
+        end_date: &str,
+        feature: Option<&str>,
+        route: Option<&str>,
+        method: Option<&str>,
+    ) -> Result<Vec<LatencyAggBucketRow>, AppError> {
+        let mut qb = QueryBuilder::<Sqlite>::new(
+            r"
+            SELECT date as bucket,
+                   feature,
+                   route,
+                   method,
+                   sample_count as count,
+                   min_ms,
+                   avg_ms,
+                   max_ms
+            FROM daily_latency
+            WHERE date BETWEEN 
+        ",
+        );
+        qb.push_bind(start_date.to_string())
+            .push(" AND ")
+            .push_bind(end_date.to_string());
+        push_latency_filters(&mut qb, feature, route, method);
+        qb.push(
+            r"
+            ORDER BY bucket ASC, route ASC, method ASC
+        ",
+        );
+        let rows = qb
+            .build()
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("latency agg fast: {e}")))?;
+
+        let mut out = Vec::with_capacity(rows.len());
+        for r in rows {
+            out.push(LatencyAggBucketRow {
+                bucket: r.get::<String, _>("bucket"),
+                feature: r.try_get::<String, _>("feature").ok(),
+                route: r.try_get::<String, _>("route").ok(),
+                method: r.try_get::<String, _>("method").ok(),
+                count: r.get::<i64, _>("count"),
+                min_ms: r.try_get::<i64, _>("min_ms").ok(),
+                avg_ms: r.try_get::<f64, _>("avg_ms").ok(),
+                max_ms: r.try_get::<i64, _>("max_ms").ok(),
+            });
+        }
+        Ok(out)
+    }
+
+    /// 返回 `daily_latency` 中指定日期区间内已存在的日期集合（快速路径覆盖检查用）。
+    pub async fn daily_latency_dates_in_range(
+        &self,
+        start_date: &str,
+        end_date: &str,
+    ) -> Result<BTreeSet<String>, AppError> {
+        let rows = sqlx::query(
+            "SELECT DISTINCT date FROM daily_latency WHERE date BETWEEN ? AND ? ORDER BY date ASC",
+        )
+        .bind(start_date.to_string())
+        .bind(end_date.to_string())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Internal(format!("list daily_latency days: {e}")))?;
+        Ok(rows
+            .iter()
+            .filter_map(|r| r.try_get::<String, _>("date").ok())
+            .collect())
+    }
+
+    // ── 延迟百分位近似查询（直方图，避免全量排序） ──    /// 用等宽直方图近似延迟分布的 p50/p95，避免 ROW_NUMBER() OVER (ORDER BY) 全量排序。
     /// 返回 (avg_ms, p50_ms, p95_ms, max_ms) 和采样数
     pub async fn query_latency_percentiles_histogram(
         &self,
