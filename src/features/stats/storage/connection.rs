@@ -90,6 +90,10 @@ impl StatsStorage {
             kind TEXT,
             PRIMARY KEY(date, user_hash, kind)
         );
+        -- summary unique_users 快速路径按 user_hash 去重计数；该索引让
+        -- SELECT DISTINCT user_hash 走有序索引扫描（免 TEMP B-TREE 排序），
+        -- 大区间（180 天）查询在低内存环境下差异可达数十秒。
+        CREATE INDEX IF NOT EXISTS idx_daily_user_hash ON daily_user(user_hash);
         -- 按 client_ip_hash 聚合（每日去重，仅 route NOT NULL 的 http 行），用于 summary unique_ips 快速路径
         CREATE TABLE IF NOT EXISTS daily_ip (
             date TEXT NOT NULL,
@@ -229,6 +233,31 @@ impl StatsStorage {
         // `daily_agg` 在 fast-path 中需要按 feature/route/max(ts_utc) 输出 last_ts，
         // 而初始建表不含该列，需幂等补一次。
         self.ensure_daily_agg_last_ts_column().await?;
+
+        // 清理历史遗留索引：早期版本曾在 events 上创建 13 个冗余索引，索引精简
+        // 重构后旧库不会自动删除。残留索引会误导 SQLite 优化器选择次优计划（例如
+        // summary 今日热数据查询被 covering 索引诱导向全表扫描历史业务事件，而非
+        // 仅扫当天范围，实测慢 50~100 倍）。DROP INDEX IF EXISTS 幂等安全。
+        for legacy in [
+            "idx_events_feature_ts",
+            "idx_events_route_ts",
+            "idx_events_ts_user_hash",
+            "idx_events_ts_client_ip_hash",
+            "idx_events_http_agg",
+            "idx_events_feature_action_ts",
+            "idx_events_instance_ts",
+            "idx_events_latency_route_duration_ts",
+            "idx_events_ts_feature",
+            "idx_events_feature_ts_user",
+            "idx_events_http_ip_ts",
+            "idx_events_ts_instance",
+            "idx_events_latency_ts_route_method_feature_duration",
+        ] {
+            sqlx::query(&format!("DROP INDEX IF EXISTS {legacy}"))
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("drop legacy index {legacy}: {e}")))?;
+        }
         Ok(())
     }
 
