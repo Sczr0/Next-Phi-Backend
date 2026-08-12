@@ -333,7 +333,7 @@ export class StatsService {
          */
         feature?: string,
         /**
-         * 可选额外维度：routes,status,methods,instances,actions,latency,unique_ips,all
+         * 可选额外维度：routes,status,methods,instances,actions,latency,unique_ips,user_kinds,all
          */
         include?: string,
         /**

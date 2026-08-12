@@ -32,3 +32,4 @@ export type RksHistoryResponse = {
      */
     total: number;
 };
+

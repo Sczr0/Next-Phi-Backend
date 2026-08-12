@@ -1,3 +1,4 @@
+use crate::extract::ValidatedJson;
 use axum::{Json, extract::State, http::StatusCode};
 use serde::{Deserialize, Serialize};
 use std::time::Instant;
@@ -136,7 +137,7 @@ fn issue_session_access_token(
         &token_claims,
         &jsonwebtoken::EncodingKey::from_secret(jwt_secret.as_bytes()),
     )
-    .map_err(|e| AppError::Internal(format!("绛惧彂浼氳瘽浠ょ墝澶辫触: {e}")))?;
+    .map_err(|e| AppError::Internal(format!("签发会话令牌失败: {e}")))?;
     Ok(token)
 }
 
@@ -162,7 +163,13 @@ async fn try_cleanup_expired_session_records(state: &AppState) {
         (status = 200, description = "签发成功", body = SessionExchangeResponse),
         (
             status = 401,
-            description = "共享密钥无效",
+            description = "共享密钥无效或无法识别用户",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "用户已被封禁",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -184,7 +191,7 @@ async fn try_cleanup_expired_session_records(state: &AppState) {
 pub async fn post_session_exchange(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
-    Json(req): Json<SessionExchangeRequest>,
+    ValidatedJson(req): ValidatedJson<SessionExchangeRequest>,
 ) -> Result<(StatusCode, Json<SessionExchangeResponse>), AppError> {
     let t_total = Instant::now();
     try_cleanup_expired_session_records(&state).await;
@@ -200,13 +207,13 @@ pub async fn post_session_exchange(
     if let Some(tok) = auth.session_token.as_deref()
         && tok.trim().is_empty()
     {
-        return Err(AppError::Validation("sessionToken 涓嶈兘涓虹┖".into()));
+        return Err(AppError::Validation("sessionToken 不能为空".into()));
     }
     if let Some(ext) = auth.external_credentials.as_ref()
         && !ext.is_valid()
     {
         return Err(AppError::Validation(
-            "澶栭儴鍑瘉鏃犳晥锛氬繀椤绘彁渚涗互涓嬪嚟璇佷箣涓€锛歱latform + platformId / sessiontoken / apiUserId"
+            "外部凭证无效：必须提供以下凭证之一：platform + platformId / sessiontoken / apiUserId"
                 .into(),
         ));
     }
@@ -230,7 +237,7 @@ pub async fn post_session_exchange(
     let (user_hash_opt, _) =
         crate::identity_hash::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
     let user_hash = user_hash_opt
-        .ok_or_else(|| AppError::Auth("鏃犳硶璇嗗埆鐢ㄦ埛锛堢己灏戝彲鐢ㄥ嚟璇侊級".into()))?;
+        .ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
     if let Some(storage) = state.stats_storage.as_ref() {
         storage.ensure_user_not_banned(&user_hash).await?;
     }
@@ -268,6 +275,12 @@ pub async fn post_session_exchange(
         (
             status = 401,
             description = "共享密钥无效、令牌无效或已撤销",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "用户已被封禁",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -341,6 +354,18 @@ pub async fn post_session_refresh(
             content_type = "application/problem+json"
         ),
         (
+            status = 403,
+            description = "用户已被封禁",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "请求体 JSON 无效或缺少必填的 scope",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
             status = 500,
             description = "存储不可用或配置错误",
             body = crate::error::ProblemDetails,
@@ -352,7 +377,7 @@ pub async fn post_session_refresh(
 pub async fn post_session_logout(
     State(state): State<AppState>,
     headers: axum::http::HeaderMap,
-    Json(req): Json<SessionLogoutRequest>,
+    ValidatedJson(req): ValidatedJson<SessionLogoutRequest>,
 ) -> Result<(StatusCode, Json<SessionLogoutResponse>), AppError> {
     let t_total = Instant::now();
     try_cleanup_expired_session_records(&state).await;

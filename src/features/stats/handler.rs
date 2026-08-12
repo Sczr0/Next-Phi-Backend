@@ -1,6 +1,7 @@
+use crate::extract::ValidatedQuery;
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::State,
     response::Json,
     routing::{get, post},
 };
@@ -79,7 +80,7 @@ pub struct DailyQuery {
 )]
 pub async fn get_daily_stats(
     State(state): State<AppState>,
-    Query(q): Query<DailyQuery>,
+    ValidatedQuery(q): ValidatedQuery<DailyQuery>,
 ) -> Result<Json<Vec<DailyAggRow>>, AppError> {
     let start = parse_ymd(&q.start, "start")?;
     let end = parse_ymd(&q.end, "end")?;
@@ -173,7 +174,7 @@ pub struct DailyFeaturesResponse {
 )]
 pub async fn get_daily_features(
     State(state): State<AppState>,
-    Query(q): Query<DailyFeaturesQuery>,
+    ValidatedQuery(q): ValidatedQuery<DailyFeaturesQuery>,
 ) -> Result<Json<DailyFeaturesResponse>, AppError> {
     let start = parse_ymd(&q.start, "start")?;
     let end = parse_ymd(&q.end, "end")?;
@@ -255,7 +256,7 @@ pub struct DailyDauResponse {
 )]
 pub async fn get_daily_dau(
     State(state): State<AppState>,
-    Query(q): Query<DailyDauQuery>,
+    ValidatedQuery(q): ValidatedQuery<DailyDauQuery>,
 ) -> Result<Json<DailyDauResponse>, AppError> {
     let start = parse_ymd(&q.start, "start")?;
     let end = parse_ymd(&q.end, "end")?;

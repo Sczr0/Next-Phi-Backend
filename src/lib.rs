@@ -12,6 +12,9 @@
 /// 统一错误处理模块
 pub mod error;
 
+/// 校验版提取器（Query/Json/Path → 422 problem+json）
+pub mod extract;
+
 /// 配置模块
 pub mod config;
 

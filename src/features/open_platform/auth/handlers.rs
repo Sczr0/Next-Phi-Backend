@@ -1,6 +1,6 @@
+use crate::extract::ValidatedQuery;
 use axum::{
     Json,
-    extract::Query,
     http::{HeaderMap, HeaderValue, StatusCode, header},
     response::{IntoResponse, Redirect, Response},
 };
@@ -21,6 +21,9 @@ use super::{
     get,
     path = "/auth/github/login",
     summary = "发起 GitHub OAuth 登录",
+    params(
+        ("redirect" = Option<String>, Query, description = "保留字段：前端跳转意图（当前未使用）")
+    ),
     responses(
         (status = 307, description = "重定向到 GitHub 授权页"),
         (
@@ -33,7 +36,7 @@ use super::{
     tag = "OpenPlatformAuth"
 )]
 pub async fn get_github_login(
-    Query(_query): Query<GithubLoginQuery>,
+    ValidatedQuery(_query): ValidatedQuery<GithubLoginQuery>,
 ) -> Result<Response, AppError> {
     let cfg = ensure_open_platform_enabled()?;
     let service = global()?;
@@ -56,11 +59,30 @@ pub async fn get_github_login(
     get,
     path = "/auth/github/callback",
     summary = "GitHub OAuth 回调",
+    description = "校验 OAuth state 与 code，换取 GitHub access token 并建立/复用开发者，随后签发 op_session 会话 Cookie 并 307 重定向到控制台。",
+    params(
+        ("code" = String, Query, description = "GitHub OAuth 授权码"),
+        ("state" = String, Query, description = "OAuth state（来自 /auth/github/login，单次有效）"),
+        ("error" = Option<String>, Query, description = "GitHub OAuth 错误标识（存在时直接返回 401）"),
+        ("error_description" = Option<String>, Query, description = "GitHub OAuth 错误描述")
+    ),
     responses(
         (status = 307, description = "登录成功并重定向控制台"),
         (
             status = 401,
             description = "state/code 无效或 GitHub 认证失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 502,
+            description = "上游网络错误（GitHub API 调用失败）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 504,
+            description = "上游请求超时",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -74,7 +96,7 @@ pub async fn get_github_login(
     tag = "OpenPlatformAuth"
 )]
 pub async fn get_github_callback(
-    Query(query): Query<GithubCallbackQuery>,
+    ValidatedQuery(query): ValidatedQuery<GithubCallbackQuery>,
 ) -> Result<Response, AppError> {
     let cfg = ensure_open_platform_enabled()?;
     let service = global()?;
@@ -131,11 +153,18 @@ pub async fn get_github_callback(
     get,
     path = "/auth/me",
     summary = "获取当前开发者登录信息",
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 200, description = "当前开发者信息", body = DeveloperMeResponse),
         (
             status = 401,
             description = "缺少或无效开发者会话",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "开放平台存储未初始化",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         )

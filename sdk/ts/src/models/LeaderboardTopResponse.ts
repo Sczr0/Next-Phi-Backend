@@ -17,3 +17,4 @@ export type LeaderboardTopResponse = {
     nextCursor?: string | null;
     total: number;
 };
+

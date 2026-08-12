@@ -1,6 +1,7 @@
+use crate::extract::ValidatedQuery;
 use axum::{
     Router,
-    extract::{Query, State},
+    extract::State,
     response::{IntoResponse, Json},
     routing::get,
 };
@@ -104,20 +105,20 @@ fn build_song_page(items: Vec<SongInfo>, total: usize, limit: u32, offset: u32) 
         ("q" = String, Query, description = "查询字符串"),
         ("unique" = Option<bool>, Query, description = "是否强制唯一匹配（可选）"),
         ("mode" = Option<String>, Query, description = "多关键词模式（可选：and/or）。仅显式传入时启用多关键词搜索"),
-        ("limit" = Option<u32>, Query, description = "最大返回条数（可选，默认 20，上限 100，最小 1）"),
+        ("limit" = Option<u32>, Query, minimum = 1, maximum = 100, description = "最大返回条数（可选，默认 20，上限 100，最小 1）"),
         ("offset" = Option<u32>, Query, description = "结果偏移（可选，默认 0）")
     ),
     responses(
         (status = 200, description = "查询成功（unique=true 时返回单个对象，否则为分页对象）", body = SongSearchResult),
         (
             status = 400,
-            description = "请求参数错误（缺少 q 等）",
+            description = "请求参数错误（q 为空字符串）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
         (
             status = 422,
-            description = "参数校验错误（q 过长 / limit 无效等）",
+            description = "参数校验错误（缺少 q 参数 / q 过长 / limit 无效 / mode 非法）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -144,7 +145,7 @@ fn build_song_page(items: Vec<SongInfo>, total: usize, limit: u32, offset: u32) 
 )]
 pub async fn search_songs(
     State(state): State<AppState>,
-    Query(params): Query<SongSearchQuery>,
+    ValidatedQuery(params): ValidatedQuery<SongSearchQuery>,
 ) -> Result<axum::response::Response, AppError> {
     let q = params.q.trim();
     if q.is_empty() {

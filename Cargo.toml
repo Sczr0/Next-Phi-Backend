@@ -20,6 +20,7 @@ phi-save-codec = { path = "crates/phi-save-codec" }
 # 核心异步与服务框架
 tokio = { version = "1.41", features = ["full"] }
 axum = "0.7.9"
+async-trait = "0.1"
 tower-http = { version = "0.6", features = ["fs", "compression-br", "compression-gzip", "cors"] }
 
 # 序列化与JSON

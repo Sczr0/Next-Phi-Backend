@@ -1,6 +1,6 @@
+use crate::extract::{ValidatedJson, ValidatedPath, ValidatedQuery};
 use axum::{
     Json,
-    extract::{Path, Query},
     http::{HeaderMap, StatusCode},
 };
 
@@ -29,6 +29,7 @@ use super::{
     path = "/developer/api-keys",
     summary = "创建 API Key（明文仅返回一次）",
     request_body = CreateApiKeyRequest,
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 201, description = "创建成功", body = ApiKeyIssueResponse),
         (
@@ -42,13 +43,19 @@ use super::{
             description = "参数校验失败",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端内部错误（如 hash 密钥未配置）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "OpenPlatformKeys"
 )]
 pub async fn post_create_api_key(
     headers: HeaderMap,
-    Json(req): Json<CreateApiKeyRequest>,
+    ValidatedJson(req): ValidatedJson<CreateApiKeyRequest>,
 ) -> Result<(StatusCode, Json<ApiKeyIssueResponse>), AppError> {
     let cfg = ensure_open_platform_enabled()?;
     let developer = auth::require_developer(&headers).await?;
@@ -119,11 +126,24 @@ pub async fn post_create_api_key(
     params(
         ("includeInactive" = Option<bool>, Query, description = "是否包含非 active 的历史 Key（默认 false）")
     ),
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 200, description = "查询成功", body = ApiKeyListResponse),
         (
             status = 401,
             description = "开发者会话无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "查询参数无效（如 includeInactive 非布尔值）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端内部错误（存储未初始化）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         )
@@ -132,7 +152,7 @@ pub async fn post_create_api_key(
 )]
 pub async fn get_api_keys(
     headers: HeaderMap,
-    Query(query): Query<ApiKeyListQuery>,
+    ValidatedQuery(query): ValidatedQuery<ApiKeyListQuery>,
 ) -> Result<(StatusCode, Json<ApiKeyListResponse>), AppError> {
     let developer = auth::require_developer(&headers).await?;
     let st = storage::global()?;
@@ -153,11 +173,18 @@ pub async fn get_api_keys(
     summary = "轮换 API Key",
     request_body = RotateApiKeyRequest,
     params(("key_id" = String, Path, description = "待轮换的 key_id")),
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 201, description = "轮换成功", body = ApiKeyIssueResponse),
         (
             status = 401,
-            description = "开发者会话无效",
+            description = "开发者会话无效或无权操作该 Key",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 404,
+            description = "API Key 不存在",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -166,14 +193,20 @@ pub async fn get_api_keys(
             description = "参数校验失败",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端内部错误（如 hash 密钥未配置）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "OpenPlatformKeys"
 )]
 pub async fn post_rotate_api_key(
     headers: HeaderMap,
-    Path(key_id): Path<String>,
-    Json(req): Json<RotateApiKeyRequest>,
+    ValidatedPath(key_id): ValidatedPath<String>,
+    ValidatedJson(req): ValidatedJson<RotateApiKeyRequest>,
 ) -> Result<(StatusCode, Json<ApiKeyIssueResponse>), AppError> {
     let cfg = ensure_open_platform_enabled()?;
     let developer = auth::require_developer(&headers).await?;
@@ -239,11 +272,30 @@ pub async fn post_rotate_api_key(
     summary = "撤销 API Key",
     request_body = RevokeApiKeyRequest,
     params(("key_id" = String, Path, description = "待撤销的 key_id")),
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 200, description = "撤销成功", body = OkResponse),
         (
             status = 401,
-            description = "开发者会话无效",
+            description = "开发者会话无效或无权操作该 Key",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 404,
+            description = "API Key 不存在",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "请求体 JSON 无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端内部错误（存储未初始化）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         )
@@ -252,8 +304,8 @@ pub async fn post_rotate_api_key(
 )]
 pub async fn post_revoke_api_key(
     headers: HeaderMap,
-    Path(key_id): Path<String>,
-    Json(req): Json<RevokeApiKeyRequest>,
+    ValidatedPath(key_id): ValidatedPath<String>,
+    ValidatedJson(req): ValidatedJson<RevokeApiKeyRequest>,
 ) -> Result<(StatusCode, Json<OkResponse>), AppError> {
     let developer = auth::require_developer(&headers).await?;
     let _old_key = ensure_key_owned_by_developer(&key_id, &developer.id).await?;
@@ -275,11 +327,30 @@ pub async fn post_revoke_api_key(
     summary = "删除 API Key（软删除）",
     request_body = DeleteApiKeyRequest,
     params(("key_id" = String, Path, description = "待删除的 key_id")),
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 200, description = "删除成功", body = OkResponse),
         (
             status = 401,
-            description = "开发者会话无效",
+            description = "开发者会话无效或无权操作该 Key",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 404,
+            description = "API Key 不存在",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "请求体 JSON 无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端内部错误（存储未初始化）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         )
@@ -288,8 +359,8 @@ pub async fn post_revoke_api_key(
 )]
 pub async fn post_delete_api_key(
     headers: HeaderMap,
-    Path(key_id): Path<String>,
-    Json(req): Json<DeleteApiKeyRequest>,
+    ValidatedPath(key_id): ValidatedPath<String>,
+    ValidatedJson(req): ValidatedJson<DeleteApiKeyRequest>,
 ) -> Result<(StatusCode, Json<OkResponse>), AppError> {
     let developer = auth::require_developer(&headers).await?;
     let _old_key = ensure_key_owned_by_developer(&key_id, &developer.id).await?;
@@ -311,13 +382,32 @@ pub async fn post_delete_api_key(
     summary = "查询 API Key 事件",
     params(
         ("key_id" = String, Path, description = "key_id"),
-        ("limit" = Option<i64>, Query, description = "返回条数，默认 100")
+        ("limit" = Option<i64>, Query, minimum = 1, maximum = 500, description = "返回条数，默认 100，最大 500")
     ),
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 200, description = "查询成功", body = ApiKeyEventsResponse),
         (
             status = 401,
-            description = "开发者会话无效",
+            description = "开发者会话无效或无权操作该 Key",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 404,
+            description = "API Key 不存在",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "查询参数无效（如 limit 非整数）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端内部错误（存储未初始化）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         )
@@ -326,8 +416,8 @@ pub async fn post_delete_api_key(
 )]
 pub async fn get_api_key_events(
     headers: HeaderMap,
-    Path(key_id): Path<String>,
-    Query(query): Query<EventsQuery>,
+    ValidatedPath(key_id): ValidatedPath<String>,
+    ValidatedQuery(query): ValidatedQuery<EventsQuery>,
 ) -> Result<(StatusCode, Json<ApiKeyEventsResponse>), AppError> {
     let developer = auth::require_developer(&headers).await?;
     let _old_key = ensure_key_owned_by_developer(&key_id, &developer.id).await?;
@@ -363,13 +453,32 @@ pub async fn get_api_key_events(
     params(
         ("key_id" = String, Path, description = "key_id"),
         ("includeClientIp" = Option<bool>, Query, description = "是否按 client_ip 展开，默认 false"),
-        ("limit" = Option<usize>, Query, description = "最多返回桶数量，默认 100，最大 500")
+        ("limit" = Option<usize>, Query, minimum = 1, maximum = 500, description = "最多返回桶数量，默认 100，最大 500")
     ),
+    security(("DeveloperCookie" = [])),
     responses(
         (status = 200, description = "查询成功", body = ApiKeyRateLimitResponse),
         (
             status = 401,
-            description = "开发者会话无效",
+            description = "开发者会话无效或无权操作该 Key",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 404,
+            description = "API Key 不存在",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "查询参数无效（如 includeClientIp 非布尔或 limit 非整数）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务端内部错误（存储未初始化）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         )
@@ -378,8 +487,8 @@ pub async fn get_api_key_events(
 )]
 pub async fn get_api_key_rate_limit(
     headers: HeaderMap,
-    Path(key_id): Path<String>,
-    Query(query): Query<ApiKeyRateLimitQuery>,
+    ValidatedPath(key_id): ValidatedPath<String>,
+    ValidatedQuery(query): ValidatedQuery<ApiKeyRateLimitQuery>,
 ) -> Result<(StatusCode, Json<ApiKeyRateLimitResponse>), AppError> {
     let cfg = ensure_open_platform_enabled()?;
     let developer = auth::require_developer(&headers).await?;

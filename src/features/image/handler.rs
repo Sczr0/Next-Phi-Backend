@@ -1,3 +1,4 @@
+use crate::extract::{ValidatedJson, ValidatedQuery};
 use axum::{
     Json, Router,
     extract::State,
@@ -126,18 +127,17 @@ pub struct VerifyResponse {
     post,
     path = "/verify",
     summary = "验证图片签名",
-    description = "验证 SVG 中的 lilith-sig 签名，确保图片由本服务器合法生成。",
+    description = "验证 SVG 中的 lilith-sig 签名，确保图片由本服务器合法生成。注意：该端点仅在 image.signing.public_verify=true 时注册；验证失败本身不视为错误，统一以 200 + valid=false 返回。",
     request_body = VerifyRequest,
     responses(
-        (status = 200, description = "验证结果", body = VerifyResponse),
-        (status = 400, description = "请求参数错误", body = crate::error::ProblemDetails),
-        (status = 500, description = "服务器内部错误", body = crate::error::ProblemDetails)
+        (status = 200, description = "验证结果（无论签名是否有效均返回 200，用 valid 字段区分）", body = VerifyResponse),
+        (status = 422, description = "请求体 JSON 无效", body = crate::error::ProblemDetails, content_type = "application/problem+json")
     ),
     tag = "Image"
 )]
 pub async fn verify_image(
     State(_state): State<AppState>,
-    Json(req): Json<VerifyRequest>,
+    ValidatedJson(req): ValidatedJson<VerifyRequest>,
 ) -> Result<Json<VerifyResponse>, AppError> {
     let cfg = &crate::config::AppConfig::global().image.signing;
     if !cfg.is_usable() {
@@ -222,7 +222,7 @@ pub struct VerifyQuery {
 )]
 pub async fn verify_image_get(
     State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<VerifyQuery>,
+    ValidatedQuery(q): ValidatedQuery<VerifyQuery>,
 ) -> Result<Json<VerifyResponse>, AppError> {
     let svg = q.svg.as_deref().unwrap_or("");
     if svg.is_empty() {
@@ -243,7 +243,7 @@ pub async fn verify_image_get(
     }
     verify_image(
         State(state),
-        Json(VerifyRequest {
+        ValidatedJson(VerifyRequest {
             svg: svg.to_string(),
         }),
     )

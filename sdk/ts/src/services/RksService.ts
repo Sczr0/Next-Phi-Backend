@@ -10,7 +10,7 @@ import { request as __request } from '../core/request';
 export class RksService {
     /**
      * 查询 RKS 历史变化
-     * 通过认证信息查询用户的 RKS 历史变化记录，包括每次提交的 RKS 值和变化量。
+     * 通过认证信息（请求体凭证或 Authorization: Bearer）查询用户的 RKS 历史变化记录，包括每次提交的 RKS 值和变化量。
      * @returns RksHistoryResponse 成功返回 RKS 历史
      * @throws ApiError
      */
@@ -26,6 +26,8 @@ export class RksService {
             mediaType: 'application/json',
             errors: {
                 401: `认证失败/无法识别用户`,
+                403: `用户已被封禁`,
+                422: `参数校验失败（请求体 JSON 无效 / cursor 格式错误）`,
                 500: `统计存储未初始化/查询失败`,
             },
         });

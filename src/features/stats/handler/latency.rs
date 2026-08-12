@@ -1,5 +1,6 @@
+use crate::extract::ValidatedQuery;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     response::Json,
 };
 use serde::{Deserialize, Serialize};
@@ -99,7 +100,7 @@ pub struct LatencyAggResponse {
 )]
 pub async fn get_latency_agg(
     State(state): State<AppState>,
-    Query(q): Query<LatencyAggQuery>,
+    ValidatedQuery(q): ValidatedQuery<LatencyAggQuery>,
 ) -> Result<Json<LatencyAggResponse>, AppError> {
     let start = parse_ymd(&q.start, "start")?;
     let end = parse_ymd(&q.end, "end")?;

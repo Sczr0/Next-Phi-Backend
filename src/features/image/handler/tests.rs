@@ -1,9 +1,9 @@
+use crate::extract::{ValidatedJson, ValidatedQuery};
 use super::{
     ImageOutputCacheSpec, ImageQueryOpts, content_type_from_fmt_code, format_code,
     parse_user_score_difficulty,
 };
-use axum::Json;
-use axum::extract::{Query, State};
+use axum::extract::State;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 
@@ -616,7 +616,7 @@ async fn user_bn_rejects_scores_over_limit() {
         scores,
     };
 
-    let res = super::render_bn_user(State(state), Query(q), Json(req)).await;
+    let res = super::render_bn_user(State(state), ValidatedQuery(q), ValidatedJson(req)).await;
     match res {
         Err(crate::error::AppError::Validation(msg)) => {
             assert!(msg.contains("scores 条数超过上限"), "msg={msg}");

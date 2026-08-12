@@ -2,6 +2,9 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { AdminLeaderboardUsersResponse } from '../models/AdminLeaderboardUsersResponse';
+import type { AdminSetUserStatusRequest } from '../models/AdminSetUserStatusRequest';
+import type { AdminUserStatusResponse } from '../models/AdminUserStatusResponse';
 import type { AliasRequest } from '../models/AliasRequest';
 import type { ForceAliasRequest } from '../models/ForceAliasRequest';
 import type { LeaderboardTopResponse } from '../models/LeaderboardTopResponse';
@@ -99,7 +102,7 @@ export class LeaderboardService {
          */
         minScore?: number,
         /**
-         * 返回数量，默认 100
+         * 返回数量，默认 100，最大 500
          */
         limit?: number,
     }): CancelablePromise<Array<SuspiciousItem>> {
@@ -120,6 +123,125 @@ export class LeaderboardService {
         });
     }
     /**
+     * 分页查询排行榜用户（含完整 user_hash）
+     * 需要在 Header 中提供 X-Admin-Token，返回排行榜用户完整 user_hash，支持按状态与别名筛选。
+     * @returns AdminLeaderboardUsersResponse 分页结果
+     * @throws ApiError
+     */
+    public static getAdminLeaderboardUsers({
+        xAdminToken,
+        page,
+        pageSize,
+        status,
+        alias,
+    }: {
+        /**
+         * 管理员令牌（config.leaderboard.admin_tokens）
+         */
+        xAdminToken: string,
+        /**
+         * 页码（从 1 开始，默认 1）
+         */
+        page?: number,
+        /**
+         * 每页条数（1-200，默认 50）
+         */
+        pageSize?: number,
+        /**
+         * 状态筛选：active|approved|shadow|banned|rejected
+         */
+        status?: string,
+        /**
+         * 别名模糊筛选
+         */
+        alias?: string,
+    }): CancelablePromise<AdminLeaderboardUsersResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/leaderboard/users',
+            headers: {
+                'X-Admin-Token': xAdminToken,
+            },
+            query: {
+                'page': page,
+                'pageSize': pageSize,
+                'status': status,
+                'alias': alias,
+            },
+            errors: {
+                401: `管理员令牌缺失或无效`,
+                422: `参数校验失败（status 非法等）`,
+                500: `统计存储未初始化/查询失败`,
+            },
+        });
+    }
+    /**
+     * 查询用户全局状态
+     * 需要在 Header 中提供 X-Admin-Token。
+     * @returns AdminUserStatusResponse 查询成功
+     * @throws ApiError
+     */
+    public static getAdminUserStatus({
+        xAdminToken,
+        userHash,
+    }: {
+        /**
+         * 管理员令牌（config.leaderboard.admin_tokens）
+         */
+        xAdminToken: string,
+        /**
+         * 完整 user_hash
+         */
+        userHash: string,
+    }): CancelablePromise<AdminUserStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'GET',
+            url: '/admin/users/status',
+            headers: {
+                'X-Admin-Token': xAdminToken,
+            },
+            query: {
+                'userHash': userHash,
+            },
+            errors: {
+                401: `管理员令牌缺失或无效`,
+                422: `参数校验失败（缺少 userHash 或参数无法解析）`,
+                500: `统计存储未初始化/查询失败`,
+            },
+        });
+    }
+    /**
+     * 设置用户全局状态
+     * 需要在 Header 中提供 X-Admin-Token。状态支持 active|approved|shadow|banned|rejected。
+     * @returns AdminUserStatusResponse 更新成功
+     * @throws ApiError
+     */
+    public static postAdminUserStatus({
+        xAdminToken,
+        requestBody,
+    }: {
+        /**
+         * 管理员令牌（config.leaderboard.admin_tokens）
+         */
+        xAdminToken: string,
+        requestBody: AdminSetUserStatusRequest,
+    }): CancelablePromise<AdminUserStatusResponse> {
+        return __request(OpenAPI, {
+            method: 'POST',
+            url: '/admin/users/status',
+            headers: {
+                'X-Admin-Token': xAdminToken,
+            },
+            body: requestBody,
+            mediaType: 'application/json',
+            errors: {
+                401: `管理员令牌缺失或无效`,
+                422: `参数校验失败（status 非法等）`,
+                500: `统计存储未初始化/写入失败`,
+            },
+        });
+    }
+    /**
      * 设置/更新公开别名（幂等）
      * @returns OkAliasResponse 设置成功
      * @throws ApiError
@@ -135,6 +257,8 @@ export class LeaderboardService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
+                401: `认证失败（Bearer 无效或身份推导失败）`,
+                403: `用户已被封禁`,
                 409: `别名被占用`,
                 422: `别名非法`,
                 500: `统计存储未初始化/写入失败/无法识别用户`,
@@ -157,6 +281,8 @@ export class LeaderboardService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
+                401: `认证失败（Bearer 无效或身份推导失败）`,
+                403: `用户已被封禁`,
                 422: `参数校验失败（例如配置禁止公开）`,
                 500: `统计存储未初始化/更新失败/无法识别用户`,
             },
@@ -188,7 +314,7 @@ export class LeaderboardService {
          */
         end?: number,
         /**
-         * 返回数量（与 start 组合使用）
+         * 返回数量（与 start 组合使用，最多 200）
          */
         count?: number,
         /**
@@ -214,7 +340,7 @@ export class LeaderboardService {
     }
     /**
      * 我的名次（按RKS）
-     * 通过认证信息推导用户身份，返回名次、分数、总量与百分位（竞争排名）
+     * 通过认证信息推导用户身份，返回名次、分数、总量与百分位（竞争排名）。支持请求体凭证（sessionToken/externalCredentials）或 Authorization: Bearer。
      * @returns MeResponse 查询成功
      * @throws ApiError
      */
@@ -229,6 +355,9 @@ export class LeaderboardService {
             body: requestBody,
             mediaType: 'application/json',
             errors: {
+                401: `认证失败（Bearer 无效或身份推导失败）`,
+                403: `用户已被封禁`,
+                422: `请求体 JSON 无效`,
                 500: `统计存储未初始化/查询失败/无法识别用户`,
             },
         });
@@ -243,6 +372,9 @@ export class LeaderboardService {
         limit,
         offset,
         cursor,
+        afterScore,
+        afterUpdated,
+        afterUser,
         lite,
     }: {
         /**
@@ -258,6 +390,18 @@ export class LeaderboardService {
          */
         cursor?: string,
         /**
+         * 旧式游标：上一页最后一条的 score（需与 after_updated/after_user 同时使用）
+         */
+        afterScore?: number,
+        /**
+         * 旧式游标：上一页最后一条的 updatedAt（RFC3339）
+         */
+        afterUpdated?: string,
+        /**
+         * 旧式游标：上一页最后一条的脱敏 user（hash 前缀）
+         */
+        afterUser?: string,
+        /**
          * 精简模式：不返回 bestTop3/apTop3（默认 false）
          */
         lite?: boolean,
@@ -269,9 +413,13 @@ export class LeaderboardService {
                 'limit': limit,
                 'offset': offset,
                 'cursor': cursor,
+                'after_score': afterScore,
+                'after_updated': afterUpdated,
+                'after_user': afterUser,
                 'lite': lite,
             },
             errors: {
+                422: `游标无效（cursor 格式/解密失败或 after_* 参数非法）`,
                 500: `统计存储未初始化/查询失败`,
             },
         });

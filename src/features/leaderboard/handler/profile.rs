@@ -1,5 +1,6 @@
+use crate::extract::ValidatedPath;
 use axum::{
-    extract::{Path, State},
+    extract::State,
     response::Json,
 };
 use sqlx::Row;
@@ -18,6 +19,18 @@ use super::{OkAliasResponse, OkResponse, ensure_not_banned, validate_alias_forma
     request_body = AliasRequest,
     responses(
         (status = 200, description = "设置成功", body = OkAliasResponse),
+        (
+            status = 401,
+            description = "认证失败（Bearer 无效或身份推导失败）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "用户已被封禁",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
         (
             status = 409,
             description = "别名被占用",
@@ -101,6 +114,18 @@ pub async fn put_alias(
     request_body = ProfileUpdateRequest,
     responses(
         (status = 200, description = "更新成功", body = OkResponse),
+        (
+            status = 401,
+            description = "认证失败（Bearer 无效或身份推导失败）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "用户已被封禁",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
         (
             status = 422,
             description = "参数校验失败（例如配置禁止公开）",
@@ -204,7 +229,7 @@ pub async fn put_profile(
 )]
 pub async fn get_public_profile(
     State(state): State<AppState>,
-    Path(alias): Path<String>,
+    ValidatedPath(alias): ValidatedPath<String>,
 ) -> Result<Json<PublicProfileResponse>, AppError> {
     let storage = state
         .stats_storage

@@ -12,6 +12,14 @@
  */
 export type ProblemDetails = {
     /**
+     * 可选：搜索候选预览（通常用于 SEARCH_NOT_UNIQUE）。
+     */
+    candidates?: any[] | null;
+    /**
+     * 可选：候选总数（用于提示 candidates 已截断）。
+     */
+    candidatesTotal?: number | null;
+    /**
      * 稳定的错误码，用于程序化处理。
      */
     code: string;

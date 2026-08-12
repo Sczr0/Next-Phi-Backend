@@ -1,6 +1,7 @@
+use crate::extract::{ValidatedJson, ValidatedQuery};
 use axum::http::HeaderMap;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     response::Json,
 };
 use serde::{Deserialize, Serialize};
@@ -124,7 +125,7 @@ pub struct SuspiciousItem {
     params(
         ("X-Admin-Token" = String, Header, description = "管理员令牌（config.leaderboard.admin_tokens）"),
         ("min_score"= Option<f64>, Query, description="最小可疑分，默认0.6"),
-        ("limit"=Option<i64>, Query, description="返回数量，默认 100")
+        ("limit"=Option<i64>, Query, minimum = 1, maximum = 500, description="返回数量，默认 100，最大 500")
     ),
     security(("AdminToken" = [])),
     responses(
@@ -147,7 +148,7 @@ pub struct SuspiciousItem {
 pub async fn get_suspicious(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(p): Query<BTreeMap<String, String>>,
+    ValidatedQuery(p): ValidatedQuery<BTreeMap<String, String>>,
 ) -> Result<Json<Vec<SuspiciousItem>>, AppError> {
     require_admin(&headers)?;
     let storage = state
@@ -216,7 +217,7 @@ pub async fn get_suspicious(
 pub async fn get_admin_leaderboard_users(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<AdminUsersQuery>,
+    ValidatedQuery(q): ValidatedQuery<AdminUsersQuery>,
 ) -> Result<Json<AdminLeaderboardUsersResponse>, AppError> {
     require_admin(&headers)?;
     let storage = state
@@ -292,6 +293,12 @@ pub async fn get_admin_leaderboard_users(
             content_type = "application/problem+json"
         ),
         (
+            status = 422,
+            description = "参数校验失败（缺少 userHash 或参数无法解析）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
             status = 500,
             description = "统计存储未初始化/查询失败",
             body = crate::error::ProblemDetails,
@@ -303,7 +310,7 @@ pub async fn get_admin_leaderboard_users(
 pub async fn get_admin_user_status(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Query(q): Query<AdminUserStatusQuery>,
+    ValidatedQuery(q): ValidatedQuery<AdminUserStatusQuery>,
 ) -> Result<Json<AdminUserStatusResponse>, AppError> {
     require_admin(&headers)?;
     let storage = state
@@ -367,7 +374,7 @@ pub async fn get_admin_user_status(
 pub async fn post_admin_user_status(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<AdminSetUserStatusRequest>,
+    ValidatedJson(req): ValidatedJson<AdminSetUserStatusRequest>,
 ) -> Result<Json<AdminUserStatusResponse>, AppError> {
     let admin = require_admin(&headers)?;
     let storage = state
@@ -438,7 +445,7 @@ pub struct ResolveRequest {
 pub async fn post_resolve(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<ResolveRequest>,
+    ValidatedJson(req): ValidatedJson<ResolveRequest>,
 ) -> Result<Json<OkResponse>, AppError> {
     let admin = require_admin(&headers)?;
     let storage = state
@@ -506,7 +513,7 @@ pub struct ForceAliasRequest {
 pub async fn post_alias_force(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<ForceAliasRequest>,
+    ValidatedJson(req): ValidatedJson<ForceAliasRequest>,
 ) -> Result<Json<OkAliasResponse>, AppError> {
     require_admin(&headers)?;
     let storage = state

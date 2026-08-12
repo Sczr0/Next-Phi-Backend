@@ -1,4 +1,5 @@
-use axum::{extract::Query, extract::State, response::Json};
+use crate::extract::ValidatedQuery;
+use axum::{extract::State, response::Json};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -177,7 +178,7 @@ pub struct StatsSummaryResponse {
 )]
 pub async fn get_stats_summary(
     State(state): State<AppState>,
-    Query(q): Query<StatsSummaryQuery>,
+    ValidatedQuery(q): ValidatedQuery<StatsSummaryQuery>,
 ) -> Result<Json<StatsSummaryResponse>, AppError> {
     let storage = state
         .stats_storage

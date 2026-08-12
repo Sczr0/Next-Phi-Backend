@@ -1,5 +1,6 @@
+use crate::extract::{ValidatedPath, ValidatedQuery};
 use axum::{
-    extract::{Path, Query, State},
+    extract::State,
     response::Response,
 };
 
@@ -20,7 +21,7 @@ use crate::{error::AppError, state::AppState};
         (status = 200, description = "生成二维码成功", body = crate::auth_qrcode_api::QrCodeCreateResponse),
         (
             status = 401,
-            description = "Token 缺失、无效、被吊销或已过期",
+            description = "Token 缺失、无效、被吊销或已过期，或 TapTap 上游认证失败",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -29,15 +30,39 @@ use crate::{error::AppError, state::AppState};
             description = "Scope 不足或请求触发限流",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败（taptapVersion 非法）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 502,
+            description = "上游网络错误（TapTap 调用失败）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 504,
+            description = "上游请求超时",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "服务器内部错误",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "OpenPlatformOpenApi"
 )]
 pub(crate) async fn open_auth_qrcode(
     State(state): State<AppState>,
-    Query(params): Query<crate::auth_qrcode_api::QrCodeQuery>,
+    ValidatedQuery(params): ValidatedQuery<crate::auth_qrcode_api::QrCodeQuery>,
 ) -> Result<Response, AppError> {
-    crate::auth_qrcode_api::post_qrcode(State(state), Query(params)).await
+    crate::auth_qrcode_api::post_qrcode(State(state), ValidatedQuery(params)).await
 }
 
 #[utoipa::path(
@@ -70,7 +95,7 @@ pub(crate) async fn open_auth_qrcode(
 )]
 pub(crate) async fn open_auth_qrcode_status(
     State(state): State<AppState>,
-    Path(qr_id): Path<String>,
+    ValidatedPath(qr_id): ValidatedPath<String>,
 ) -> Result<Response, AppError> {
-    crate::auth_qrcode_api::get_qrcode_status(State(state), Path(qr_id)).await
+    crate::auth_qrcode_api::get_qrcode_status(State(state), ValidatedPath(qr_id)).await
 }

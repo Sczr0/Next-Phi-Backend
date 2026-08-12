@@ -112,13 +112,25 @@ pub struct RksHistoryResponse {
     post,
     path = "/rks/history",
     summary = "查询 RKS 历史变化",
-    description = "通过认证信息查询用户的 RKS 历史变化记录，包括每次提交的 RKS 值和变化量。",
+    description = "通过认证信息（请求体凭证或 Authorization: Bearer）查询用户的 RKS 历史变化记录，包括每次提交的 RKS 值和变化量。",
     request_body = RksHistoryRequest,
     responses(
         (status = 200, body = RksHistoryResponse, description = "成功返回 RKS 历史"),
         (
             status = 401,
             description = "认证失败/无法识别用户",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "用户已被封禁",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "参数校验失败（请求体 JSON 无效 / cursor 格式错误）",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),

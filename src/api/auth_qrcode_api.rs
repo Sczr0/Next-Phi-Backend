@@ -1,8 +1,9 @@
 use axum::{
-    extract::{Path, Query, State},
+    extract::State,
     response::Response,
 };
 
+use crate::extract::{ValidatedPath, ValidatedQuery};
 use crate::{error::AppError, state::AppState};
 
 pub(crate) use crate::features::auth::handler::QrCodeQuery;
@@ -10,14 +11,14 @@ pub use crate::features::auth::handler::{QrCodeCreateResponse, QrCodeStatusRespo
 
 pub(crate) async fn post_qrcode(
     state: State<AppState>,
-    query: Query<QrCodeQuery>,
+    query: ValidatedQuery<QrCodeQuery>,
 ) -> Result<Response, AppError> {
     crate::features::auth::handler::post_qrcode(state, query).await
 }
 
 pub(crate) async fn get_qrcode_status(
     state: State<AppState>,
-    path: Path<String>,
+    path: ValidatedPath<String>,
 ) -> Result<Response, AppError> {
     crate::features::auth::handler::get_qrcode_status(state, path).await
 }

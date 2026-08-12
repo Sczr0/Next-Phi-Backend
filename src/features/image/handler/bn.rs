@@ -1,7 +1,8 @@
+use crate::extract::ValidatedQuery;
 use std::time::Instant;
 
 use axum::{
-    extract::{Query, State},
+    extract::State,
     http::StatusCode,
     response::IntoResponse,
 };
@@ -40,13 +41,13 @@ use super::{
     post,
     path = "/image/bn",
     summary = "生成 BestN 汇总图片",
-    description = "从官方/外部存档解析玩家成绩，按 RKS 值排序取前 N 条生成 BestN 概览（PNG）。可选内嵌封面与主题切换。",
+    description = "从官方/外部存档解析玩家成绩（或使用 Authorization: Bearer 内嵌凭证），按 RKS 值排序取前 N 条生成 BestN 概览（PNG）。可选内嵌封面与主题切换。",
     request_body = RenderBnRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg（jpeg 接受别名 jpg），默认 png；未知值回落 png"),
         ("template" = Option<String>, Query, description = "SVG 模板 ID：对应 resources/templates/image/bn/{id}.svg.jinja（不传则使用内置手写 SVG）"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
-        ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
+        ("webp_quality" = Option<u8>, Query, minimum = 1, maximum = 100, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
@@ -67,6 +68,18 @@ use super::{
             content_type = "application/problem+json"
         ),
         (
+            status = 401,
+            description = "Bearer 令牌无效或身份推导失败",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "用户已被封禁",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
             status = 422,
             description = "参数校验失败/渲染错误",
             body = crate::error::ProblemDetails,
@@ -83,7 +96,7 @@ use super::{
 )]
 pub async fn render_bn(
     State(state): State<AppState>,
-    Query(q): Query<ImageQueryOpts>,
+    ValidatedQuery(q): ValidatedQuery<ImageQueryOpts>,
     request: axum::extract::Request,
 ) -> Result<impl IntoResponse, AppError> {
     let (mut req, bearer_state) =

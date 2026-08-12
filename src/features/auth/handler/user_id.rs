@@ -1,3 +1,4 @@
+use crate::extract::ValidatedJson;
 use axum::{Json, http::StatusCode};
 use serde::Serialize;
 
@@ -6,9 +7,10 @@ use crate::error::AppError;
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct UserIdResponse {
-    /// 鍘绘晱鍚庣殑绋冲畾鐢ㄦ埛 ID锛?2 浣?hex锛岀瓑浠蜂簬 stats/leaderboard 浣跨敤鐨?user_hash锛?    #[schema(example = "ab12cd34ef56ab12cd34ef56ab12cd34")]
+    /// 去敏后的稳定用户 ID，32 位 hex，等同于 stats/leaderboard 使用的 user_hash
+    #[schema(example = "ab12cd34ef56ab12cd34ef56ab12cd34")]
     pub user_id: String,
-    /// 鐢ㄤ簬鎺ㄥ user_id 鐨勫嚟璇佺被鍨嬶紙鐢ㄤ簬鎺掓煡鈥滀负浠€涔堝拰浠ュ墠涓嶄竴鑷粹€濓級
+    /// 用于推导 user_id 的凭证类型（用于排查"为什么和以前不一致"）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_kind: Option<String>,
 }
@@ -20,7 +22,7 @@ pub struct UserIdResponse {
     description = "使用服务端配置的 stats.user_hash_salt 对凭证做 HMAC-SHA256 去敏，生成稳定用户标识。",
     request_body = crate::auth_contract::UnifiedSaveRequest,
     responses(
-        (status = 200, description = "鐢熸垚鎴愬姛", body = UserIdResponse),
+        (status = 200, description = "生成成功", body = UserIdResponse),
         (
             status = 422,
             description = "凭证缺失或无效",
@@ -37,7 +39,7 @@ pub struct UserIdResponse {
     tag = "Auth"
 )]
 pub async fn post_user_id(
-    Json(auth): Json<crate::auth_contract::UnifiedSaveRequest>,
+    ValidatedJson(auth): ValidatedJson<crate::auth_contract::UnifiedSaveRequest>,
 ) -> Result<(StatusCode, Json<UserIdResponse>), AppError> {
     // 与 /save 的凭证互斥规则保持一致，避免同一请求在不同接口出现身份不一致。
     if auth.session_token.is_some() && auth.external_credentials.is_some() {

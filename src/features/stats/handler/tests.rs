@@ -1,3 +1,4 @@
+use crate::extract::ValidatedQuery;
 use super::*;
 use crate::auth_services::{QrCodeService, TapTapClient};
 use crate::features::stats::models::EventInsert;
@@ -199,7 +200,7 @@ async fn stats_summary_supports_include_and_filters() {
         include: Some("all".into()),
         top: Some(50),
     };
-    let Json(resp) = get_stats_summary(State(state.clone()), Query(query))
+    let Json(resp) = get_stats_summary(State(state.clone()), ValidatedQuery(query))
         .await
         .unwrap();
 
@@ -233,7 +234,7 @@ async fn stats_summary_supports_include_and_filters() {
         include: Some("actions".into()),
         top: Some(10),
     };
-    let Json(resp) = get_stats_summary(State(state), Query(query)).await.unwrap();
+    let Json(resp) = get_stats_summary(State(state), ValidatedQuery(query)).await.unwrap();
     assert_eq!(resp.feature_filter.as_deref(), Some("bestn"));
     assert_eq!(resp.unique_users.total, 1);
     assert_eq!(resp.features.len(), 1);
@@ -292,7 +293,7 @@ async fn stats_summary_skips_user_kinds_when_not_requested() {
         include: Some("actions".into()),
         top: Some(10),
     };
-    let Json(resp) = get_stats_summary(State(state), Query(query)).await.unwrap();
+    let Json(resp) = get_stats_summary(State(state), ValidatedQuery(query)).await.unwrap();
     assert_eq!(resp.unique_users.total, 2);
     assert!(resp.unique_users.by_kind.is_empty());
 }
@@ -395,7 +396,7 @@ async fn stats_summary_user_kinds_dedupes_users_and_ignores_non_string_values() 
         include: Some("user_kinds".into()),
         top: Some(10),
     };
-    let Json(resp) = get_stats_summary(State(state.clone()), Query(query))
+    let Json(resp) = get_stats_summary(State(state.clone()), ValidatedQuery(query))
         .await
         .unwrap();
 
@@ -413,7 +414,7 @@ async fn stats_summary_user_kinds_dedupes_users_and_ignores_non_string_values() 
         include: Some("user_kinds".into()),
         top: Some(10),
     };
-    let Json(resp) = get_stats_summary(State(state), Query(query)).await.unwrap();
+    let Json(resp) = get_stats_summary(State(state), ValidatedQuery(query)).await.unwrap();
 
     assert_eq!(resp.unique_users.total, 2);
     assert_eq!(resp.unique_users.by_kind, vec![("official".to_string(), 2)]);
@@ -504,7 +505,7 @@ async fn stats_summary_latency_percentiles_match_existing_index_rule() {
         include: Some("latency".into()),
         top: Some(10),
     };
-    let Json(resp) = get_stats_summary(State(state), Query(query)).await.unwrap();
+    let Json(resp) = get_stats_summary(State(state), ValidatedQuery(query)).await.unwrap();
 
     let latency = resp.latency.unwrap();
     assert_eq!(latency.sample_count, 4);
@@ -546,7 +547,7 @@ async fn stats_summary_cache_returns_stale_within_ttl() {
         include: Some("user_kinds".into()),
         top: Some(10),
     };
-    let Json(first) = get_stats_summary(State(state.clone()), Query(query))
+    let Json(first) = get_stats_summary(State(state.clone()), ValidatedQuery(query))
         .await
         .unwrap();
     assert_eq!(first.unique_users.total, 1);
@@ -577,7 +578,7 @@ async fn stats_summary_cache_returns_stale_within_ttl() {
         include: Some("user_kinds".into()),
         top: Some(10),
     };
-    let Json(second) = get_stats_summary(State(state), Query(query)).await.unwrap();
+    let Json(second) = get_stats_summary(State(state), ValidatedQuery(query)).await.unwrap();
 
     assert_eq!(second.unique_users.total, 1);
     assert_eq!(second.unique_users.by_kind.len(), 1);
@@ -615,7 +616,7 @@ async fn stats_summary_cache_invalidates_after_preaggregate_signal() {
         include: Some("user_kinds".into()),
         top: Some(10),
     };
-    let Json(first) = get_stats_summary(State(state.clone()), Query(query))
+    let Json(first) = get_stats_summary(State(state.clone()), ValidatedQuery(query))
         .await
         .unwrap();
     assert_eq!(first.unique_users.total, 1);
@@ -646,7 +647,7 @@ async fn stats_summary_cache_invalidates_after_preaggregate_signal() {
         include: Some("user_kinds".into()),
         top: Some(10),
     };
-    let Json(stil_cached) = get_stats_summary(State(state.clone()), Query(query))
+    let Json(stil_cached) = get_stats_summary(State(state.clone()), ValidatedQuery(query))
         .await
         .unwrap();
     assert_eq!(stil_cached.unique_users.total, 1, " TTL 未过仍读缓存");
@@ -661,7 +662,7 @@ async fn stats_summary_cache_invalidates_after_preaggregate_signal() {
         include: Some("user_kinds".into()),
         top: Some(10),
     };
-    let Json(refreshed) = get_stats_summary(State(state), Query(query)).await.unwrap();
+    let Json(refreshed) = get_stats_summary(State(state), ValidatedQuery(query)).await.unwrap();
     assert_eq!(refreshed.unique_users.total, 2);
 }
 
@@ -724,7 +725,7 @@ async fn daily_stats_supports_route_and_method_filters() {
         route: Some("/image/bn".into()),
         method: Some("GET".into()),
     };
-    let Json(rows) = get_daily_stats(State(state), Query(q)).await.unwrap();
+    let Json(rows) = get_daily_stats(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].route.as_deref(), Some("/image/bn"));
     assert_eq!(rows[0].method.as_deref(), Some("GET"));
@@ -779,7 +780,7 @@ async fn daily_stats_respects_timezone_day_boundary() {
         route: Some("/song/search".into()),
         method: Some("GET".into()),
     };
-    let Json(rows) = get_daily_stats(State(state.clone()), Query(q))
+    let Json(rows) = get_daily_stats(State(state.clone()), ValidatedQuery(q))
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -795,7 +796,7 @@ async fn daily_stats_respects_timezone_day_boundary() {
         route: Some("/song/search".into()),
         method: Some("GET".into()),
     };
-    let Json(rows) = get_daily_stats(State(state), Query(q)).await.unwrap();
+    let Json(rows) = get_daily_stats(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0].date, "2025-12-25");
     assert_eq!(rows[0].count, 1);
@@ -891,7 +892,7 @@ async fn daily_stats_dst_fallback_respects_route_and_method_filters() {
         route: Some("/image/bn".into()),
         method: Some("GET".into()),
     };
-    let Json(rows) = get_daily_stats(State(state), Query(q)).await.unwrap();
+    let Json(rows) = get_daily_stats(State(state), ValidatedQuery(q)).await.unwrap();
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].date, "2025-03-09");
@@ -965,7 +966,7 @@ async fn daily_features_outputs_counts_and_unique_users() {
         timezone: Some("Asia/Shanghai".into()),
         feature: None,
     };
-    let Json(resp) = get_daily_features(State(state.clone()), Query(q))
+    let Json(resp) = get_daily_features(State(state.clone()), ValidatedQuery(q))
         .await
         .unwrap();
     assert_eq!(resp.timezone, "Asia/Shanghai");
@@ -989,7 +990,7 @@ async fn daily_features_outputs_counts_and_unique_users() {
         timezone: Some("Asia/Shanghai".into()),
         feature: Some("bestn".into()),
     };
-    let Json(resp) = get_daily_features(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_features(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.feature_filter.as_deref(), Some("bestn"));
     assert_eq!(resp.rows.len(), 1);
     assert_eq!(resp.rows[0].date, "2025-12-24");
@@ -1026,7 +1027,7 @@ async fn daily_dau_fills_missing_days_with_zero() {
         end: "2025-12-25".into(),
         timezone: Some("Asia/Shanghai".into()),
     };
-    let Json(resp) = get_daily_dau(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_dau(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.rows.len(), 2);
     assert_eq!(resp.rows[0].date, "2025-12-24");
     assert_eq!(resp.rows[0].active_users, 1);
@@ -1095,7 +1096,7 @@ async fn daily_http_computes_error_rates_and_respects_top_per_day() {
         method: None,
         top: Some(1),
     };
-    let Json(resp) = get_daily_http(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_http(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.totals.len(), 1);
     assert_eq!(resp.totals[0].date, "2025-12-24");
     assert_eq!(resp.totals[0].total, 3);
@@ -1169,7 +1170,7 @@ async fn daily_http_top_per_day_prefers_higher_total_on_equal_errors() {
         method: None,
         top: Some(1),
     };
-    let Json(resp) = get_daily_http(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_http(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.routes.len(), 1);
     assert_eq!(resp.routes[0].route, "/image/bn");
     assert_eq!(resp.routes[0].method, "GET");
@@ -1251,7 +1252,7 @@ async fn daily_http_dst_fallback_pushes_top_down_without_truncating_totals() {
         method: None,
         top: Some(1),
     };
-    let Json(resp) = get_daily_http(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_http(State(state), ValidatedQuery(q)).await.unwrap();
 
     assert_eq!(resp.totals.len(), 3);
     assert_eq!(resp.totals[0].date, "2025-03-08");
@@ -1362,7 +1363,7 @@ async fn daily_http_dst_fallback_respects_route_and_method_filters() {
         method: Some("GET".into()),
         top: Some(1),
     };
-    let Json(resp) = get_daily_http(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_http(State(state), ValidatedQuery(q)).await.unwrap();
 
     assert_eq!(resp.route_filter.as_deref(), Some("/image/bn"));
     assert_eq!(resp.method_filter.as_deref(), Some("GET"));
@@ -1428,7 +1429,7 @@ async fn daily_http_cache_returns_stale_within_ttl() {
         method: None,
         top: Some(200),
     };
-    let Json(first) = get_daily_http(State(state.clone()), Query(q))
+    let Json(first) = get_daily_http(State(state.clone()), ValidatedQuery(q))
         .await
         .unwrap();
     assert_eq!(first.totals.len(), 1);
@@ -1459,7 +1460,7 @@ async fn daily_http_cache_returns_stale_within_ttl() {
         method: None,
         top: Some(200),
     };
-    let Json(second) = get_daily_http(State(state), Query(q)).await.unwrap();
+    let Json(second) = get_daily_http(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(second.totals.len(), 1);
     assert_eq!(second.totals[0].total, 1);
     assert_eq!(second.totals[0].errors, 0);
@@ -1555,7 +1556,7 @@ async fn latency_agg_supports_day_week_month_and_filters() {
         route: None,
         method: None,
     };
-    let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+    let Json(resp) = get_latency_agg(State(state.clone()), ValidatedQuery(q))
         .await
         .unwrap();
     assert_eq!(resp.bucket, "day");
@@ -1610,7 +1611,7 @@ async fn latency_agg_supports_day_week_month_and_filters() {
         route: None,
         method: None,
     };
-    let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+    let Json(resp) = get_latency_agg(State(state.clone()), ValidatedQuery(q))
         .await
         .unwrap();
     assert_eq!(resp.bucket, "week");
@@ -1640,7 +1641,7 @@ async fn latency_agg_supports_day_week_month_and_filters() {
         route: None,
         method: None,
     };
-    let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+    let Json(resp) = get_latency_agg(State(state.clone()), ValidatedQuery(q))
         .await
         .unwrap();
     assert_eq!(resp.bucket, "month");
@@ -1675,7 +1676,7 @@ async fn latency_agg_supports_day_week_month_and_filters() {
         route: Some("/song/search".into()),
         method: Some("GET".into()),
     };
-    let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_latency_agg(State(state), ValidatedQuery(q)).await.unwrap();
     assert!(
         resp.rows
             .iter()
@@ -1744,7 +1745,7 @@ async fn latency_agg_respects_feature_filter() {
         route: None,
         method: None,
     };
-    let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_latency_agg(State(state), ValidatedQuery(q)).await.unwrap();
 
     assert_eq!(resp.rows.len(), 1);
     assert_eq!(resp.rows[0].feature.as_deref(), Some("bestn"));
@@ -1804,7 +1805,7 @@ async fn latency_agg_respects_timezone_day_boundary() {
         route: Some("/song/search".into()),
         method: Some("GET".into()),
     };
-    let Json(resp) = get_latency_agg(State(state.clone()), Query(q))
+    let Json(resp) = get_latency_agg(State(state.clone()), ValidatedQuery(q))
         .await
         .unwrap();
     assert_eq!(resp.rows.len(), 1);
@@ -1820,7 +1821,7 @@ async fn latency_agg_respects_timezone_day_boundary() {
         route: Some("/song/search".into()),
         method: Some("GET".into()),
     };
-    let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_latency_agg(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.rows.len(), 1);
     assert_eq!(resp.rows[0].bucket, "2025-12-25");
     assert_eq!(resp.rows[0].count, 1);
@@ -1870,7 +1871,7 @@ async fn dau_partial_preagg_fills_missing_days_from_events() {
         end: "2025-12-26".into(),
         timezone: Some("Asia/Shanghai".into()),
     };
-    let Json(resp) = get_daily_dau(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_dau(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.rows.len(), 3);
     for r in &resp.rows {
         assert_eq!(r.active_users, 1, "{} 有数据不应为 0", r.date);
@@ -1903,7 +1904,7 @@ async fn dau_tz_alignment_uses_local_day_boundaries() {
         end: "2025-12-26".into(),
         timezone: Some("Asia/Shanghai".into()),
     };
-    let Json(resp) = get_daily_dau(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_daily_dau(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.rows[0].date, "2025-12-25");
     assert_eq!(resp.rows[0].active_users, 1, "上海 12-25 应只有 u1");
     assert_eq!(resp.rows[1].date, "2025-12-26");
@@ -1976,7 +1977,7 @@ async fn daily_agg_partial_preagg_fills_missing_days() {
         route: None,
         method: None,
     };
-    let Json(rows) = get_daily_stats(State(state), Query(q)).await.unwrap();
+    let Json(rows) = get_daily_stats(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(rows.len(), 3, "缺失天应从 events 补齐");
     for r in &rows {
         assert_eq!(r.count, 1, "{} 有数据不应缺失", r.date);
@@ -2035,7 +2036,7 @@ async fn latency_day_bucket_uses_preagg_when_covered() {
         route: None,
         method: None,
     };
-    let Json(resp) = get_latency_agg(State(state), Query(q)).await.unwrap();
+    let Json(resp) = get_latency_agg(State(state), ValidatedQuery(q)).await.unwrap();
     assert_eq!(resp.rows.len(), 2, "两天的 latency 行都应存在");
     let mut by_bucket: std::collections::HashMap<String, i64> = resp
         .rows

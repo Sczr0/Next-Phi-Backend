@@ -1,5 +1,6 @@
+use crate::extract::ValidatedQuery;
 use axum::{
-    extract::{Query, Request, State},
+    extract::{Request, State},
     response::{IntoResponse, Response},
 };
 
@@ -40,17 +41,29 @@ use crate::{error::AppError, state::AppState};
             description = "Validation failed (only format=svg is allowed).",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
+        ),
+        (
+            status = 400,
+            description = "Bad request (missing credentials).",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "Internal server error.",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "OpenPlatformOpenApi"
 )]
 pub async fn open_image_bn(
     State(state): State<AppState>,
-    Query(query): Query<crate::image_api::ImageQueryOpts>,
+    ValidatedQuery(query): ValidatedQuery<crate::image_api::ImageQueryOpts>,
     req: Request,
 ) -> Result<Response, AppError> {
     let svg_only_query = query.into_open_svg_only()?;
-    let resp = crate::image_api::render_bn(State(state), Query(svg_only_query), req).await?;
+    let resp = crate::image_api::render_bn(State(state), ValidatedQuery(svg_only_query), req).await?;
     Ok(resp.into_response())
 }
 
@@ -89,16 +102,40 @@ pub async fn open_image_bn(
             description = "Validation failed (only format=svg is allowed).",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
+        ),
+        (
+            status = 400,
+            description = "Bad request (missing credentials).",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 404,
+            description = "Song not found (unique search).",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 409,
+            description = "Song result is not unique (unique search).",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "Internal server error.",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "OpenPlatformOpenApi"
 )]
 pub async fn open_image_song(
     State(state): State<AppState>,
-    Query(query): Query<crate::image_api::ImageQueryOpts>,
+    ValidatedQuery(query): ValidatedQuery<crate::image_api::ImageQueryOpts>,
     req: Request,
 ) -> Result<Response, AppError> {
     let svg_only_query = query.into_open_svg_only()?;
-    let resp = crate::image_api::render_song(State(state), Query(svg_only_query), req).await?;
+    let resp = crate::image_api::render_song(State(state), ValidatedQuery(svg_only_query), req).await?;
     Ok(resp.into_response())
 }

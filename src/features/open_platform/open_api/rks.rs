@@ -27,6 +27,18 @@ use crate::{error::AppError, state::AppState};
             description = "Scope is insufficient or request is rate limited.",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "Validation failed (invalid JSON body / invalid cursor).",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 500,
+            description = "Stats storage not initialized / query failed.",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
         )
     ),
     tag = "OpenPlatformOpenApi"

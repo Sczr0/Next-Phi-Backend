@@ -1,6 +1,6 @@
+use crate::extract::{ValidatedJson, ValidatedQuery};
 use axum::{
-    Json,
-    extract::{Query, State},
+    extract::State,
     http::StatusCode,
     response::IntoResponse,
 };
@@ -36,10 +36,10 @@ use super::{
     description = "无需存档，直接提交若干条用户自报成绩，计算 RKS 排序并生成 BestN 图片；支持水印解除口令。",
     request_body = RenderUserBnRequest,
     params(
-        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg，默认 png"),
+        ("format" = Option<String>, Query, description = "输出格式：png|jpeg|webp|svg（jpeg 接受别名 jpg），默认 png；未知值回落 png"),
         ("template" = Option<String>, Query, description = "SVG 模板 ID：对应 resources/templates/image/bn/{id}.svg.jinja（不传则使用内置手写 SVG）"),
         ("width" = Option<u32>, Query, description = "目标宽度像素：按宽度同比例缩放"),
-        ("webp_quality" = Option<u8>, Query, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
+        ("webp_quality" = Option<u8>, Query, minimum = 1, maximum = 100, description = "WebP 质量：1-100（仅在 format=webp 时有效，默认 80）"),
         ("webp_lossless" = Option<bool>, Query, description = "WebP 无损模式（仅在 format=webp 时有效，默认 false）")
     ),
     responses(
@@ -52,12 +52,6 @@ use super::{
                 (crate::features::image::types::BinaryImage = "image/webp"),
                 (String = "image/svg+xml")
             )
-        ),
-        (
-            status = 400,
-            description = "请求参数错误",
-            body = crate::error::ProblemDetails,
-            content_type = "application/problem+json"
         ),
         (
             status = 404,
@@ -73,7 +67,7 @@ use super::{
         ),
         (
             status = 422,
-            description = "参数校验失败/渲染错误",
+            description = "参数校验失败/请求体 JSON 无效/渲染错误",
             body = crate::error::ProblemDetails,
             content_type = "application/problem+json"
         ),
@@ -88,8 +82,8 @@ use super::{
 )]
 pub async fn render_bn_user(
     State(state): State<AppState>,
-    Query(q): Query<ImageQueryOpts>,
-    Json(req): Json<RenderUserBnRequest>,
+    ValidatedQuery(q): ValidatedQuery<ImageQueryOpts>,
+    ValidatedJson(req): ValidatedJson<RenderUserBnRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     validate_image_query_opts(&q)?;
 

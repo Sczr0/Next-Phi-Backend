@@ -1,5 +1,6 @@
+use crate::extract::ValidatedQuery;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     response::Json,
 };
 use chrono::Utc;
@@ -47,7 +48,7 @@ pub struct ArchiveNowResponse {
 )]
 pub async fn trigger_archive_now(
     State(state): State<AppState>,
-    Query(q): Query<ArchiveQuery>,
+    ValidatedQuery(q): ValidatedQuery<ArchiveQuery>,
 ) -> Result<Json<ArchiveNowResponse>, AppError> {
     let day = if let Some(d) = q.date {
         chrono::NaiveDate::parse_from_str(&d, "%Y-%m-%d")

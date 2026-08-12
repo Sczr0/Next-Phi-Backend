@@ -1,8 +1,9 @@
+use phi_backend::extract::{ValidatedJson, ValidatedPath};
 use std::sync::{Arc, Once};
 
 use axum::Json;
 use axum::body::{Bytes, to_bytes};
-use axum::extract::{Path, State};
+use axum::extract::State;
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use moka::future::Cache;
@@ -117,7 +118,7 @@ async fn exchange_token(secret: &str) -> String {
     let (_, Json(resp)) = post_session_exchange(
         State(state),
         make_exchange_headers(secret),
-        Json(make_exchange_request()),
+        ValidatedJson(make_exchange_request()),
     )
     .await
     .expect("exchange success");
@@ -197,7 +198,7 @@ async fn qrcode_status_missing_is_expired_and_no_store() {
 
     let resp = phi_backend::features::auth::handler::get_qrcode_status(
         State(state),
-        Path("missing".to_string()),
+        ValidatedPath("missing".to_string()),
     )
     .await
     .expect("handler ok");
@@ -235,7 +236,7 @@ async fn qrcode_status_expires_in_zero_becomes_expired() {
         )
         .await;
 
-    let resp = phi_backend::features::auth::handler::get_qrcode_status(State(state), Path(qr_id))
+    let resp = phi_backend::features::auth::handler::get_qrcode_status(State(state), ValidatedPath(qr_id))
         .await
         .expect("handler ok");
 
@@ -253,7 +254,7 @@ async fn session_exchange_requires_valid_shared_secret() {
     let err = post_session_exchange(
         State(state),
         make_exchange_headers("bad-secret"),
-        Json(make_exchange_request()),
+        ValidatedJson(make_exchange_request()),
     )
     .await
     .expect_err("should reject invalid shared secret");
@@ -268,7 +269,7 @@ async fn session_exchange_returns_bearer_token() {
     let (status, Json(resp)) = post_session_exchange(
         State(state),
         make_exchange_headers("test-exchange-secret"),
-        Json(make_exchange_request()),
+        ValidatedJson(make_exchange_request()),
     )
     .await
     .expect("exchange success");
@@ -302,7 +303,7 @@ async fn session_logout_current_blacklists_token() {
     let (status, Json(resp)) = post_session_logout(
         State(state),
         headers,
-        Json(SessionLogoutRequest {
+        ValidatedJson(SessionLogoutRequest {
             scope: SessionLogoutScope::Current,
         }),
     )
@@ -347,7 +348,7 @@ async fn session_logout_all_writes_logout_gate() {
     let (status, Json(resp)) = post_session_logout(
         State(state),
         headers,
-        Json(SessionLogoutRequest {
+        ValidatedJson(SessionLogoutRequest {
             scope: SessionLogoutScope::All,
         }),
     )

@@ -13,7 +13,7 @@ export type QrCodeStatusResponse = {
      */
     message?: string | null;
     /**
-     * 若需延后轮询，返回建议的等待秒数
+     * 若需延迟轮询，返回建议的等待秒数
      */
     retryAfter?: number | null;
     /**

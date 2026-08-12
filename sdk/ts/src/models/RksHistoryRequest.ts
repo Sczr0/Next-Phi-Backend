@@ -12,6 +12,10 @@ export type RksHistoryRequest = {
      */
     auth: UnifiedSaveRequest;
     /**
+     * 游标分页位置。存在时优先使用 cursor，并忽略 offset。
+     */
+    cursor?: string | null;
+    /**
      * 返回数量（默认 50，最大 200）
      */
     limit?: number | null;
@@ -19,8 +23,5 @@ export type RksHistoryRequest = {
      * 分页偏移（默认 0）
      */
     offset?: number | null;
-    /**
-     * 游标分页位置。存在时优先使用 cursor，并忽略 offset。
-     */
-    cursor?: string | null;
 };
+

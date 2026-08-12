@@ -1,5 +1,6 @@
+use crate::extract::ValidatedQuery;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     response::Json,
 };
 use serde::{Deserialize, Serialize};
@@ -103,7 +104,7 @@ pub struct DailyHttpResponse {
 )]
 pub async fn get_daily_http(
     State(state): State<AppState>,
-    Query(q): Query<DailyHttpQuery>,
+    ValidatedQuery(q): ValidatedQuery<DailyHttpQuery>,
 ) -> Result<Json<DailyHttpResponse>, AppError> {
     let start = parse_ymd(&q.start, "start")?;
     let end = parse_ymd(&q.end, "end")?;

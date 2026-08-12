@@ -1,8 +1,9 @@
 //! 存档 API 处理模块（features/save）
+use crate::extract::ValidatedQuery;
 use axum::{
     Router,
     body::Bytes,
-    extract::{Query, State},
+    extract::State,
     response::Response,
     routing::post,
 };
@@ -583,7 +584,7 @@ fn spawn_leaderboard_write(
     post,
     path = "/save",
     summary = "获取并解析玩家存档",
-    description = "支持两种认证方式（官方 sessionToken / 外部凭证）。默认仅返回解析后的存档；当 calculate_rks=true 时同时返回玩家 RKS 概览，并为每个谱面回填推分信息（push_acc + push_acc_hint）。",
+    description = "支持三种认证方式（官方 sessionToken / 外部凭证 / Authorization: Bearer 内嵌凭证）。默认仅返回解析后的存档；当 calculate_rks=true 时同时返回玩家 RKS 概览，并为每个谱面回填推分信息（push_acc + push_acc_hint）。",
     request_body = UnifiedSaveRequest,
     params(
         ("calculate_rks" = Option<bool>, Query, description = "是否计算玩家RKS（true=计算，默认不计算）"),
@@ -592,6 +593,7 @@ fn spawn_leaderboard_write(
         (status = 200, description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段，并为每个谱面回填 push_acc 与 push_acc_hint（推分提示）", body = SaveApiResponse),
         (status = 400, description = "请求参数错误", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
         (status = 401, description = "认证失败", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
+        (status = 403, description = "用户已被封禁", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
         (status = 422, description = "参数校验失败/存档数据无效（解密、校验或解析失败等）", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
         (status = 502, description = "上游网络错误（非超时）", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
         (status = 504, description = "上游超时", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
@@ -601,7 +603,7 @@ fn spawn_leaderboard_write(
 )]
 pub async fn get_save_data(
     State(state): State<AppState>,
-    Query(params): Query<std::collections::BTreeMap<String, String>>,
+    ValidatedQuery(params): ValidatedQuery<std::collections::BTreeMap<String, String>>,
     req: axum::extract::Request,
 ) -> Result<Response, AppError> {
     let t_total = Instant::now();

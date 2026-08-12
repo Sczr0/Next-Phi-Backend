@@ -1,6 +1,7 @@
+use crate::extract::{ValidatedPath, ValidatedQuery};
 use axum::{
     Json,
-    extract::{Path, Query, State},
+    extract::State,
     http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -18,31 +19,33 @@ use crate::features::auth::qrcode_service::QrCodeStatus;
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QrCodeCreateResponse {
-    /// 浜岀淮鐮佹爣璇嗭紝鐢ㄤ簬杞鐘舵€?    #[schema(example = "8b8f2f8a-1a2b-4c3d-9e0f-112233445566")]
+    /// 二维码标识，用于轮询状态
+    #[schema(example = "8b8f2f8a-1a2b-4c3d-9e0f-112233445566")]
     pub qr_id: String,
-    /// 鐢ㄦ埛鍦ㄦ祻瑙堝櫒涓闂互纭鎺堟潈鐨?URL
+    /// 用户在浏览器中访问以确认授权的 URL
     #[schema(example = "https://www.taptap.com/account/device?code=abcd-efgh")]
     pub verification_url: String,
-    /// SVG 浜岀淮鐮佺殑 data URL锛坆ase64 缂栫爜锛?    #[schema(example = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0uLi4=")]
+    /// SVG 二维码的 data URL（base64 编码）
+    #[schema(example = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0uLi4=")]
     pub qrcode_base64: String,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct QrCodeStatusResponse {
-    /// 褰撳墠鐘舵€侊細Pending/Scanned/Confirmed/Error/Expired
+    /// 当前状态：Pending/Scanned/Confirmed/Error/Expired
     #[schema(example = "Pending")]
     pub status: QrCodeStatusValue,
-    /// 鑻?Confirmed锛岃繑鍥?LeanCloud Session Token
+    /// 若 Confirmed，返回 LeanCloud Session Token
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_token: Option<String>,
-    /// 鍙€夛細鏈哄櫒鍙鐨勯敊璇爜锛堜粎鍦?status=Error 鏃跺嚭鐜帮級
+    /// 可选：机器可读的错误码（仅在 status=Error 时出现）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
-    /// 鍙€夌殑浜虹被鍙鎻愮ず娑堟伅
+    /// 可选的人类可读提示消息
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// 鑻ラ渶寤跺悗杞锛岃繑鍥炲缓璁殑绛夊緟绉掓暟
+    /// 若需延迟轮询，返回建议的等待秒数
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retry_after: Option<u64>,
 }
@@ -60,7 +63,8 @@ pub enum QrCodeStatusValue {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct QrCodeQuery {
-    /// TapTap 鐗堟湰锛歝n锛堝ぇ闄嗙増锛夋垨 global锛堝浗闄呯増锛?    #[serde(default)]
+    /// TapTap 版本：cn（大陆版）或 global（国际版）
+    #[serde(default)]
     taptap_version: Option<String>,
 }
 
@@ -79,7 +83,7 @@ fn normalize_taptap_version(v: Option<&str>) -> Result<Option<&'static str>, App
         return Ok(Some("global"));
     }
     Err(AppError::Validation(
-        "taptapVersion 蹇呴』涓?cn 鎴?global".to_string(),
+        "taptapVersion 必须为 cn 或 global".to_string(),
     ))
 }
 
@@ -94,7 +98,7 @@ fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
     post,
     path = "/auth/qrcode",
     summary = "生成登录二维码",
-    description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。",
+    description = "为设备申请 TapTap 设备码并返回可扫码的 SVG 二维码（base64）与校验 URL。响应带 Cache-Control: no-store。",
     params(
         ("taptapVersion" = Option<String>, Query, description = "TapTap 版本：cn 或 global")
     ),
@@ -119,6 +123,12 @@ fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
             content_type = "application/problem+json"
         ),
         (
+            status = 504,
+            description = "上游请求超时",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
             status = 500,
             description = "服务器内部错误",
             body = crate::error::ProblemDetails,
@@ -129,7 +139,7 @@ fn json_no_store<T: Serialize>(status: StatusCode, body: T) -> Response {
 )]
 pub(crate) async fn post_qrcode(
     State(state): State<AppState>,
-    Query(params): Query<QrCodeQuery>,
+    ValidatedQuery(params): ValidatedQuery<QrCodeQuery>,
 ) -> Result<Response, AppError> {
     let t_total = Instant::now();
 
@@ -288,7 +298,7 @@ pub(crate) async fn post_qrcode(
     get,
     path = "/auth/qrcode/{qr_id}/status",
     summary = "轮询二维码授权状态",
-    description = "根据 qr_id 查询当前授权进度。若返回 Pending 且包含 retry_after，客户端应按该秒数后再轮询。",
+    description = "根据 qr_id 查询当前授权进度。若返回 Pending 且包含 retry_after，客户端应按该秒数后再轮询。响应带 Cache-Control: no-store。",
     params(("qr_id" = String, Path, description = "二维码ID")),
     responses(
         (status = 200, description = "状态返回", body = QrCodeStatusResponse)
@@ -297,7 +307,7 @@ pub(crate) async fn post_qrcode(
 )]
 pub async fn get_qrcode_status(
     State(state): State<AppState>,
-    Path(qr_id): Path<String>,
+    ValidatedPath(qr_id): ValidatedPath<String>,
 ) -> Result<Response, AppError> {
     let t_total = Instant::now();
     let log_total = |result_status: &'static str| {

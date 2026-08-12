@@ -1,5 +1,6 @@
+use crate::extract::ValidatedQuery;
 use axum::{
-    extract::{Query, State},
+    extract::State,
     response::Json,
 };
 use serde::Deserialize;
@@ -154,13 +155,22 @@ async fn build_leaderboard_items(
     summary = "排行榜TOP（按RKS）",
     description = "返回公开玩家的RKS排行榜。若玩家开启展示，将在条目中附带BestTop3/APTop3文字数据。",
     params(
-        ("limit" = Option<i64>, Query, description = "每页数量，默认50；普通模式最大200，lite=true时最大1000"),
+        ("limit" = Option<i64>, Query, minimum = 1, maximum = 1000, description = "每页数量，默认50；普通模式最大200，lite=true时最大1000"),
         ("offset" = Option<i64>, Query, description = "偏移量"),
         ("cursor" = Option<String>, Query, description = "加密游标；存在时优先使用 cursor，并忽略 offset 与 after_*"),
+        ("after_score" = Option<f64>, Query, description = "旧式游标：上一页最后一条的 score（需与 after_updated/after_user 同时使用）"),
+        ("after_updated" = Option<String>, Query, description = "旧式游标：上一页最后一条的 updatedAt（RFC3339）"),
+        ("after_user" = Option<String>, Query, description = "旧式游标：上一页最后一条的脱敏 user（hash 前缀）"),
         ("lite" = Option<bool>, Query, description = "精简模式：不返回 bestTop3/apTop3（默认 false）")
     ),
     responses(
         (status = 200, description = "排行榜 TOP", body = LeaderboardTopResponse),
+        (
+            status = 422,
+            description = "游标无效（cursor 格式/解密失败或 after_* 参数非法）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败",
@@ -172,7 +182,7 @@ async fn build_leaderboard_items(
 )]
 pub async fn get_top(
     State(state): State<AppState>,
-    Query(q): Query<TopQuery>,
+    ValidatedQuery(q): ValidatedQuery<TopQuery>,
 ) -> Result<Json<LeaderboardTopResponse>, AppError> {
     let t_total = Instant::now();
     let storage = state
@@ -279,7 +289,7 @@ pub async fn get_top(
         ("rank" = Option<i64>, Query, description = "单个排名（1-based）"),
         ("start" = Option<i64>, Query, description = "起始排名（1-based）"),
         ("end" = Option<i64>, Query, description = "结束排名（包含）"),
-        ("count" = Option<i64>, Query, description = "返回数量（与 start 组合使用）"),
+        ("count" = Option<i64>, Query, description = "返回数量（与 start 组合使用，最多 200）"),
         ("lite" = Option<bool>, Query, description = "精简模式：不返回 bestTop3/apTop3（默认 false）")
     ),
     responses(
@@ -301,7 +311,7 @@ pub async fn get_top(
 )]
 pub async fn get_by_rank(
     State(state): State<AppState>,
-    Query(q): Query<RankQuery>,
+    ValidatedQuery(q): ValidatedQuery<RankQuery>,
 ) -> Result<Json<LeaderboardTopResponse>, AppError> {
     let t_total = Instant::now();
     let storage = state
@@ -373,10 +383,28 @@ pub async fn get_by_rank(
     post,
     path = "/leaderboard/rks/me",
     summary = "我的名次（按RKS）",
-    description = "通过认证信息推导用户身份，返回名次、分数、总量与百分位（竞争排名）",
+    description = "通过认证信息推导用户身份，返回名次、分数、总量与百分位（竞争排名）。支持请求体凭证（sessionToken/externalCredentials）或 Authorization: Bearer。",
     request_body = crate::auth_contract::UnifiedSaveRequest,
     responses(
         (status = 200, description = "查询成功", body = MeResponse),
+        (
+            status = 401,
+            description = "认证失败（Bearer 无效或身份推导失败）",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 403,
+            description = "用户已被封禁",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
+        (
+            status = 422,
+            description = "请求体 JSON 无效",
+            body = crate::error::ProblemDetails,
+            content_type = "application/problem+json"
+        ),
         (
             status = 500,
             description = "统计存储未初始化/查询失败/无法识别用户",

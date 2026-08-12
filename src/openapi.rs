@@ -1,6 +1,8 @@
 #![allow(clippy::needless_for_each)]
 
-use utoipa::openapi::security::{ApiKey, ApiKeyValue, SecurityScheme};
+use utoipa::openapi::security::{
+    ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme,
+};
 use utoipa::openapi::server::{ServerBuilder, ServerVariableBuilder};
 use utoipa::{Modify, OpenApi};
 
@@ -16,6 +18,27 @@ impl Modify for AdminTokenSecurity {
         components.add_security_scheme(
             "OpenApiToken",
             SecurityScheme::ApiKey(ApiKey::Header(ApiKeyValue::new("X-OpenApi-Token"))),
+        );
+        // 后端会话令牌：由 POST /auth/session/exchange 签发，sae claim 内嵌加密的登录凭证。
+        components.add_security_scheme(
+            "BearerAuth",
+            SecurityScheme::Http(
+                HttpBuilder::new()
+                    .scheme(HttpAuthScheme::Bearer)
+                    .bearer_format("JWT")
+                    .description(Some(
+                        "后端会话令牌（POST /auth/session/exchange 签发，HS256）。携带后可免传请求体凭证。",
+                    ))
+                    .build(),
+            ),
+        );
+        // 开放平台开发者控制台会话（GitHub OAuth 登录后写入的 HttpOnly Cookie）。
+        components.add_security_scheme(
+            "DeveloperCookie",
+            SecurityScheme::ApiKey(ApiKey::Cookie(ApiKeyValue::with_description(
+                "op_session",
+                "开放平台开发者控制台会话（GET /auth/github/login -> /auth/github/callback 后写入）",
+            ))),
         );
     }
 }
@@ -80,6 +103,9 @@ impl Modify for ApiServers {
         crate::features::image::handler::bn::render_bn,
         crate::features::image::handler::song::render_song,
         crate::features::image::handler::user_bn::render_bn_user,
+        crate::features::image::handler::verify_image,
+        crate::features::image::handler::verify_image_get,
+        crate::features::image::handler::get_public_key,
         crate::features::stats::handler::get_daily_stats,
         crate::features::stats::handler::get_daily_features,
         crate::features::stats::handler::get_daily_dau,
@@ -127,7 +153,7 @@ impl Modify for ApiServers {
     info(
         title = "Phi Backend API",
         version = env!("CARGO_PKG_VERSION"),
-        description = "Backend service API (Axum + utoipa). Business APIs are mounted under config.api.prefix (default /api/v2). Open platform APIs are exposed as /open/* and require X-OpenApi-Token."
+        description = "Backend service API (Axum + utoipa). Business APIs are mounted under config.api.prefix (default /api/v2). Open platform APIs are exposed as /open/* and require X-OpenApi-Token; the developer console (/auth/github/*, /auth/me, /developer/*) uses an op_session cookie and is only available when open_platform.enabled=true. Endpoints accepting a body credential (sessionToken/externalCredentials) also accept an Authorization: Bearer session token (see BearerAuth scheme), which embeds the original credentials."
     )
 )]
 pub struct ApiDoc;

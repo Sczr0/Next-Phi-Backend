@@ -367,6 +367,30 @@ impl From<CodecError> for SaveProviderError {
     }
 }
 
+// =============== Extractors (axum rejection) → unified 422 ===============
+//
+// 让 Query/Json/Path 提取器失败也走 problem+json 管线（422 VALIDATION_FAILED），
+// 与 /save 等端点"参数校验失败 → 422"的语义保持一致，避免返回未文档化的
+// text/plain 400/415/413。
+
+impl From<axum::extract::rejection::JsonRejection> for AppError {
+    fn from(err: axum::extract::rejection::JsonRejection) -> Self {
+        AppError::Validation(format!("请求体 JSON 无效: {err}"))
+    }
+}
+
+impl From<axum::extract::rejection::QueryRejection> for AppError {
+    fn from(err: axum::extract::rejection::QueryRejection) -> Self {
+        AppError::Validation(format!("查询参数无效: {err}"))
+    }
+}
+
+impl From<axum::extract::rejection::PathRejection> for AppError {
+    fn from(err: axum::extract::rejection::PathRejection) -> Self {
+        AppError::Validation(format!("路径参数无效: {err}"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{SaveProviderError, sanitize_reqwest_error};
