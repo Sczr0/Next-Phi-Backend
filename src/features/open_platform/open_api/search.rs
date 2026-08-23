@@ -25,7 +25,7 @@ use crate::{error::AppError, state::AppState};
         (
             status = 200,
             description = "Request succeeded (single SongInfo when unique=true, otherwise a paged result).",
-            body = crate::features::song::handler::SongSearchResult
+            body = crate::song_contract::SongSearchResult
         ),
         (
             status = 400,

@@ -22,7 +22,7 @@ use crate::{error::AppError, state::AppState};
         (
             status = 200,
             description = "Request succeeded.",
-            body = crate::features::save::handler::SaveApiResponse
+            body = crate::save_contract::SaveApiResponse
         ),
         (
             status = 400,
