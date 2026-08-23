@@ -32,7 +32,7 @@ fn calculate_inverse_color_from_path(path: &Path) -> Option<String> {
     let mut total_b: u64 = 0;
 
     // 像素数据是扁平的 [R, G, B, A, R, G, B, A, ...] 数组
-    for chunk in pixels.chunks_exact(4) {
+    for chunk in pixels.as_chunks::<4>().0 {
         total_r += u64::from(chunk[0]);
         total_g += u64::from(chunk[1]);
         total_b += u64::from(chunk[2]);

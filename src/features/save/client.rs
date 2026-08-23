@@ -533,7 +533,7 @@ mod tests {
 
     #[test]
     fn percent_encode_query_encodes_json_specials() {
-        let json = r##"{"user":{"__type":"Pointer","className":"_User","objectId":"abc123"}}"##;
+        let json = r#"{"user":{"__type":"Pointer","className":"_User","objectId":"abc123"}}"#;
         let encoded = percent_encode_query(json);
         assert_eq!(
             encoded,
@@ -566,7 +566,7 @@ mod tests {
         let bad = sample_result(Some("not-a-date"));
 
         // 最新的排最前（Reverse + Option: None 排最后）
-        let mut v = vec![older, missing, newer, bad];
+        let mut v = [older, missing, newer, bad];
         v.sort_by_key(|r| std::cmp::Reverse(modified_at_sort_key(r)));
         assert_eq!(
             v[0].modified_at.as_ref().unwrap().iso.as_deref(),

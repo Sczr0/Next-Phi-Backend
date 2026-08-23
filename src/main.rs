@@ -39,7 +39,7 @@ async fn main() {
     }
     let config = AppConfig::global();
 
-    if let Err(e) = shutdown_manager.start_signal_handler().await {
+    if let Err(e) = shutdown_manager.start_signal_handler() {
         tracing::error!("信号处理器启动失败: {}", e);
         std::process::exit(1);
     }

@@ -160,8 +160,7 @@ impl ShutdownManager {
     ///
     /// 在Linux/macOS上监听SIGINT和SIGTERM
     /// 在Windows上监听Ctrl+C
-    #[allow(clippy::unused_async)]
-    pub async fn start_signal_handler(&self) -> Result<(), ShutdownError> {
+    pub fn start_signal_handler(&self) -> Result<(), ShutdownError> {
         #[cfg(unix)]
         {
             self.start_unix_signal_handler()
