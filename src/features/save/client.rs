@@ -55,15 +55,26 @@ struct SaveInfoResponse {
     results: Vec<SaveInfoResult>,
 }
 
+/// GET /users/me 的响应（只需要 objectId 用于构造 where 过滤）
+#[derive(Debug, Deserialize)]
+struct UserMeResponse {
+    #[serde(rename = "objectId")]
+    object_id: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct SaveInfoResult {
     #[serde(rename = "objectId")]
     object_id: String,
     summary: String,
-    #[serde(rename = "gameFile")]
-    game_file: GameFile,
+    /// 可能缺失（phi-plugin 中 `if (!item?.gameFile) continue`），需要过滤
+    #[serde(rename = "gameFile", default)]
+    game_file: Option<GameFile>,
     #[serde(rename = "updatedAt")]
     updated_at: String,
+    /// LeanCloud 日期对象 `{"__type":"Date","iso":"..."}`，用于取最新存档
+    #[serde(rename = "modifiedAt", default)]
+    modified_at: Option<LeancloudDate>,
     #[serde(default)]
     user: Option<SaveUser>,
     #[serde(default)]
@@ -125,6 +136,57 @@ struct KdfFields {
     password_b64: Option<String>,
 }
 
+/// 第一步：GET /users/me 获取当前玩家 objectId（对齐 phi-plugin 的 getPlayerInfo）
+async fn fetch_user_object_id(
+    client: &reqwest::Client,
+    tap_config: &crate::config::TapTapConfig,
+    session_token: &str,
+) -> Result<String, SaveProviderError> {
+    let url = format!("{}/users/me", tap_config.leancloud_base_url);
+    let response = client
+        .get(&url)
+        .header("X-LC-Id", &tap_config.leancloud_app_id)
+        .header("X-LC-Key", &tap_config.leancloud_app_key)
+        .header("X-LC-Session", session_token)
+        .header("User-Agent", USER_AGENT)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(SaveProviderError::Auth(format!(
+            "获取玩家信息失败: {}",
+            response.status()
+        )));
+    }
+    let me: UserMeResponse = response.json().await?;
+    Ok(me.object_id)
+}
+
+/// RFC 3986 unreserved 之外的所有字节做百分号编码（用于 LeanCloud where 查询参数）
+fn percent_encode_query(input: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(input.len());
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(char::from(b));
+            }
+            _ => {
+                let _ = write!(out, "%{b:02X}");
+            }
+        }
+    }
+    out
+}
+
+/// 排序 key：modifiedAt.iso → 毫秒时间戳；缺失/解析失败为 None（排最后）
+fn modified_at_sort_key(r: &SaveInfoResult) -> Option<i64> {
+    r.modified_at
+        .as_ref()
+        .and_then(|d| d.iso.as_deref())
+        .and_then(|iso| chrono::DateTime::parse_from_rfc3339(iso).ok())
+        .map(|dt| dt.timestamp_millis())
+}
+
 pub async fn fetch_from_official(
     session_token: &str,
     config: &crate::config::TapTapMultiConfig,
@@ -135,6 +197,12 @@ pub async fn fetch_from_official(
 
     let tap_config = config.resolve(version);
 
+    // 对齐 phi-plugin 的两步获取流程：
+    // 1) GET /users/me 拿当前玩家 objectId
+    // 2) GET /gamesaves/?skip=0&limit=100&where={user Pointer}&include=cover,gameFile
+    //    按 modifiedAt.iso 倒序取最新一份
+    let user_object_id = fetch_user_object_id(client, tap_config, session_token).await?;
+
     // 国服: 2025-06-08 TapTap 将 _GameSave 端点迁移至 /gamesaves/
     let is_cn = tap_config
         .leancloud_base_url
@@ -144,8 +212,20 @@ pub async fn fetch_from_official(
     } else {
         "/classes/_GameSave"
     };
-    // 不去 limit=1 —— 可能有需要跳过的坏数据
-    let url = format!("{}{}", tap_config.leancloud_base_url, path);
+    // where 按当前用户过滤 + limit=100，与 phi-plugin 的 saveArray 一致
+    let where_json = serde_json::json!({
+        "user": {
+            "__type": "Pointer",
+            "className": "_User",
+            "objectId": user_object_id,
+        }
+    });
+    let url = format!(
+        "{}{}?skip=0&limit=100&where={}&include=cover,gameFile",
+        tap_config.leancloud_base_url,
+        path,
+        percent_encode_query(&where_json.to_string())
+    );
 
     let t_http = Instant::now();
     let response = client
@@ -176,11 +256,13 @@ pub async fn fetch_from_official(
     }
 
     let save_info: SaveInfoResponse = response.json().await?;
-    let result = save_info
+    // 对齐 phi-plugin：过滤掉没有 gameFile 的条目
+    let mut candidates: Vec<SaveInfoResult> = save_info
         .results
         .into_iter()
-        .find(|r| {
-            // 过滤 0608 事件残留的异常存档
+        .filter(|r| r.game_file.is_some())
+        .filter(|r| {
+            // 0608 事件残留的异常存档（where 已按当前用户过滤，正常不会触发，保留兜底）
             if is_cn
                 && r.user
                     .as_ref()
@@ -195,12 +277,24 @@ pub async fn fetch_from_official(
             }
             true
         })
+        .collect();
+
+    // 对齐 phi-plugin：按 modifiedAt.iso 倒序取最新一份；缺失时间戳的排最后
+    candidates.sort_by_key(|r| std::cmp::Reverse(modified_at_sort_key(r)));
+
+    let result = candidates
+        .into_iter()
+        .next()
         .ok_or_else(|| SaveProviderError::Metadata("未找到存档".to_string()))?;
 
-    let download_url = if result.game_file.url.starts_with("http") {
-        result.game_file.url
+    let game_file = result
+        .game_file
+        .as_ref()
+        .ok_or_else(|| SaveProviderError::Metadata("未找到存档".to_string()))?;
+    let download_url = if game_file.url.starts_with("http") {
+        game_file.url.clone()
     } else {
-        format!("https://{}", result.game_file.url)
+        format!("https://{}", game_file.url)
     };
     let summary_b64 = Some(result.summary);
     let updated_at = Some(result.updated_at);
@@ -428,10 +522,57 @@ pub async fn fetch_from_external(
 
 #[cfg(test)]
 mod tests {
-    use super::clamp_pbkdf2_rounds;
+    use super::{
+        LeancloudDate, SaveInfoResult, clamp_pbkdf2_rounds, modified_at_sort_key,
+        percent_encode_query,
+    };
 
     fn ensure_config_initialized() {
         let _ = crate::config::AppConfig::init_global();
+    }
+
+    #[test]
+    fn percent_encode_query_encodes_json_specials() {
+        let json = r##"{"user":{"__type":"Pointer","className":"_User","objectId":"abc123"}}"##;
+        let encoded = percent_encode_query(json);
+        assert_eq!(
+            encoded,
+            "%7B%22user%22%3A%7B%22__type%22%3A%22Pointer%22%2C%22className%22%3A%22_User%22%2C%22objectId%22%3A%22abc123%22%7D%7D"
+        );
+        // objectId 这类字母数字保持不变
+        assert!(encoded.contains("abc123"));
+    }
+
+    fn sample_result(iso: Option<&str>) -> SaveInfoResult {
+        SaveInfoResult {
+            object_id: "id".to_string(),
+            summary: String::new(),
+            game_file: None,
+            updated_at: String::new(),
+            modified_at: iso.map(|iso| LeancloudDate {
+                _type: Some("Date".to_string()),
+                iso: Some(iso.to_string()),
+            }),
+            user: None,
+            crypto: None,
+        }
+    }
+
+    #[test]
+    fn modified_at_sort_key_parses_rfc3339() {
+        let newer = sample_result(Some("2025-08-01T00:00:00.000Z"));
+        let older = sample_result(Some("2025-01-01T00:00:00.000Z"));
+        let missing = sample_result(None);
+        let bad = sample_result(Some("not-a-date"));
+
+        // 最新的排最前（Reverse + Option: None 排最后）
+        let mut v = vec![older, missing, newer, bad];
+        v.sort_by_key(|r| std::cmp::Reverse(modified_at_sort_key(r)));
+        assert_eq!(v[0].modified_at.as_ref().unwrap().iso.as_deref(), Some("2025-08-01T00:00:00.000Z"));
+        assert_eq!(v[1].modified_at.as_ref().unwrap().iso.as_deref(), Some("2025-01-01T00:00:00.000Z"));
+        // 缺失/无效时间戳排最后
+        assert!(v[2].modified_at.is_none() || v[2].modified_at.as_ref().unwrap().iso.as_deref() == Some("not-a-date"));
+        assert!(v[3].modified_at.is_none() || v[3].modified_at.as_ref().unwrap().iso.as_deref() == Some("not-a-date"));
     }
 
     #[test]
