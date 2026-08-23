@@ -1,8 +1,8 @@
-use crate::extract::{ValidatedJson, ValidatedQuery};
 use super::{
     ImageOutputCacheSpec, ImageQueryOpts, content_type_from_fmt_code, format_code,
     parse_user_score_difficulty,
 };
+use crate::extract::{ValidatedJson, ValidatedQuery};
 use axum::extract::State;
 use std::sync::Arc;
 use tokio::sync::Semaphore;

@@ -1,7 +1,4 @@
-use axum::{
-    extract::State,
-    response::Response,
-};
+use axum::{extract::State, response::Response};
 
 use crate::extract::{ValidatedPath, ValidatedQuery};
 use crate::{error::AppError, state::AppState};

@@ -1,11 +1,7 @@
 use crate::extract::ValidatedQuery;
 use std::time::Instant;
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use tracing::debug;
 
 use crate::{

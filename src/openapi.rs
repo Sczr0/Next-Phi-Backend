@@ -1,8 +1,6 @@
 #![allow(clippy::needless_for_each)]
 
-use utoipa::openapi::security::{
-    ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme,
-};
+use utoipa::openapi::security::{ApiKey, ApiKeyValue, HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::openapi::server::{ServerBuilder, ServerVariableBuilder};
 use utoipa::{Modify, OpenApi};
 

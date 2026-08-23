@@ -236,9 +236,10 @@ async fn qrcode_status_expires_in_zero_becomes_expired() {
         )
         .await;
 
-    let resp = phi_backend::features::auth::handler::get_qrcode_status(State(state), ValidatedPath(qr_id))
-        .await
-        .expect("handler ok");
+    let resp =
+        phi_backend::features::auth::handler::get_qrcode_status(State(state), ValidatedPath(qr_id))
+            .await
+            .expect("handler ok");
 
     let bytes = to_bytes(resp.into_body(), usize::MAX)
         .await

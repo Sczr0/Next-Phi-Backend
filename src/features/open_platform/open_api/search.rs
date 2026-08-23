@@ -1,8 +1,5 @@
 use crate::extract::ValidatedQuery;
-use axum::{
-    extract::State,
-    response::Response,
-};
+use axum::{extract::State, response::Response};
 
 use crate::{error::AppError, state::AppState};
 

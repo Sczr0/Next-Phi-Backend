@@ -236,8 +236,8 @@ pub async fn post_session_exchange(
         })?;
     let (user_hash_opt, _) =
         crate::identity_hash::derive_user_identity_from_auth(Some(salt_value.as_str()), &auth);
-    let user_hash = user_hash_opt
-        .ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
+    let user_hash =
+        user_hash_opt.ok_or_else(|| AppError::Auth("无法识别用户（缺少可用凭证）".into()))?;
     if let Some(storage) = state.stats_storage.as_ref() {
         storage.ensure_user_not_banned(&user_hash).await?;
     }

@@ -1,9 +1,6 @@
 use crate::extract::{ValidatedJson, ValidatedQuery};
 use axum::http::HeaderMap;
-use axum::{
-    extract::State,
-    response::Json,
-};
+use axum::{extract::State, response::Json};
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 use std::collections::BTreeMap;

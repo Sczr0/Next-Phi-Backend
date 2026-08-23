@@ -1,8 +1,5 @@
 use crate::extract::ValidatedQuery;
-use axum::{
-    extract::State,
-    response::Json,
-};
+use axum::{extract::State, response::Json};
 use serde::Deserialize;
 use sqlx::{Row, sqlite::SqliteRow};
 use std::collections::HashMap;

@@ -1,12 +1,6 @@
 //! 存档 API 处理模块（features/save）
 use crate::extract::ValidatedQuery;
-use axum::{
-    Router,
-    body::Bytes,
-    extract::State,
-    response::Response,
-    routing::post,
-};
+use axum::{Router, body::Bytes, extract::State, response::Response, routing::post};
 use moka::future::Cache;
 use once_cell::sync::OnceCell;
 use std::collections::HashMap;

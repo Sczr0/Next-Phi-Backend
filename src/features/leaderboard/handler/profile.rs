@@ -1,8 +1,5 @@
 use crate::extract::ValidatedPath;
-use axum::{
-    extract::State,
-    response::Json,
-};
+use axum::{extract::State, response::Json};
 use sqlx::Row;
 
 use crate::{error::AppError, state::AppState};

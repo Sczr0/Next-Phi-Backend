@@ -1,9 +1,5 @@
 use crate::extract::{ValidatedJson, ValidatedQuery};
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-};
+use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
 
 use crate::{

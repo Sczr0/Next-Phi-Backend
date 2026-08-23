@@ -568,11 +568,23 @@ mod tests {
         // 最新的排最前（Reverse + Option: None 排最后）
         let mut v = vec![older, missing, newer, bad];
         v.sort_by_key(|r| std::cmp::Reverse(modified_at_sort_key(r)));
-        assert_eq!(v[0].modified_at.as_ref().unwrap().iso.as_deref(), Some("2025-08-01T00:00:00.000Z"));
-        assert_eq!(v[1].modified_at.as_ref().unwrap().iso.as_deref(), Some("2025-01-01T00:00:00.000Z"));
+        assert_eq!(
+            v[0].modified_at.as_ref().unwrap().iso.as_deref(),
+            Some("2025-08-01T00:00:00.000Z")
+        );
+        assert_eq!(
+            v[1].modified_at.as_ref().unwrap().iso.as_deref(),
+            Some("2025-01-01T00:00:00.000Z")
+        );
         // 缺失/无效时间戳排最后
-        assert!(v[2].modified_at.is_none() || v[2].modified_at.as_ref().unwrap().iso.as_deref() == Some("not-a-date"));
-        assert!(v[3].modified_at.is_none() || v[3].modified_at.as_ref().unwrap().iso.as_deref() == Some("not-a-date"));
+        assert!(
+            v[2].modified_at.is_none()
+                || v[2].modified_at.as_ref().unwrap().iso.as_deref() == Some("not-a-date")
+        );
+        assert!(
+            v[3].modified_at.is_none()
+                || v[3].modified_at.as_ref().unwrap().iso.as_deref() == Some("not-a-date")
+        );
     }
 
     #[test]

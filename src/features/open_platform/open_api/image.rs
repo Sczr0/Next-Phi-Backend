@@ -63,7 +63,8 @@ pub async fn open_image_bn(
     req: Request,
 ) -> Result<Response, AppError> {
     let svg_only_query = query.into_open_svg_only()?;
-    let resp = crate::image_api::render_bn(State(state), ValidatedQuery(svg_only_query), req).await?;
+    let resp =
+        crate::image_api::render_bn(State(state), ValidatedQuery(svg_only_query), req).await?;
     Ok(resp.into_response())
 }
 
@@ -136,6 +137,7 @@ pub async fn open_image_song(
     req: Request,
 ) -> Result<Response, AppError> {
     let svg_only_query = query.into_open_svg_only()?;
-    let resp = crate::image_api::render_song(State(state), ValidatedQuery(svg_only_query), req).await?;
+    let resp =
+        crate::image_api::render_song(State(state), ValidatedQuery(svg_only_query), req).await?;
     Ok(resp.into_response())
 }
