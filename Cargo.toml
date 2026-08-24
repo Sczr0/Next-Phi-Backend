@@ -76,9 +76,9 @@ gethostname = "0.4"
 sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "json"] }
 
 # Parquet 导出
-parquet = { version = "53", features = ["arrow"] }
-arrow-array = "53"
-arrow-schema = "53"
+parquet = { version = "59.2", features = ["arrow"] }
+arrow-array = "59.2"
+arrow-schema = "59.2"
 
 # OpenAPI 支持
 utoipa = { version = "5.5", features = ["axum_extras"] }
