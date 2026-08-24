@@ -6,7 +6,7 @@ use crate::error::AppError;
 
 use super::StatsStorage;
 
-fn push_admin_status_filter(qb: &mut QueryBuilder<'_, Sqlite>, status: &str) {
+fn push_admin_status_filter(qb: &mut QueryBuilder<Sqlite>, status: &str) {
     if status.eq_ignore_ascii_case("active") {
         qb.push(" AND (ums.status IS NULL OR ums.status = 'active' COLLATE NOCASE)");
     } else {
@@ -29,7 +29,7 @@ mod tests {
     fn admin_status_filter_keeps_active_null_semantics() {
         let mut qb = QueryBuilder::<Sqlite>::new("WHERE 1=1");
         push_admin_status_filter(&mut qb, "active");
-        let sql = qb.build().sql().to_string();
+        let sql = qb.build().sql().as_str().to_owned();
 
         assert!(sql.contains("ums.status IS NULL OR ums.status = 'active' COLLATE NOCASE"));
         assert!(!sql.contains("LOWER("));
@@ -40,7 +40,7 @@ mod tests {
     fn admin_status_filter_uses_direct_predicate_for_non_active() {
         let mut qb = QueryBuilder::<Sqlite>::new("WHERE 1=1");
         push_admin_status_filter(&mut qb, "banned");
-        let sql = qb.build().sql().to_string();
+        let sql = qb.build().sql().as_str().to_owned();
 
         assert!(sql.contains("ums.status = ? COLLATE NOCASE"));
         assert!(!sql.contains("LOWER("));

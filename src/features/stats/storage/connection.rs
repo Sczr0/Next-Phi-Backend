@@ -1,6 +1,6 @@
 use std::{path::Path, time::Duration};
 
-use sqlx::{ConnectOptions, Row, SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{AssertSqlSafe, ConnectOptions, Row, SqlitePool, sqlite::SqliteConnectOptions};
 
 use crate::error::AppError;
 
@@ -253,7 +253,7 @@ impl StatsStorage {
             "idx_events_ts_instance",
             "idx_events_latency_ts_route_method_feature_duration",
         ] {
-            sqlx::query(&format!("DROP INDEX IF EXISTS {legacy}"))
+            sqlx::query(AssertSqlSafe(format!("DROP INDEX IF EXISTS {legacy}")))
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AppError::Internal(format!("drop legacy index {legacy}: {e}")))?;

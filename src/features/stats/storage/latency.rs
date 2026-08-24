@@ -7,7 +7,7 @@ use crate::error::AppError;
 use super::{LatencyAggBucketRow, LatencyAggSliceRow, StatsStorage};
 
 fn push_latency_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     feature: Option<&str>,
     route: Option<&str>,
     method: Option<&str>,

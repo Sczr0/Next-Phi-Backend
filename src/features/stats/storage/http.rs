@@ -7,7 +7,7 @@ use super::{
 };
 
 fn push_daily_http_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     route: Option<&str>,
     method: Option<&str>,
 ) {
