@@ -3,6 +3,7 @@
 
 use utoipa::OpenApi;
 
+#[allow(clippy::expect_used)] // OpenAPI 序列化/写文件失败即工具退出，错误信息足够
 fn main() {
     let openapi = phi_backend::openapi::ApiDoc::openapi();
     let json = serde_json::to_string_pretty(&openapi).expect("serialize openapi json");

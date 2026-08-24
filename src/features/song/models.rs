@@ -485,6 +485,7 @@ impl SongCatalog {
     }
 
     /// 强制唯一查询：当结果为 0/多于 1 时返回错误。
+    #[allow(clippy::expect_used)] // match 分支不变量：total==1 时 only 必为 Some
     pub fn search_unique(&self, query: &str) -> Result<Arc<SongInfo>, crate::error::SearchError> {
         use std::cmp::Ordering;
 

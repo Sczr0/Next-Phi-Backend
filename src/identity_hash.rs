@@ -4,6 +4,7 @@ use sha2::Sha256;
 use crate::auth_contract::UnifiedSaveRequest;
 
 #[must_use]
+#[allow(clippy::expect_used)] // HMAC-SHA256 接受任意长度 key，永不失败
 pub fn hmac_hex16(salt: &str, value: &str) -> String {
     let mut mac = Hmac::<Sha256>::new_from_slice(salt.as_bytes()).expect("HMAC key");
     mac.update(value.as_bytes());

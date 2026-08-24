@@ -12,6 +12,7 @@ static BACKGROUND_CACHE: OnceLock<std::sync::Mutex<LruCache<PathBuf, Arc<str>>>>
 
 /// 获取背景图片缓存
 pub(super) fn get_background_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, Arc<str>>> {
+    #[allow(clippy::expect_used)] // 缓存大小常量恒非零
     BACKGROUND_CACHE.get_or_init(|| {
         std::sync::Mutex::new(LruCache::new(
             NonZeroUsize::new(BACKGROUND_CACHE_SIZE).expect("缓存大小常量恒非零"),

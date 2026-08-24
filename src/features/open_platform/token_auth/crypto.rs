@@ -26,6 +26,7 @@ pub(super) fn resolve_key_hash_secret(cfg: &OpenPlatformConfig) -> Result<String
     ))
 }
 
+#[allow(clippy::expect_used)] // HMAC-SHA256 接受任意长度 key，永不失败
 pub(super) fn hash_api_key(secret: &str, token: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;

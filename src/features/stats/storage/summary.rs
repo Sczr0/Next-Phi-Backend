@@ -38,10 +38,12 @@ fn parse_utc(dt_s: &str) -> Result<DateTime<Utc>, AppError> {
         .map_err(|e| AppError::Internal(format!("parse utc `{dt_s}`: {e}")))
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：00:00:00 恒合法
 const fn mid_night() -> NaiveTime {
     NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00")
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：23:59:59 恒合法
 const fn end_of_day() -> NaiveTime {
     NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59")
 }

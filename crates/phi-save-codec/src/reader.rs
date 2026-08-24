@@ -20,7 +20,7 @@ impl<'a> Reader<'a> {
         self.off
     }
 
-    pub fn read_u8(&mut self) -> Result<u8> {
+    pub const fn read_u8(&mut self) -> Result<u8> {
         if self.remain() < 1 {
             return Err(CodecError::NotEnoughData);
         }
@@ -29,7 +29,7 @@ impl<'a> Reader<'a> {
         Ok(b)
     }
 
-    pub fn read_u16_le(&mut self) -> Result<u16> {
+    pub const fn read_u16_le(&mut self) -> Result<u16> {
         if self.remain() < 2 {
             return Err(CodecError::NotEnoughData);
         }
@@ -38,7 +38,7 @@ impl<'a> Reader<'a> {
         Ok(v)
     }
 
-    pub fn read_i32_le(&mut self) -> Result<i32> {
+    pub const fn read_i32_le(&mut self) -> Result<i32> {
         if self.remain() < 4 {
             return Err(CodecError::NotEnoughData);
         }
@@ -52,7 +52,7 @@ impl<'a> Reader<'a> {
         Ok(v)
     }
 
-    pub fn read_f32_le(&mut self) -> Result<f32> {
+    pub const fn read_f32_le(&mut self) -> Result<f32> {
         if self.remain() < 4 {
             return Err(CodecError::NotEnoughData);
         }

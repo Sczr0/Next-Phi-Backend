@@ -1,3 +1,5 @@
+#![allow(clippy::unwrap_used, clippy::expect_used)] // 集成测试：unwrap/expect 断言惯例
+
 use phi_backend::extract::{ValidatedJson, ValidatedPath};
 use std::sync::{Arc, Once};
 

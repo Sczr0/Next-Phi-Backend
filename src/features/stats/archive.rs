@@ -297,6 +297,7 @@ fn parse_today_time(s: &str) -> Option<(u32, u32)> {
     Some((h.min(23), m.min(59)))
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：hh/mm 由调用方限制
 fn next_occurrence(
     now: chrono::DateTime<chrono::Local>,
     hh: u32,
@@ -318,6 +319,7 @@ fn next_occurrence(
     }
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：00:00:00/23:59:59 恒合法
 pub async fn archive_one_day(
     storage: &StatsStorage,
     arcfg: &StatsArchiveConfig,

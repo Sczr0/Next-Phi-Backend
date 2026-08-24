@@ -36,6 +36,7 @@ fn md5_hex(input: &str) -> String {
 /// - TypeB: `/202407151533/d1f0b51c.../ill/song_id.png`
 /// - TypeC: `/6688749e.../6694d30a/ill/song_id.png`
 /// - TypeD: `/ill/song_id.png?token=cadcec4a...&t=1721029907`
+#[allow(clippy::expect_used)] // 系统时钟不应早于1970
 pub fn sign_url(config: &IllustrationSigningConfig, path: &str) -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -103,6 +104,7 @@ fn sign_type_d(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -
 }
 
 /// 将 Unix 时间戳格式化为 UTC+8 的 `YYYYMMDDHHMM` 字符串（TypeB 专用）
+#[allow(clippy::expect_used)] // UTC+8 固定偏移恒合法，时间戳均有唯一本地时间
 fn format_timestamp_utc8(timestamp: u64) -> String {
     use chrono::{FixedOffset, TimeZone};
     let utc8 = FixedOffset::east_opt(8 * 3600).expect("UTC+8 固定偏移恒合法");
@@ -171,6 +173,7 @@ fn svg_sha256(svg: &str) -> String {
 ///
 /// 签名 payload = `{timestamp}:{uid}:{rid}:{nonce}:{content_hash}`
 /// 使用 HMAC-SHA256 + server key 生成签名。
+#[allow(clippy::expect_used)] // 系统时钟不应早于1970
 pub fn sign_svg(
     svg: &str,
     config: &ImageSigningConfig,
@@ -248,6 +251,7 @@ pub fn build_score_merkle(
 }
 
 /// HMAC-SHA256(salt, version || song_id || difficulty || score_bytes || acc_bytes)
+#[allow(clippy::expect_used)] // HMAC-SHA256 接受任意长度 key，永不失败
 fn hash_merkle_leaf(salt: &[u8], song_id: &str, diff: &str, score: f64, acc: f64) -> Vec<u8> {
     let mut mac = Hmac::<Sha256>::new_from_slice(salt).expect("HMAC key");
     mac.update(&[MERKLE_LEAF_VERSION]);
@@ -284,6 +288,7 @@ fn verify_ed25519(seed: &[u8; 32], payload: &str, sig_b64: &str) -> bool {
 ///
 /// 签名 payload = `{merkle_root}:{n}:{uid}:{timestamp}:{rid}:{nonce}`
 /// 使用 Ed25519 + server seed 签名。
+#[allow(clippy::expect_used)] // 系统时钟不应早于1970
 pub fn sign_svg_v4(
     svg: &str,
     config: &ImageSigningConfig,
@@ -781,6 +786,7 @@ pub fn verify_svg_signature(
     Ok(extracted)
 }
 
+#[allow(clippy::expect_used)] // 系统时钟不应早于1970
 fn check_ttl(config: &ImageSigningConfig, timestamp: u64) -> Result<(), AppError> {
     if config.ttl_secs > 0 {
         let now = SystemTime::now()

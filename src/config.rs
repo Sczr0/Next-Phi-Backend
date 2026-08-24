@@ -653,6 +653,7 @@ impl AppConfig {
     }
 
     /// 获取全局配置单例
+    #[allow(clippy::expect_used)] // 启动时 init_global() 必须已调用
     pub fn global() -> &'static AppConfig {
         CONFIG.get().expect("配置未初始化，请先调用 init_global()")
     }

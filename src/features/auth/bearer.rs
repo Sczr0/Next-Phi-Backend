@@ -55,6 +55,7 @@ fn auth_decrypt_cache_capacity() -> usize {
         .unwrap_or(50_000)
 }
 
+#[allow(clippy::expect_used)] // 缓存容量经 filter(>0) 保证非零
 static AUTH_DECRYPT_CACHE: Lazy<RwLock<AuthDecryptCache>> = Lazy::new(|| {
     let cap = auth_decrypt_cache_capacity();
     let non_zero = std::num::NonZeroUsize::new(cap).expect("cache capacity must be non-zero");
@@ -330,6 +331,7 @@ fn session_auth_crypto_secret() -> Result<String, AppError> {
         })
 }
 
+#[allow(clippy::expect_used)] // HMAC-SHA256 接受任意长度 key，永不失败
 fn derive_embed_key(secret: &str) -> [u8; 32] {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;

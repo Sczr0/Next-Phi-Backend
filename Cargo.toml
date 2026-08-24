@@ -9,6 +9,7 @@ resolver = "3"
 name = "phi-backend"
 version = "0.1.0"
 edition = "2024"
+license = "AGPL-3.0"
 
 [workspace.lints.clippy]
 # 文档注释以中文为主，`doc_markdown` 会产生大量误报并污染注释文本。
@@ -17,6 +18,10 @@ doc_markdown = "allow"
 missing_const_for_fn = "warn"
 # 生产代码禁止 panic!（restriction 组；测试代码通过 cfg_attr(test, allow) 豁免）
 panic = "warn"
+# 禁止无上下文 panic 的 unwrap（restriction 组；测试代码通过 cfg_attr(test, allow) 豁免）
+unwrap_used = "warn"
+# 禁止 expect；生产代码中的 expect 均为数学/密码学/配置不变量，已就地 allow 并注明原因
+expect_used = "warn"
 
 [lints]
 workspace = true
@@ -120,6 +125,6 @@ pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
 [profile.release-dist]
 inherits = "release"
 strip = "symbols"
-lto = "thin"
+lto = "fat"
 codegen-units = 1
-opt-level = "z"
+opt-level = 3

@@ -32,6 +32,7 @@ pub(super) fn sqlite_minutes_modifier(offset_minutes: i32) -> String {
     format!("{offset_minutes:+} minutes")
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：noon 采样点恒合法
 pub(super) fn fixed_offset_minutes_for_range(
     tz: chrono_tz::Tz,
     start: NaiveDate,
@@ -67,10 +68,12 @@ pub(super) fn week_start_monday(d: NaiveDate) -> NaiveDate {
     d - chrono::Duration::days(delta)
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：year/month 均为合法值
 pub(super) fn month_start_day1(d: NaiveDate) -> NaiveDate {
     NaiveDate::from_ymd_opt(d.year(), d.month(), 1).expect("valid ymd")
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：月份加减后 ymd 恒合法
 pub(super) fn next_month_start(d: NaiveDate) -> NaiveDate {
     let (y, m) = if d.month() == 12 {
         (d.year() + 1, 1)
@@ -96,6 +99,7 @@ pub(super) fn resolve_timezone(
     }
 }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：23:59:59 / 00:00:00 恒合法
 pub(super) fn parse_date_bound_utc(
     date_ymd: &str,
     tz: chrono_tz::Tz,

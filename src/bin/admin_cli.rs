@@ -6,7 +6,9 @@
     clippy::doc_markdown,            // 不想在注释里给每个 OpenAPI 加反引号
     clippy::struct_excessive_bools,  // 结构体里超过3个 bool 没啥大不了的
     clippy::items_after_statements,  // 允许在函数中间写 use 或 struct
-    clippy::module_name_repetitions  // 允许 PlayerStats 在 player 模块里
+    clippy::module_name_repetitions,  // 允许 PlayerStats 在 player 模块里
+    clippy::unwrap_used,             // 命令行工具：失败即退出，unwrap 可读性最好
+    clippy::expect_used              // 同上：expect 带上下文消息
 )]
 
 //! 本地管理员命令行工具：

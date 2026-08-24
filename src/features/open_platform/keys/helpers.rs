@@ -104,6 +104,7 @@ pub(super) fn derive_key_last4(token: &str) -> String {
     chars.into_iter().collect()
 }
 
+#[allow(clippy::expect_used)] // HMAC-SHA256 接受任意长度 key，永不失败
 pub(super) fn hash_api_key(secret: &str, token: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;

@@ -10,6 +10,8 @@
     clippy::too_many_lines
 )]
 
+#![allow(clippy::unwrap_used, clippy::expect_used)] // 集成测试：unwrap/expect 断言惯例
+
 /// B27图片生成性能测试
 ///
 /// 使用方式:

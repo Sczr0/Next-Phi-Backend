@@ -318,6 +318,7 @@ fn build_decrypt_meta_report(meta: &DecryptionMeta) -> DecryptMetaReport {
     }
 }
 
+#[allow(clippy::unwrap_used)] // reqwest 惯用法：!is_success() 分支下 error_for_status() 必然 Err
 async fn download_bytes_limited(url: &str, max_bytes: usize) -> Result<Vec<u8>, SaveProviderError> {
     let client = crate::http::client_timeout_90s()?;
     let resp = client.get(url).send().await?;

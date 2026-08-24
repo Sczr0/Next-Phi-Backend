@@ -36,6 +36,7 @@ fn leaderboard_cursor_secret() -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+#[allow(clippy::expect_used)] // HMAC-SHA256 接受任意长度 key，永不失败
 fn derive_leaderboard_cursor_key(secret: &str) -> [u8; 32] {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;

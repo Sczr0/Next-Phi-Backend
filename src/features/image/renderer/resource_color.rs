@@ -9,6 +9,7 @@ static INVERSE_COLOR_DYNAMIC_CACHE: OnceLock<std::sync::Mutex<LruCache<PathBuf, 
     OnceLock::new();
 
 fn get_inverse_color_dynamic_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, String>> {
+    #[allow(clippy::expect_used)] // 缓存大小常量恒非零
     INVERSE_COLOR_DYNAMIC_CACHE.get_or_init(|| {
         std::sync::Mutex::new(LruCache::new(
             NonZeroUsize::new(256).expect("缓存大小常量恒非零"),

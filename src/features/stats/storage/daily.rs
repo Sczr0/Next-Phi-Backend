@@ -92,6 +92,7 @@ fn merge_daily_dau_counts(
 /// 计算本地日（配置时区）的 UTC 边界 `[start, end)`：start = 当日 00:00 转 UTC，
 /// end = 次日 00:00 转 UTC。半开区间避免依赖 `23:59:59Z` 这类与存储格式相关的
 /// 字典序巧合（详见聚合口径修复：预聚合表统一按本地日存储）。
+#[allow(clippy::expect_used)] // 日期数学不变量：00:00:00/23:59:59 恒合法
 fn local_day_bounds_utc(tz: Tz, day: NaiveDate) -> (String, String) {
     let start_ndt = NaiveDateTime::new(
         day,
@@ -639,6 +640,7 @@ impl StatsStorage {
         tokio::try_join!(users_fut, ips_fut)
     }
 
+#[allow(clippy::expect_used)] // 日期数学不变量：start/end 均为合法 NaiveDate
     pub async fn query_daily(
         &self,
         start: NaiveDate,

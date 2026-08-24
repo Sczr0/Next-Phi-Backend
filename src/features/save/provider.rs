@@ -285,6 +285,7 @@ pub async fn get_decrypted_save_from_meta(
     })
 }
 
+#[allow(clippy::unwrap_used)] // reqwest 惯用法：!is_success() 分支下 error_for_status() 必然 Err
 async fn download_encrypted_save(url: &str, max_bytes: usize) -> Result<Bytes, SaveProviderError> {
     let client = crate::http::client_timeout_90s()?;
     let response = client.get(url).send().await?;
