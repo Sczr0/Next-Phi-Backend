@@ -1051,12 +1051,14 @@ impl StatsStorage {
                 "daily_user",
                 "daily_ip",
             ] {
-                sqlx::query(AssertSqlSafe(format!("DELETE FROM {table} WHERE date BETWEEN ? AND ?")))
-                    .bind(&lower_s)
-                    .bind(&upper_s)
-                    .execute(&self.pool)
-                    .await
-                    .map_err(|e| AppError::Internal(format!("ensure 迁移清理 {table}: {e}")))?;
+                sqlx::query(AssertSqlSafe(format!(
+                    "DELETE FROM {table} WHERE date BETWEEN ? AND ?"
+                )))
+                .bind(&lower_s)
+                .bind(&upper_s)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| AppError::Internal(format!("ensure 迁移清理 {table}: {e}")))?;
             }
             for (day_s, count) in &event_days {
                 if *count == 0 {
