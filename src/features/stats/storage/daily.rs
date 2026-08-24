@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::{DateTime, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use chrono_tz::Tz;
-use sqlx::{QueryBuilder, Row, Sqlite};
+use sqlx::{AssertSqlSafe, QueryBuilder, Row, Sqlite};
 
 use crate::error::AppError;
 
@@ -15,7 +15,7 @@ use super::{
 };
 
 fn push_daily_agg_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     feature: Option<&str>,
     route: Option<&str>,
     method: Option<&str>,
@@ -31,7 +31,7 @@ fn push_daily_agg_filters(
     }
 }
 
-fn push_daily_feature_filter(qb: &mut QueryBuilder<'_, Sqlite>, feature: Option<&str>) {
+fn push_daily_feature_filter(qb: &mut QueryBuilder<Sqlite>, feature: Option<&str>) {
     if let Some(feature) = feature {
         qb.push(" AND feature = ").push_bind(feature.to_string());
     }
@@ -1051,7 +1051,7 @@ impl StatsStorage {
                 "daily_user",
                 "daily_ip",
             ] {
-                sqlx::query(&format!("DELETE FROM {table} WHERE date BETWEEN ? AND ?"))
+                sqlx::query(AssertSqlSafe(format!("DELETE FROM {table} WHERE date BETWEEN ? AND ?")))
                     .bind(&lower_s)
                     .bind(&upper_s)
                     .execute(&self.pool)

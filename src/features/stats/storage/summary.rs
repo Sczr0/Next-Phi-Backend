@@ -82,7 +82,7 @@ fn max_last_ts(a: Option<String>, b: Option<String>) -> Option<String> {
 }
 
 fn push_stats_ts_range_filters(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
 ) {
@@ -94,14 +94,14 @@ fn push_stats_ts_range_filters(
     }
 }
 
-fn push_stats_feature_filter(qb: &mut QueryBuilder<'_, Sqlite>, feature: Option<&str>) {
+fn push_stats_feature_filter(qb: &mut QueryBuilder<Sqlite>, feature: Option<&str>) {
     if let Some(feature) = feature {
         qb.push(" AND feature = ").push_bind(feature.to_string());
     }
 }
 
 fn push_summary_overall_query(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
 ) {
@@ -112,7 +112,7 @@ fn push_summary_overall_query(
 }
 
 fn push_summary_unique_ips_query(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
 ) {
@@ -123,7 +123,7 @@ fn push_summary_unique_ips_query(
 }
 
 fn push_summary_unique_users_query(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
     feature: Option<&str>,
@@ -134,7 +134,7 @@ fn push_summary_unique_users_query(
 }
 
 fn push_summary_features_query(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
     feature: Option<&str>,
@@ -148,7 +148,7 @@ fn push_summary_features_query(
 }
 
 fn push_summary_instances_query(
-    qb: &mut QueryBuilder<'_, Sqlite>,
+    qb: &mut QueryBuilder<Sqlite>,
     start_utc: Option<&str>,
     end_utc: Option<&str>,
     top: i64,
@@ -180,7 +180,7 @@ mod tests {
             Some("2026-01-01T00:00:00Z"),
             Some("2026-01-31T23:59:59Z"),
         );
-        let sql = qb.build().sql().to_string();
+        let sql = qb.build().sql().as_str().to_owned();
 
         assert!(sql.contains("MIN(ts_utc) as min_ts"));
         assert!(sql.contains("MAX(ts_utc) as max_ts"));
@@ -199,7 +199,7 @@ mod tests {
             Some("2026-01-01T00:00:00Z"),
             Some("2026-01-31T23:59:59Z"),
         );
-        let sql = qb.build().sql().to_string();
+        let sql = qb.build().sql().as_str().to_owned();
 
         assert!(sql.contains("COUNT(DISTINCT client_ip_hash)"));
         assert!(sql.contains("route IS NOT NULL"));
@@ -217,7 +217,7 @@ mod tests {
             Some("2026-01-31T23:59:59Z"),
             Some("save"),
         );
-        let sql = qb.build().sql().to_string();
+        let sql = qb.build().sql().as_str().to_owned();
 
         assert!(sql.contains("COUNT(DISTINCT user_hash)"));
         assert!(sql.contains("user_hash IS NOT NULL"));
@@ -235,7 +235,7 @@ mod tests {
             Some("2026-01-31T23:59:59Z"),
             Some("save"),
         );
-        let sql = qb.build().sql().to_string();
+        let sql = qb.build().sql().as_str().to_owned();
 
         assert!(sql.contains("feature IS NOT NULL"));
         assert!(sql.contains("COUNT(1) as cnt"));
@@ -255,7 +255,7 @@ mod tests {
             Some("2026-01-31T23:59:59Z"),
             10,
         );
-        let sql = qb.build().sql().to_string();
+        let sql = qb.build().sql().as_str().to_owned();
 
         assert!(sql.contains("instance IS NOT NULL"));
         assert!(sql.contains("COUNT(1) as cnt"));

@@ -1,4 +1,4 @@
-use sqlx::sqlite::SqliteRow;
+use sqlx::{AssertSqlSafe, sqlite::SqliteRow};
 
 use crate::error::AppError;
 
@@ -32,7 +32,7 @@ impl StatsStorage {
             "UPDATE user_profile SET {} WHERE user_hash=?",
             sets.join(",")
         );
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(AssertSqlSafe(sql));
         if let Some(v) = is_public {
             q = q.bind(v);
         }
