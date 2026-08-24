@@ -96,7 +96,7 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.9"
 
 # SVG 渲染为 PNG
-resvg = "0.43"
+resvg = "0.48"
 tiny-skia = { version = "0.11", features = ["png"] }
 png = "0.17"
 image = { version = "0.25", features = ["webp"] }
