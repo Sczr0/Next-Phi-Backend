@@ -86,7 +86,7 @@ async fn cache_put_session_auth(token: String, value: UnifiedSaveRequest, expire
 }
 
 #[must_use]
-pub fn has_auth_credentials(auth: &UnifiedSaveRequest) -> bool {
+pub const fn has_auth_credentials(auth: &UnifiedSaveRequest) -> bool {
     auth.session_token.is_some() || auth.external_credentials.is_some()
 }
 

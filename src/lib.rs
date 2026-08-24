@@ -8,6 +8,8 @@
     clippy::items_after_statements,  // 允许在函数中间写 use 或 struct
     clippy::module_name_repetitions  // 允许 PlayerStats 在 player 模块里
 )]
+// 测试代码里用 panic!/assert 断言是惯例，豁免 clippy::panic（仅测试构建生效）
+#![cfg_attr(test, allow(clippy::panic))]
 
 /// 统一错误处理模块
 pub mod error;

@@ -20,7 +20,7 @@ impl LocalImageKind {
     }
 
     /// 返回 data URI 使用的 MIME 类型。
-    pub(super) fn mime_type(self) -> &'static str {
+    pub(super) const fn mime_type(self) -> &'static str {
         match self {
             Self::Png => "image/png",
             Self::Jpeg => "image/jpeg",

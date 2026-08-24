@@ -78,7 +78,7 @@ fn build_app(state: AppState) -> Router {
         .with_state(state)
 }
 
-fn chart_constants_none() -> ChartConstants {
+const fn chart_constants_none() -> ChartConstants {
     ChartConstants {
         ez: None,
         hd: None,

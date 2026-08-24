@@ -8,15 +8,15 @@ pub struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    pub fn new(data: &'a [u8]) -> Self {
+    pub const fn new(data: &'a [u8]) -> Self {
         Self { data, off: 0 }
     }
 
-    pub fn remain(&self) -> usize {
+    pub const fn remain(&self) -> usize {
         self.data.len().saturating_sub(self.off)
     }
 
-    pub fn offset(&self) -> usize {
+    pub const fn offset(&self) -> usize {
         self.off
     }
 
@@ -104,13 +104,13 @@ impl<'a> Reader<'a> {
 
 /// 位操作工具
 #[inline]
-pub fn get_bit(byte: u8, index: usize) -> bool {
+pub const fn get_bit(byte: u8, index: usize) -> bool {
     ((byte >> index) & 1) != 0
 }
 
 #[allow(dead_code)]
 #[inline]
-pub fn set_bit(byte: &mut u8, index: usize, value: bool) {
+pub const fn set_bit(byte: &mut u8, index: usize, value: bool) {
     if value {
         *byte |= 1 << index;
     } else {

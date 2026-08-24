@@ -210,7 +210,7 @@ pub fn parse_game_record_json(
 mod tests {
     use super::*;
     use alloc::format;
-    use alloc::string::ToString;
+
     use alloc::vec;
 
     /// 辅助函数：构造一条歌曲在 gameRecord 中的完整二进制数据块

@@ -124,7 +124,7 @@ impl SongCatalog {
         self.by_id_lower.get(query.to_ascii_lowercase().as_str())
     }
 
-    fn match_priority(kind: SearchMatchKind) -> u8 {
+    const fn match_priority(kind: SearchMatchKind) -> u8 {
         match kind {
             SearchMatchKind::NameEquals => 0,
             SearchMatchKind::NickEquals => 1,
@@ -137,7 +137,7 @@ impl SongCatalog {
         }
     }
 
-    fn fuzzy_distance_limit(normalized_len: usize) -> usize {
+    const fn fuzzy_distance_limit(normalized_len: usize) -> usize {
         match normalized_len {
             0..=4 => 1,
             5..=8 => 2,

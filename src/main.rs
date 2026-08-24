@@ -96,13 +96,13 @@ async fn main() {
     let csv_path = info_dir.join("difficulty.csv");
     let mut chart_map: ChartConstantsMap = load_chart_constants(&csv_path).unwrap_or_else(|e| {
         tracing::error!("Failed to load difficulty.csv: {}", e);
-        panic!("missing or invalid difficulty.csv");
+        std::process::exit(1);
     });
 
     // 加载歌曲目录
     let mut song_catalog = song_loader::load_song_catalog(&info_dir).unwrap_or_else(|e| {
         tracing::error!("Failed to load info.csv or nicklist.yaml: {}", e);
-        panic!("missing or invalid info.csv/nicklist.yaml");
+        std::process::exit(1);
     });
 
     // 尝试从远端加载更新的 info 文件

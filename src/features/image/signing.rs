@@ -39,7 +39,7 @@ fn md5_hex(input: &str) -> String {
 pub fn sign_url(config: &IllustrationSigningConfig, path: &str) -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("系统时钟不应早于1970")
         .as_secs();
 
     match config.mode {
@@ -105,8 +105,11 @@ fn sign_type_d(config: &IllustrationSigningConfig, path: &str, timestamp: u64) -
 /// 将 Unix 时间戳格式化为 UTC+8 的 `YYYYMMDDHHMM` 字符串（TypeB 专用）
 fn format_timestamp_utc8(timestamp: u64) -> String {
     use chrono::{FixedOffset, TimeZone};
-    let utc8 = FixedOffset::east_opt(8 * 3600).unwrap();
-    let dt = utc8.timestamp_opt(timestamp.cast_signed(), 0).unwrap();
+    let utc8 = FixedOffset::east_opt(8 * 3600).expect("UTC+8 固定偏移恒合法");
+    let dt = utc8
+        .timestamp_opt(timestamp.cast_signed(), 0)
+        .single()
+        .expect("固定 UTC+8 偏移下任意时间戳均有唯一本地时间");
     dt.format("%Y%m%d%H%M").to_string()
 }
 
@@ -176,7 +179,7 @@ pub fn sign_svg(
     let key = config.effective_key()?;
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("系统时钟不应早于1970")
         .as_secs();
 
     let content_hash = svg_sha256(svg);
@@ -291,7 +294,7 @@ pub fn sign_svg_v4(
     let salt = config.effective_merkle_salt();
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .unwrap()
+        .expect("系统时钟不应早于1970")
         .as_secs();
 
     let merkle_root = build_score_merkle(scores, salt);
@@ -782,7 +785,7 @@ fn check_ttl(config: &ImageSigningConfig, timestamp: u64) -> Result<(), AppError
     if config.ttl_secs > 0 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .expect("系统时钟不应早于1970")
             .as_secs();
         let age = now.saturating_sub(timestamp);
         if age > config.ttl_secs {

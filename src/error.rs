@@ -212,7 +212,7 @@ pub(crate) fn sanitize_reqwest_error(err: &reqwest::Error) -> String {
 }
 
 impl AppError {
-    fn status_code(&self) -> StatusCode {
+    const fn status_code(&self) -> StatusCode {
         match self {
             AppError::AuthPending(_) => StatusCode::ACCEPTED,
             AppError::Network(_) => StatusCode::BAD_GATEWAY,
@@ -240,7 +240,7 @@ impl AppError {
         }
     }
 
-    fn stable_code(&self) -> &'static str {
+    const fn stable_code(&self) -> &'static str {
         match self {
             AppError::AuthPending(_) => "AUTH_PENDING",
             AppError::Network(_) => "UPSTREAM_ERROR",

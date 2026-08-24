@@ -7,6 +7,9 @@ description = "Phigros Cloud Save binary format codec (no_std compatible)"
 [lib]
 crate-type = ["rlib"]
 
+[lints]
+workspace = true
+
 [dependencies]
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }

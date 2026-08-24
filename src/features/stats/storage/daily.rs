@@ -93,10 +93,13 @@ fn merge_daily_dau_counts(
 /// end = 次日 00:00 转 UTC。半开区间避免依赖 `23:59:59Z` 这类与存储格式相关的
 /// 字典序巧合（详见聚合口径修复：预聚合表统一按本地日存储）。
 fn local_day_bounds_utc(tz: Tz, day: NaiveDate) -> (String, String) {
-    let start_ndt = NaiveDateTime::new(day, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+    let start_ndt = NaiveDateTime::new(
+        day,
+        NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00 恒合法"),
+    );
     let end_ndt = NaiveDateTime::new(
         day + chrono::Duration::days(1),
-        NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+        NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00 恒合法"),
     );
     let start_local = match tz.from_local_datetime(&start_ndt) {
         chrono::LocalResult::Single(v) => v,
@@ -645,8 +648,14 @@ impl StatsStorage {
         method: Option<String>,
     ) -> Result<Vec<DailyAggRow>, AppError> {
         // 若 daily_agg 尚未生成，临时从 events 动态聚合
-        let start_dt = NaiveDateTime::new(start, NaiveTime::from_hms_opt(0, 0, 0).unwrap());
-        let end_dt = NaiveDateTime::new(end, NaiveTime::from_hms_opt(23, 59, 59).unwrap());
+        let start_dt = NaiveDateTime::new(
+            start,
+            NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00 恒合法"),
+        );
+        let end_dt = NaiveDateTime::new(
+            end,
+            NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 恒合法"),
+        );
         let start_s = DateTime::<Utc>::from_naive_utc_and_offset(start_dt, Utc).to_rfc3339();
         let end_s = DateTime::<Utc>::from_naive_utc_and_offset(end_dt, Utc).to_rfc3339();
 

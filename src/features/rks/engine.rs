@@ -112,7 +112,7 @@ where
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f32> {
+const fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f32> {
     match diff {
         Difficulty::EZ => consts.ez,
         Difficulty::HD => consts.hd,
@@ -122,7 +122,7 @@ fn level_for_difficulty(consts: &ChartConstants, diff: &Difficulty) -> Option<f3
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
-fn key_of_difficulty(diff: &Difficulty) -> u8 {
+const fn key_of_difficulty(diff: &Difficulty) -> u8 {
     match diff {
         Difficulty::EZ => 0,
         Difficulty::HD => 1,
@@ -161,7 +161,7 @@ fn ceil_f64_to_i64_saturating(value: f64) -> i64 {
 }
 
 #[allow(clippy::cast_precision_loss)]
-fn i64_to_f64_lossy(value: i64) -> f64 {
+const fn i64_to_f64_lossy(value: i64) -> f64 {
     value as f64
 }
 
@@ -191,7 +191,7 @@ impl TopKChartScores {
         }
     }
 
-    fn sum(&self) -> f64 {
+    const fn sum(&self) -> f64 {
         self.sum
     }
 
@@ -298,7 +298,7 @@ pub enum PushAccHint {
 impl PushAccHint {
     /// 若该结果可用具体 ACC 表示，则返回目标 ACC（百分比）。
     #[must_use]
-    pub fn target_acc(&self) -> Option<f64> {
+    pub const fn target_acc(&self) -> Option<f64> {
         match self {
             Self::TargetAcc { acc } => Some(*acc),
             Self::PhiOnly | Self::Unreachable | Self::AlreadyPhi => None,
@@ -307,7 +307,7 @@ impl PushAccHint {
 
     /// 兼容旧逻辑：无法区分时以 100.0 表示“推到顶/无法推分”。
     #[must_use]
-    pub fn as_legacy_acc(&self) -> f64 {
+    pub const fn as_legacy_acc(&self) -> f64 {
         match self {
             Self::TargetAcc { acc } => *acc,
             Self::PhiOnly | Self::Unreachable | Self::AlreadyPhi => 100.0,
@@ -650,7 +650,7 @@ fn split_chart_id_full(target_chart_id_full: &str) -> Option<(&str, &str)> {
     Some((song_id, difficulty_str))
 }
 
-fn difficulty_key_from_str(difficulty_str: &str) -> Option<u8> {
+const fn difficulty_key_from_str(difficulty_str: &str) -> Option<u8> {
     if difficulty_str.eq_ignore_ascii_case("EZ") {
         return Some(0);
     }

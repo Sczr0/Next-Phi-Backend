@@ -13,7 +13,7 @@ pub(super) struct FcApBadgeStyle {
     pub(super) text: &'static str,
 }
 
-pub(super) fn difficulty_badge_style(difficulty: &str) -> DifficultyBadgeStyle {
+pub(super) const fn difficulty_badge_style(difficulty: &str) -> DifficultyBadgeStyle {
     match difficulty {
         diff if diff.eq_ignore_ascii_case("EZ") => DifficultyBadgeStyle {
             text: "EZ",

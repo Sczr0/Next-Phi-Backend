@@ -87,7 +87,7 @@ pub(super) fn mask_user_prefix(hash: &str) -> String {
 
 /// 检查字符是否为中日韩（CJK）字符
 /// 包括：CJK统一汉字、扩展区A/B、兼容汉字、日文平假名/片假名、韩文音节
-pub(super) fn is_cjk_char(c: char) -> bool {
+pub(super) const fn is_cjk_char(c: char) -> bool {
     matches!(c,
         '\u{4E00}'..='\u{9FFF}'   // CJK 统一汉字
         | '\u{3400}'..='\u{4DBF}' // CJK 扩展 A

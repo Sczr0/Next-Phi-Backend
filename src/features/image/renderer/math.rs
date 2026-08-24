@@ -7,7 +7,7 @@ pub(super) fn round_non_negative_to_u32(value: f64) -> u32 {
 }
 
 #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-fn f32_from_f64(value: f64) -> f32 {
+const fn f32_from_f64(value: f64) -> f32 {
     value as f32
 }
 

@@ -20,7 +20,7 @@ pub(super) enum LatencyBucket {
 }
 
 impl LatencyBucket {
-    pub(super) fn as_str(self) -> &'static str {
+    pub(super) const fn as_str(self) -> &'static str {
         match self {
             LatencyBucket::Day => "day",
             LatencyBucket::Week => "week",
@@ -68,7 +68,7 @@ pub(super) struct IncludeFlags {
 
 impl IncludeFlags {
     #[cfg(test)]
-    pub(super) fn any(self) -> bool {
+    pub(super) const fn any(self) -> bool {
         self.routes
             || self.methods
             || self.status_codes
@@ -80,7 +80,7 @@ impl IncludeFlags {
     }
 
     #[cfg(test)]
-    pub(super) fn any_http(self) -> bool {
+    pub(super) const fn any_http(self) -> bool {
         self.routes || self.methods || self.status_codes || self.latency || self.unique_ips
     }
 }

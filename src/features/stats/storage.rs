@@ -147,7 +147,7 @@ pub struct SummaryIncludeFlags {
 
 impl SummaryIncludeFlags {
     #[must_use]
-    pub fn any(self) -> bool {
+    pub const fn any(self) -> bool {
         self.routes
             || self.methods
             || self.status_codes
@@ -159,7 +159,7 @@ impl SummaryIncludeFlags {
     }
 
     #[must_use]
-    pub fn any_http(self) -> bool {
+    pub const fn any_http(self) -> bool {
         self.routes || self.methods || self.status_codes || self.latency || self.unique_ips
     }
 }

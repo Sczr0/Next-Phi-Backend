@@ -42,7 +42,7 @@ pub struct ExternalApiCredentials {
 
 impl ExternalApiCredentials {
     #[must_use]
-    pub fn is_valid(&self) -> bool {
+    pub const fn is_valid(&self) -> bool {
         let has_platform_auth = self.platform.is_some() && self.platform_id.is_some();
         let has_session_auth = self.sessiontoken.is_some();
         let has_api_auth = self.api_user_id.is_some();

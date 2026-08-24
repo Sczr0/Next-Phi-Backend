@@ -10,9 +10,16 @@ name = "phi-backend"
 version = "0.1.0"
 edition = "2024"
 
-[lints.clippy]
+[workspace.lints.clippy]
 # 文档注释以中文为主，`doc_markdown` 会产生大量误报并污染注释文本。
 doc_markdown = "allow"
+# 能 const 的函数就 const（nursery 组，对健壮性无直接帮助，但利于编译器优化）
+missing_const_for_fn = "warn"
+# 生产代码禁止 panic!（restriction 组；测试代码通过 cfg_attr(test, allow) 豁免）
+panic = "warn"
+
+[lints]
+workspace = true
 
 [dependencies]
 # 内部 crate

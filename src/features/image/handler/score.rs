@@ -66,7 +66,7 @@ pub(super) fn parse_user_score_difficulty(input: &str) -> Option<(Difficulty, &'
     })
 }
 
-pub(super) fn difficulty_label(difficulty: Difficulty) -> &'static str {
+pub(super) const fn difficulty_label(difficulty: Difficulty) -> &'static str {
     match difficulty {
         Difficulty::EZ => "EZ",
         Difficulty::HD => "HD",
@@ -75,7 +75,7 @@ pub(super) fn difficulty_label(difficulty: Difficulty) -> &'static str {
     }
 }
 
-pub(super) fn difficulty_index(difficulty: Difficulty) -> usize {
+pub(super) const fn difficulty_index(difficulty: Difficulty) -> usize {
     match difficulty {
         Difficulty::EZ => 0,
         Difficulty::HD => 1,

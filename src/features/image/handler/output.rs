@@ -205,7 +205,7 @@ impl ImageOutputCacheSpec {
     }
 }
 
-fn theme_cache_code(theme: Theme) -> &'static str {
+const fn theme_cache_code(theme: Theme) -> &'static str {
     match theme {
         Theme::White => "w",
         Theme::Black => "b",

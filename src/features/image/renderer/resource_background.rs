@@ -14,7 +14,7 @@ static BACKGROUND_CACHE: OnceLock<std::sync::Mutex<LruCache<PathBuf, Arc<str>>>>
 pub(super) fn get_background_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, Arc<str>>> {
     BACKGROUND_CACHE.get_or_init(|| {
         std::sync::Mutex::new(LruCache::new(
-            NonZeroUsize::new(BACKGROUND_CACHE_SIZE).unwrap(),
+            NonZeroUsize::new(BACKGROUND_CACHE_SIZE).expect("缓存大小常量恒非零"),
         ))
     })
 }

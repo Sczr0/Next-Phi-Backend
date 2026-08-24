@@ -41,7 +41,10 @@ pub(super) fn fixed_offset_minutes_for_range(
     let mut offset: Option<i32> = None;
     while cur <= end {
         // noon 一般不会处于 DST 的 ambiguous/none 区间，作为稳定采样点
-        let local_noon = NaiveDateTime::new(cur, NaiveTime::from_hms_opt(12, 0, 0).unwrap());
+        let local_noon = NaiveDateTime::new(
+            cur,
+            NaiveTime::from_hms_opt(12, 0, 0).expect("12:00:00 恒合法"),
+        );
         let dt = match tz.from_local_datetime(&local_noon) {
             LocalResult::Single(v) => v,
             LocalResult::Ambiguous(a, _) => a,
@@ -102,9 +105,9 @@ pub(super) fn parse_date_bound_utc(
         AppError::Validation(format!("日期无效（期望 YYYY-MM-DD）: {date_ymd} ({e})"))
     })?;
     let time = if is_end {
-        NaiveTime::from_hms_opt(23, 59, 59).unwrap()
+        NaiveTime::from_hms_opt(23, 59, 59).expect("23:59:59 恒合法")
     } else {
-        NaiveTime::from_hms_opt(0, 0, 0).unwrap()
+        NaiveTime::from_hms_opt(0, 0, 0).expect("00:00:00 恒合法")
     };
     let ndt = NaiveDateTime::new(date, time);
 

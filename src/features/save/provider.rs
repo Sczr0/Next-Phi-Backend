@@ -82,7 +82,7 @@ impl SaveSource {
         }
     }
     #[must_use]
-    pub fn external(credentials: ExternalApiCredentials) -> Self {
+    pub const fn external(credentials: ExternalApiCredentials) -> Self {
         Self::ExternalApi { credentials }
     }
 }

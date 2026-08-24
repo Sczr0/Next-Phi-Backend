@@ -66,7 +66,7 @@ fn parse_bool(s: &str) -> bool {
         || s.eq_ignore_ascii_case("on")
 }
 
-fn parse_search_mode(input: &str) -> Option<SearchMode> {
+const fn parse_search_mode(input: &str) -> Option<SearchMode> {
     if input.eq_ignore_ascii_case("and") {
         Some(SearchMode::And)
     } else if input.eq_ignore_ascii_case("or") {

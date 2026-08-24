@@ -9,8 +9,11 @@ static INVERSE_COLOR_DYNAMIC_CACHE: OnceLock<std::sync::Mutex<LruCache<PathBuf, 
     OnceLock::new();
 
 fn get_inverse_color_dynamic_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, String>> {
-    INVERSE_COLOR_DYNAMIC_CACHE
-        .get_or_init(|| std::sync::Mutex::new(LruCache::new(NonZeroUsize::new(256).unwrap())))
+    INVERSE_COLOR_DYNAMIC_CACHE.get_or_init(|| {
+        std::sync::Mutex::new(LruCache::new(
+            NonZeroUsize::new(256).expect("缓存大小常量恒非零"),
+        ))
+    })
 }
 
 /// 从图片路径计算主色的反色

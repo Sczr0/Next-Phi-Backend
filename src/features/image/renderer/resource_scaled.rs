@@ -26,7 +26,7 @@ static SCALED_IMAGE_CACHE: OnceLock<std::sync::Mutex<LruCache<ScaledImageKey, Ar
 fn get_scaled_image_cache() -> &'static std::sync::Mutex<LruCache<ScaledImageKey, Arc<str>>> {
     SCALED_IMAGE_CACHE.get_or_init(|| {
         std::sync::Mutex::new(LruCache::new(
-            NonZeroUsize::new(SCALED_IMAGE_CACHE_SIZE).unwrap(),
+            NonZeroUsize::new(SCALED_IMAGE_CACHE_SIZE).expect("缓存大小常量恒非零"),
         ))
     })
 }

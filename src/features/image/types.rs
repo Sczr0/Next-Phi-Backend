@@ -54,7 +54,7 @@ pub struct RenderSongRequest {
     pub nickname: Option<String>,
 }
 
-fn default_n() -> u32 {
+const fn default_n() -> u32 {
     30
 }
 

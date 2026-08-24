@@ -303,16 +303,18 @@ pub async fn render_bn(
                 &score_tuples,
                 user_hash_for_cache.as_deref(),
             ) {
+                let signed = signing::inject_sig_footer(&svg, &sig);
                 maybe_sig = Some(sig);
-                signing::inject_sig_footer(&svg, maybe_sig.as_ref().unwrap())
+                signed
             } else {
                 svg
             }
         } else if signing_cfg.is_usable() {
             if let Some(sig) = signing::sign_svg(&svg, signing_cfg, user_hash_for_cache.as_deref())
             {
+                let signed = signing::inject_sig_footer(&svg, &sig);
                 maybe_sig = Some(sig);
-                signing::inject_sig_footer(&svg, maybe_sig.as_ref().unwrap())
+                signed
             } else {
                 svg
             }
@@ -345,8 +347,16 @@ pub async fn render_bn(
 
     let mut headers = image_content_headers(content_type);
     // 签名串放入响应头，便于客户端从任意格式（SVG/PNG/JPEG）直接提取验签字段。
+    // 签名行由内部生成（hex/base64/:=-），正常必为合法 HeaderValue；解析失败时跳过而非 panic。
     if let Some(ref line) = sig_header {
-        headers.insert("X-Lilith-Sig", line.parse().unwrap());
+        match line.parse::<axum::http::HeaderValue>() {
+            Ok(v) => {
+                headers.insert("X-Lilith-Sig", v);
+            }
+            Err(e) => {
+                tracing::warn!("X-Lilith-Sig 签名行无法解析为 HeaderValue，已跳过: {e}");
+            }
+        }
     }
 
     // Cache put

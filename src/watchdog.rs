@@ -138,13 +138,12 @@ impl SystemdWatchdog {
         {
             use tracing::warn;
 
-            let watchdog_timeout_us = systemd_impl::get_watchdog_timeout_us();
-            if watchdog_timeout_us.is_none() {
+            if let Some(watchdog_timeout_us) = systemd_impl::get_watchdog_timeout_us() {
+                info!("systemd看门狗超时时间: {}μs", watchdog_timeout_us);
+            } else {
                 warn!("systemd看门狗未启用或不在systemd环境下运行");
                 return Ok(());
             }
-
-            info!("systemd看门狗超时时间: {}μs", watchdog_timeout_us.unwrap());
         }
 
         info!(

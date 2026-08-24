@@ -303,7 +303,10 @@ fn next_occurrence(
     mm: u32,
 ) -> chrono::DateTime<chrono::Local> {
     let today = now.date_naive();
-    let target = NaiveDateTime::new(today, NaiveTime::from_hms_opt(hh, mm, 0).unwrap());
+    let target = NaiveDateTime::new(
+        today,
+        NaiveTime::from_hms_opt(hh, mm, 0).expect("调用方已限制 hh<=23, mm<=59"),
+    );
     let candidate = chrono::Local
         .from_local_datetime(&target)
         .single()
@@ -323,8 +326,8 @@ pub async fn archive_one_day(
     if !arcfg.parquet {
         return Ok(());
     }
-    let start = Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).unwrap());
-    let end = Utc.from_utc_datetime(&day.and_hms_opt(23, 59, 59).unwrap());
+    let start = Utc.from_utc_datetime(&day.and_hms_opt(0, 0, 0).expect("00:00:00 恒合法"));
+    let end = Utc.from_utc_datetime(&day.and_hms_opt(23, 59, 59).expect("23:59:59 恒合法"));
     let rows = storage
         .query_archive_events_between(&start.to_rfc3339(), &end.to_rfc3339())
         .await?;

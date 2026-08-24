@@ -54,7 +54,7 @@ pub struct IllustrationSigningConfig {
 }
 
 impl IllustrationSigningConfig {
-    fn default_ttl_secs() -> u64 {
+    const fn default_ttl_secs() -> u64 {
         300
     }
     fn default_token_param() -> String {
@@ -111,7 +111,7 @@ pub struct ResourcesConfig {
 }
 
 impl ResourcesConfig {
-    fn default_illustration_repo_auto_sync() -> bool {
+    const fn default_illustration_repo_auto_sync() -> bool {
         false
     }
 
@@ -159,7 +159,7 @@ pub struct SessionConfig {
     pub exchange_shared_secret: String,
 }
 impl SessionConfig {
-    fn default_enabled() -> bool {
+    const fn default_enabled() -> bool {
         true
     }
     fn default_jwt_issuer() -> String {
@@ -171,13 +171,13 @@ impl SessionConfig {
     fn default_jwt_secret() -> String {
         std::env::var("APP_SESSION_JWT_SECRET").unwrap_or_default()
     }
-    fn default_access_ttl_secs() -> u64 {
+    const fn default_access_ttl_secs() -> u64 {
         900
     }
-    fn default_revoke_all_grace_secs() -> u64 {
+    const fn default_revoke_all_grace_secs() -> u64 {
         10
     }
-    fn default_revoke_ttl_secs() -> u64 {
+    const fn default_revoke_ttl_secs() -> u64 {
         864_000
     }
     fn default_exchange_shared_secret() -> String {
@@ -262,13 +262,13 @@ impl OpenPlatformGithubConfig {
     fn default_post_login_redirect() -> String {
         "/open-platform".to_string()
     }
-    fn default_state_ttl_secs() -> u64 {
+    const fn default_state_ttl_secs() -> u64 {
         600
     }
-    fn default_http_timeout_secs() -> u64 {
+    const fn default_http_timeout_secs() -> u64 {
         10
     }
-    fn default_http_retry_count() -> u32 {
+    const fn default_http_retry_count() -> u32 {
         2
     }
 }
@@ -324,13 +324,13 @@ impl OpenPlatformSessionConfig {
     fn default_jwt_secret() -> String {
         std::env::var("APP_OPEN_PLATFORM_SESSION_JWT_SECRET").unwrap_or_default()
     }
-    fn default_ttl_secs() -> u64 {
+    const fn default_ttl_secs() -> u64 {
         86_400
     }
     fn default_cookie_name() -> String {
         "op_session".to_string()
     }
-    fn default_cookie_secure() -> bool {
+    const fn default_cookie_secure() -> bool {
         false
     }
 }
@@ -384,16 +384,16 @@ impl OpenPlatformApiKeyConfig {
     fn default_hash_secret() -> String {
         std::env::var("APP_OPEN_PLATFORM_API_KEY_HASH_SECRET").unwrap_or_default()
     }
-    fn default_random_bytes() -> usize {
+    const fn default_random_bytes() -> usize {
         24
     }
-    fn default_rotate_grace_secs() -> u64 {
+    const fn default_rotate_grace_secs() -> u64 {
         86_400
     }
     fn default_scopes() -> Vec<String> {
         vec!["public.read".to_string()]
     }
-    fn default_rate_limit_per_minute() -> u32 {
+    const fn default_rate_limit_per_minute() -> u32 {
         120
     }
 }
@@ -436,13 +436,13 @@ pub struct OpenPlatformConfig {
 }
 
 impl OpenPlatformConfig {
-    fn default_enabled() -> bool {
+    const fn default_enabled() -> bool {
         false
     }
     fn default_sqlite_path() -> String {
         "./resources/open_platform.db".to_string()
     }
-    fn default_sqlite_wal() -> bool {
+    const fn default_sqlite_wal() -> bool {
         true
     }
 }
@@ -486,11 +486,11 @@ pub struct CorsConfig {
 }
 
 impl CorsConfig {
-    fn default_enabled() -> bool {
+    const fn default_enabled() -> bool {
         false
     }
 
-    fn default_allow_credentials() -> bool {
+    const fn default_allow_credentials() -> bool {
         false
     }
 }
@@ -628,7 +628,7 @@ impl AppConfig {
 
         let builder = ConfigBuilder::builder()
             // 加载配置文件
-            .add_source(File::with_name(config_path.to_str().unwrap()))
+            .add_source(File::with_name(&config_path.to_string_lossy()))
             // 支持环境变量覆盖，例如：APP_API_PREFIX
             .add_source(
                 Environment::with_prefix("APP")
@@ -811,13 +811,13 @@ pub struct ImageSigningConfig {
 }
 
 impl ImageSigningConfig {
-    fn default_enabled() -> bool {
+    const fn default_enabled() -> bool {
         false
     }
-    fn default_ttl_secs() -> u64 {
+    const fn default_ttl_secs() -> u64 {
         0
     }
-    fn default_public_verify() -> bool {
+    const fn default_public_verify() -> bool {
         false
     }
     fn default_ed25519_seed() -> String {
@@ -927,19 +927,19 @@ pub struct ImageRenderConfig {
 }
 
 impl ImageRenderConfig {
-    fn default_cache_enabled() -> bool {
+    const fn default_cache_enabled() -> bool {
         true
     }
-    fn default_cache_max_bytes() -> u64 {
+    const fn default_cache_max_bytes() -> u64 {
         100 * 1024 * 1024
     }
-    fn default_cache_ttl() -> u64 {
+    const fn default_cache_ttl() -> u64 {
         60
     }
-    fn default_cache_tti() -> u64 {
+    const fn default_cache_tti() -> u64 {
         30
     }
-    fn default_max_user_scores() -> u32 {
+    const fn default_max_user_scores() -> u32 {
         500
     }
 }
@@ -995,43 +995,43 @@ pub struct SaveLimitsConfig {
 }
 
 impl SaveLimitsConfig {
-    fn default_max_download_bytes() -> u64 {
+    const fn default_max_download_bytes() -> u64 {
         64 * 1024 * 1024
     }
 
-    fn default_max_decompress_bytes() -> u64 {
+    const fn default_max_decompress_bytes() -> u64 {
         64 * 1024 * 1024
     }
 
-    fn default_max_zip_entry_bytes() -> u64 {
+    const fn default_max_zip_entry_bytes() -> u64 {
         32 * 1024 * 1024
     }
 
-    fn default_max_zip_entries() -> u32 {
+    const fn default_max_zip_entries() -> u32 {
         16
     }
 
-    fn default_cache_enabled() -> bool {
+    const fn default_cache_enabled() -> bool {
         true
     }
 
-    fn default_cache_max_entries() -> u64 {
+    const fn default_cache_max_entries() -> u64 {
         512
     }
 
-    fn default_cache_ttl_secs() -> u64 {
+    const fn default_cache_ttl_secs() -> u64 {
         120
     }
 
-    fn default_cache_tti_secs() -> u64 {
+    const fn default_cache_tti_secs() -> u64 {
         60
     }
 
-    fn default_pbkdf2_rounds_min() -> u32 {
+    const fn default_pbkdf2_rounds_min() -> u32 {
         1_000
     }
 
-    fn default_pbkdf2_rounds_max() -> u32 {
+    const fn default_pbkdf2_rounds_max() -> u32 {
         100_000
     }
 }
@@ -1068,7 +1068,7 @@ pub struct StatsArchiveConfig {
 }
 
 impl StatsArchiveConfig {
-    fn default_parquet() -> bool {
+    const fn default_parquet() -> bool {
         true
     }
     fn default_dir() -> String {
@@ -1131,7 +1131,7 @@ pub struct StatsConfig {
 }
 
 impl StatsConfig {
-    fn default_enabled() -> bool {
+    const fn default_enabled() -> bool {
         true
     }
     fn default_storage() -> String {
@@ -1140,16 +1140,16 @@ impl StatsConfig {
     fn default_sqlite_path() -> String {
         "./resources/usage_stats.db".to_string()
     }
-    fn default_sqlite_wal() -> bool {
+    const fn default_sqlite_wal() -> bool {
         true
     }
-    fn default_batch_size() -> usize {
+    const fn default_batch_size() -> usize {
         100
     }
-    fn default_flush_ms() -> u64 {
+    const fn default_flush_ms() -> u64 {
         1000
     }
-    fn default_retention_days() -> u32 {
+    const fn default_retention_days() -> u32 {
         180
     }
     fn default_timezone() -> String {
@@ -1207,19 +1207,19 @@ pub struct WatermarkConfig {
 }
 
 impl WatermarkConfig {
-    fn default_explicit() -> bool {
+    const fn default_explicit() -> bool {
         true
     }
-    fn default_implicit() -> bool {
+    const fn default_implicit() -> bool {
         true
     }
     fn default_salt() -> String {
         "phi".to_string()
     }
-    fn default_ttl() -> u64 {
+    const fn default_ttl() -> u64 {
         600
     }
-    fn default_code_len() -> usize {
+    const fn default_code_len() -> usize {
         8
     }
 
@@ -1302,25 +1302,25 @@ pub struct ShutdownConfig {
 }
 
 impl ShutdownConfig {
-    fn default_timeout() -> u64 {
+    const fn default_timeout() -> u64 {
         30
     }
-    fn default_force() -> bool {
+    const fn default_force() -> bool {
         true
     }
-    fn default_force_delay() -> u64 {
+    const fn default_force_delay() -> u64 {
         10
     }
 
     /// 获取优雅退出超时时间
     #[must_use]
-    pub fn timeout_duration(&self) -> std::time::Duration {
+    pub const fn timeout_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.timeout_secs)
     }
 
     /// 获取强制退出等待时间
     #[must_use]
-    pub fn force_delay_duration(&self) -> std::time::Duration {
+    pub const fn force_delay_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.force_delay_secs)
     }
 }
@@ -1351,31 +1351,31 @@ pub struct WatchdogConfig {
 }
 
 impl WatchdogConfig {
-    fn default_enabled() -> bool {
+    const fn default_enabled() -> bool {
         false
     }
-    fn default_timeout() -> u64 {
+    const fn default_timeout() -> u64 {
         60
     }
-    fn default_interval() -> u64 {
+    const fn default_interval() -> u64 {
         10
     }
 
     /// 获取看门狗超时时间
     #[must_use]
-    pub fn timeout_duration(&self) -> std::time::Duration {
+    pub const fn timeout_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.timeout_secs)
     }
 
     /// 获取心跳间隔时间
     #[must_use]
-    pub fn interval_duration(&self) -> std::time::Duration {
+    pub const fn interval_duration(&self) -> std::time::Duration {
         std::time::Duration::from_secs(self.interval_secs)
     }
 
     /// 获取心跳间隔（纳秒，用于sd_notify）
     #[must_use]
-    pub fn interval_nanos(&self) -> u64 {
+    pub const fn interval_nanos(&self) -> u64 {
         self.interval_secs * 1_000_000_000
     }
 }
@@ -1418,19 +1418,19 @@ pub struct LeaderboardConfig {
 }
 
 impl LeaderboardConfig {
-    fn default_enabled() -> bool {
+    const fn default_enabled() -> bool {
         true
     }
-    fn default_allow_public() -> bool {
+    const fn default_allow_public() -> bool {
         true
     }
-    fn default_show_rc() -> bool {
+    const fn default_show_rc() -> bool {
         true
     }
-    fn default_show_b3() -> bool {
+    const fn default_show_b3() -> bool {
         true
     }
-    fn default_show_ap3() -> bool {
+    const fn default_show_ap3() -> bool {
         true
     }
     fn default_admin_tokens() -> Vec<String> {
