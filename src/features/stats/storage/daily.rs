@@ -640,7 +640,7 @@ impl StatsStorage {
         tokio::try_join!(users_fut, ips_fut)
     }
 
-#[allow(clippy::expect_used)] // 日期数学不变量：start/end 均为合法 NaiveDate
+    #[allow(clippy::expect_used)] // 日期数学不变量：start/end 均为合法 NaiveDate
     pub async fn query_daily(
         &self,
         start: NaiveDate,

@@ -22,7 +22,7 @@ pub use self::user_id::{UserIdResponse, post_user_id};
 pub fn create_auth_router() -> Router<AppState> {
     Router::<AppState>::new()
         .route("/qrcode", post(post_qrcode))
-        .route("/qrcode/:qr_id/status", get(get_qrcode_status))
+        .route("/qrcode/{qr_id}/status", get(get_qrcode_status))
         .route("/user-id", post(post_user_id))
         .route("/session/exchange", post(post_session_exchange))
         .route("/session/refresh", post(post_session_refresh))

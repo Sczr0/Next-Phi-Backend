@@ -122,7 +122,7 @@ pub fn create_leaderboard_router() -> Router<AppState> {
         .route("/leaderboard/rks/me", post(post_me))
         .route("/leaderboard/alias", put(put_alias))
         .route("/leaderboard/profile", put(put_profile))
-        .route("/public/profile/:alias", get(get_public_profile))
+        .route("/public/profile/{alias}", get(get_public_profile))
         .route("/admin/leaderboard/suspicious", get(get_suspicious))
         .route("/admin/leaderboard/users", get(get_admin_leaderboard_users))
         .route("/admin/leaderboard/resolve", post(post_resolve))

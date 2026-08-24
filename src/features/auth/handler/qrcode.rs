@@ -313,7 +313,7 @@ pub async fn get_qrcode_status(
     let log_total = |result_status: &'static str| {
         tracing::info!(
             target: "phi_backend::auth::performance",
-            route = "/auth/qrcode/:qr_id/status",
+            route = "/auth/qrcode/{qr_id}/status",
             phase = "total",
             status = "ok",
             result_status,
@@ -326,7 +326,7 @@ pub async fn get_qrcode_status(
     let current = if let Some(c) = state.qrcode_service.get(&qr_id).await {
         tracing::info!(
             target: "phi_backend::auth::performance",
-            route = "/auth/qrcode/:qr_id/status",
+            route = "/auth/qrcode/{qr_id}/status",
             phase = "cache_get",
             status = "hit",
             dur_ms = t_cache_get.elapsed().as_millis(),
@@ -336,7 +336,7 @@ pub async fn get_qrcode_status(
     } else {
         tracing::info!(
             target: "phi_backend::auth::performance",
-            route = "/auth/qrcode/:qr_id/status",
+            route = "/auth/qrcode/{qr_id}/status",
             phase = "cache_get",
             status = "miss",
             dur_ms = t_cache_get.elapsed().as_millis(),
@@ -361,7 +361,7 @@ pub async fn get_qrcode_status(
             state.qrcode_service.remove(&qr_id).await;
             tracing::info!(
                 target: "phi_backend::auth::performance",
-                route = "/auth/qrcode/:qr_id/status",
+                route = "/auth/qrcode/{qr_id}/status",
                 phase = "cache_remove",
                 status = "ok",
                 dur_ms = t_cache_remove.elapsed().as_millis(),
@@ -394,7 +394,7 @@ pub async fn get_qrcode_status(
                 state.qrcode_service.remove(&qr_id).await;
                 tracing::info!(
                     target: "phi_backend::auth::performance",
-                    route = "/auth/qrcode/:qr_id/status",
+                    route = "/auth/qrcode/{qr_id}/status",
                     phase = "cache_remove",
                     status = "expired",
                     dur_ms = t_cache_remove.elapsed().as_millis(),
@@ -417,7 +417,7 @@ pub async fn get_qrcode_status(
                 let retry_secs = (next_poll_at - now).as_secs();
                 tracing::info!(
                     target: "phi_backend::auth::performance",
-                    route = "/auth/qrcode/:qr_id/status",
+                    route = "/auth/qrcode/{qr_id}/status",
                     phase = "poll_gate",
                     status = "deferred",
                     retry_after = retry_secs,
@@ -446,7 +446,7 @@ pub async fn get_qrcode_status(
                 Ok(session) => {
                     tracing::info!(
                         target: "phi_backend::auth::performance",
-                        route = "/auth/qrcode/:qr_id/status",
+                        route = "/auth/qrcode/{qr_id}/status",
                         phase = "poll_for_token",
                         status = "ok",
                         dur_ms = t_poll.elapsed().as_millis(),
@@ -460,7 +460,7 @@ pub async fn get_qrcode_status(
                     state.qrcode_service.remove(&qr_id).await;
                     tracing::info!(
                         target: "phi_backend::auth::performance",
-                        route = "/auth/qrcode/:qr_id/status",
+                        route = "/auth/qrcode/{qr_id}/status",
                         phase = "cache_update",
                         status = "confirmed",
                         dur_ms = t_cache_update.elapsed().as_millis(),
@@ -481,7 +481,7 @@ pub async fn get_qrcode_status(
                 Err(AppError::AuthPending(_)) => {
                     tracing::info!(
                         target: "phi_backend::auth::performance",
-                        route = "/auth/qrcode/:qr_id/status",
+                        route = "/auth/qrcode/{qr_id}/status",
                         phase = "poll_for_token",
                         status = "pending",
                         dur_ms = t_poll.elapsed().as_millis(),
@@ -501,7 +501,7 @@ pub async fn get_qrcode_status(
                         .await;
                     tracing::info!(
                         target: "phi_backend::auth::performance",
-                        route = "/auth/qrcode/:qr_id/status",
+                        route = "/auth/qrcode/{qr_id}/status",
                         phase = "cache_update",
                         status = "pending",
                         dur_ms = t_cache_update.elapsed().as_millis(),
@@ -523,7 +523,7 @@ pub async fn get_qrcode_status(
                     tracing::warn!(err = %e, "qrcode poll failed");
                     tracing::info!(
                         target: "phi_backend::auth::performance",
-                        route = "/auth/qrcode/:qr_id/status",
+                        route = "/auth/qrcode/{qr_id}/status",
                         phase = "poll_for_token",
                         status = "failed",
                         dur_ms = t_poll.elapsed().as_millis(),
