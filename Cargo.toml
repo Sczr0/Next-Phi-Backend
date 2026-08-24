@@ -31,9 +31,9 @@ workspace = true
 phi-save-codec = { path = "crates/phi-save-codec" }
 # 核心异步与服务框架
 tokio = { version = "1.41", features = ["full"] }
-axum = "0.7.9"
+axum = "0.8.9"
 async-trait = "0.1"
-tower-http = { version = "0.6", features = ["fs", "compression-br", "compression-gzip", "cors"] }
+tower-http = { version = "0.7", features = ["fs", "compression-br", "compression-gzip", "cors"] }
 
 # 序列化与JSON
 serde = { version = "1.0", features = ["derive"] }
@@ -81,8 +81,8 @@ arrow-array = "53"
 arrow-schema = "53"
 
 # OpenAPI 支持
-utoipa = { version = "5.2", features = ["axum_extras"] }
-utoipa-swagger-ui = { version = "8.0", features = ["axum"] }
+utoipa = { version = "5.5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9.0", features = ["axum"] }
 
 # 配置文件支持
 config = "0.14"

@@ -34,7 +34,7 @@ pub fn create_open_platform_open_api_router() -> Router<AppState> {
             )),
         )
         .route(
-            "/open/auth/qrcode/:qr_id/status",
+            "/open/auth/qrcode/{qr_id}/status",
             get(open_auth_qrcode_status).route_layer(axum::middleware::from_fn_with_state(
                 profile_read_policy.clone(),
                 open_api_token_middleware,

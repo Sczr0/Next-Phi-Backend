@@ -32,7 +32,7 @@ impl<T> DerefMut for ValidatedQuery<T> {
     }
 }
 
-#[async_trait::async_trait]
+// axum 0.8 的 FromRequestParts 已是原生 async fn in trait，不再需要 async_trait 宏。
 impl<S, T> FromRequestParts<S> for ValidatedQuery<T>
 where
     S: Send + Sync,
@@ -64,7 +64,7 @@ impl<T> DerefMut for ValidatedPath<T> {
     }
 }
 
-#[async_trait::async_trait]
+// axum 0.8 的 FromRequestParts 已是原生 async fn in trait，不再需要 async_trait 宏。
 impl<S, T> FromRequestParts<S> for ValidatedPath<T>
 where
     S: Send + Sync,
@@ -96,7 +96,7 @@ impl<T> DerefMut for ValidatedJson<T> {
     }
 }
 
-#[async_trait::async_trait]
+// axum 0.8 的 FromRequest 已是原生 async fn in trait，不再需要 async_trait 宏。
 impl<S, T> FromRequest<S> for ValidatedJson<T>
 where
     S: Send + Sync,

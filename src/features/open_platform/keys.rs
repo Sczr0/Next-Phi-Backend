@@ -27,23 +27,23 @@ pub fn create_open_platform_keys_router() -> Router<AppState> {
         .route("/developer/api-keys", post(post_create_api_key))
         .route("/developer/api-keys", get(get_api_keys))
         .route(
-            "/developer/api-keys/:key_id/rotate",
+            "/developer/api-keys/{key_id}/rotate",
             post(post_rotate_api_key),
         )
         .route(
-            "/developer/api-keys/:key_id/revoke",
+            "/developer/api-keys/{key_id}/revoke",
             post(post_revoke_api_key),
         )
         .route(
-            "/developer/api-keys/:key_id/delete",
+            "/developer/api-keys/{key_id}/delete",
             post(post_delete_api_key),
         )
         .route(
-            "/developer/api-keys/:key_id/events",
+            "/developer/api-keys/{key_id}/events",
             get(get_api_key_events),
         )
         .route(
-            "/developer/api-keys/:key_id/rate-limit",
+            "/developer/api-keys/{key_id}/rate-limit",
             get(get_api_key_rate_limit),
         )
 }
