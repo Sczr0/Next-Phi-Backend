@@ -103,6 +103,9 @@ image = { version = "0.25", features = ["webp"] }
 webp = "0.3.1"
 lru = "0.16"
 num_cpus = "1.16"
+# 全局内存分配器：mimalloc 官方 wrapper（捆绑 C v2）
+# 版本用等号锁死：0.1.48 曾切到 C v3，0.1.49+ 又回退 v2，避免语义化版本下底层 C 库漂移
+mimalloc = "=0.1.52"
 
 # systemd 支持（仅在Linux下生效）
 [target.'cfg(target_os = "linux")'.dependencies]

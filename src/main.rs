@@ -9,6 +9,12 @@
     clippy::module_name_repetitions
 )]
 
+// 全局内存分配器（mimalloc）：降低多线程下的内存碎片与分配竞争
+use mimalloc::MiMalloc;
+
+#[global_allocator]
+static GLOBAL_ALLOC: MiMalloc = MiMalloc;
+
 use axum::body::Bytes;
 use moka::future::Cache;
 use phi_backend::features::auth::client::TapTapClient;
