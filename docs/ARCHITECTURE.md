@@ -20,8 +20,8 @@
 > | Phase 2 Step 3 契约测试套件（fake + 真 SQLite 双验证） | ✅ | 0b79612 |
 > | Phase 2 Step 4 semver 闸门（备案版） | ♻️ | 896f638 |
 > | Docker 部署全套（镜像/compose/CNB/冒烟 CI/手册） | ✅ | 896f638 |
-> | 遗留 D1（state.db/stats.db 拆分） | ⏳ **需 owner 决策**（双库迁移方案 + 配置 + 维护关联，行为敏感） | — |
-> | 遗留 D5（save_submissions 保留策略） | ⏳ **需 owner 决策**（截断会影响 RKS 历史接口语义；方案：每用户保留最近 N 条 + 历史窗口） | — |
+> | 遗留 D1（state.db/stats.db 拆分） | ⏳ **需 owner 决策**（ADR-0002 方案已备：表归属表 + 一次性迁移流程 + 配置项；推荐随端口收口后拆） | — |
+> | 遗留 D5（save_submissions 保留策略） | ✅ **机制已落地（opt-in，默认关闭=零行为变化）**：配置 `stats.save_submissions_retention_per_user`（0=不清理）+ 每日聚合循环清理 + 单测；**启用数值待 owner**（ADR-0003，建议 100） | 本页下方 ADR-0003 |
 >
 > 测试：241+ 全绿（103 root + impl-storage 28 + phi-contract 3 + 其余），每次提交 `cargo check --all-targets` = 0。
 
