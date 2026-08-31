@@ -30,7 +30,10 @@ ALLOW = {
     "impl-storage": ["phi-contract", "phi-http"],
     # RKS 引擎：纯计算，只认识契约（被渲染层与业务层共享）。
     "impl-rks": ["phi-contract"],
+    # 渲染实现：重 CPU 依赖隔离；认识契约/引擎/配置/错误面。
+    "impl-render": ["impl-rks", "phi-common", "phi-contract", "phi-http"],
     "phi-backend": [
+        "impl-render",
         "impl-rks",
         "impl-storage",
         "phi-common",
@@ -45,6 +48,7 @@ ALLOW_DEV = {
     "phi-common": [],
     "phi-contract": [],
     "phi-http": [],
+    "impl-render": [],
     "impl-rks": [],
     "impl-storage": [],
     "phi-save-codec": [],
