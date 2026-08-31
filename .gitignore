@@ -4,6 +4,7 @@
 # IDE和编辑器
 .vscode/
 .claude/
+.zcode/
 .idea/
 *.swp
 *.swo
