@@ -1,8 +1,8 @@
-use sqlx::{AssertSqlSafe, sqlite::SqliteRow};
+use sqlx::{AssertSqlSafe, Row, sqlite::SqliteRow};
 
 use crate::error::AppError;
 
-use super::{StatsStorage, UserAliasDefaults};
+use super::{LeaderboardDetailsRow, PublicProfileRow, StatsStorage, UserAliasDefaults};
 
 impl StatsStorage {
     pub async fn update_user_profile_visibility(
@@ -55,28 +55,59 @@ impl StatsStorage {
     pub async fn query_public_profile_by_alias(
         &self,
         alias: &str,
-    ) -> Result<Option<SqliteRow>, AppError> {
-        sqlx::query(
+    ) -> Result<Option<PublicProfileRow>, AppError> {
+        let row = sqlx::query(
             "SELECT up.user_hash, up.is_public, up.show_rks_composition, up.show_best_top3, up.show_ap_top3, lr.total_rks, lr.updated_at
              FROM user_profile up LEFT JOIN leaderboard_rks lr ON lr.user_hash=up.user_hash WHERE up.alias = ?",
         )
         .bind(alias)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Internal(format!("query public profile by alias: {e}")))
+        .map_err(|e| AppError::Internal(format!("query public profile by alias: {e}")))?;
+        Ok(row.map(Self::public_profile_row_from))
+    }
+
+    fn public_profile_row_from(r: SqliteRow) -> PublicProfileRow {
+        PublicProfileRow {
+            user_hash: r.try_get("user_hash").unwrap_or_default(),
+            is_public: r.try_get("is_public").unwrap_or(0),
+            show_rks_composition: r.try_get("show_rks_composition").unwrap_or(0),
+            show_best_top3: r.try_get("show_best_top3").unwrap_or(0),
+            show_ap_top3: r.try_get("show_ap_top3").unwrap_or(0),
+            total_rks: r.try_get("total_rks").unwrap_or(0.0),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+        }
     }
 
     pub async fn query_leaderboard_details_row(
         &self,
         user_hash: &str,
-    ) -> Result<Option<SqliteRow>, AppError> {
-        sqlx::query(
+    ) -> Result<Option<LeaderboardDetailsRow>, AppError> {
+        let row = sqlx::query(
             "SELECT rks_composition_json, best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash = ?",
         )
         .bind(user_hash)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Internal(format!("query leaderboard details row: {e}")))
+        .map_err(|e| AppError::Internal(format!("query leaderboard details row: {e}")))?;
+        Ok(row.map(Self::leaderboard_details_row_from))
+    }
+
+    fn leaderboard_details_row_from(r: SqliteRow) -> LeaderboardDetailsRow {
+        LeaderboardDetailsRow {
+            rks_composition_json: r
+                .try_get::<Option<String>, _>("rks_composition_json")
+                .ok()
+                .flatten(),
+            best_top3_json: r
+                .try_get::<Option<String>, _>("best_top3_json")
+                .ok()
+                .flatten(),
+            ap_top3_json: r
+                .try_get::<Option<String>, _>("ap_top3_json")
+                .ok()
+                .flatten(),
+        }
     }
 
     pub async fn ensure_default_public_profile(

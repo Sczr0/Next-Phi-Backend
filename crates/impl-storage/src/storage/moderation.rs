@@ -4,7 +4,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, sqlite::SqliteRow};
 
 use crate::error::AppError;
 
-use super::StatsStorage;
+use super::{AdminLeaderboardUserRow, ModerationStateFullRow, StatsStorage, SuspiciousRow};
 
 fn push_admin_status_filter(qb: &mut QueryBuilder<Sqlite>, status: &str) {
     if status.eq_ignore_ascii_case("active") {
@@ -53,8 +53,8 @@ impl StatsStorage {
         &self,
         min_score: f64,
         limit: i64,
-    ) -> Result<Vec<SqliteRow>, AppError> {
-        sqlx::query(
+    ) -> Result<Vec<SuspiciousRow>, AppError> {
+        let rows = sqlx::query(
             "SELECT lr.user_hash, lr.total_rks, lr.suspicion_score, lr.updated_at, up.alias
              FROM leaderboard_rks lr LEFT JOIN user_profile up ON up.user_hash=lr.user_hash
              WHERE lr.suspicion_score >= ?
@@ -65,7 +65,17 @@ impl StatsStorage {
         .bind(limit)
         .fetch_all(&self.pool)
         .await
-        .map_err(|e| AppError::Internal(format!("query suspicious rows: {e}")))
+        .map_err(|e| AppError::Internal(format!("query suspicious rows: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(|r| SuspiciousRow {
+                user_hash: r.try_get("user_hash").unwrap_or_default(),
+                alias: r.try_get("alias").ok(),
+                total_rks: r.try_get("total_rks").unwrap_or(0.0),
+                suspicion_score: r.try_get("suspicion_score").unwrap_or(0.0),
+                updated_at: r.try_get("updated_at").unwrap_or_default(),
+            })
+            .collect())
     }
 
     pub async fn query_admin_leaderboard_users_count(
@@ -115,7 +125,7 @@ impl StatsStorage {
         alias_like: Option<&str>,
         page_size: i64,
         offset: i64,
-    ) -> Result<Vec<SqliteRow>, AppError> {
+    ) -> Result<Vec<AdminLeaderboardUserRow>, AppError> {
         let mut qb = if let Some(status) = non_active_status_filter(status_filter) {
             let mut qb = QueryBuilder::<Sqlite>::new(
                 "SELECT
@@ -163,13 +173,28 @@ impl StatsStorage {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AppError::Internal(format!("admin users list: {e}")))
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|r| AdminLeaderboardUserRow {
+                        user_hash: r.try_get("user_hash").unwrap_or_default(),
+                        alias: r.try_get("alias").ok(),
+                        total_rks: r.try_get("total_rks").unwrap_or(0.0),
+                        suspicion_score: r.try_get("suspicion_score").unwrap_or(0.0),
+                        is_hidden: r.try_get("is_hidden").unwrap_or(0),
+                        status: r
+                            .try_get::<String, _>("status")
+                            .unwrap_or_else(|_| "active".to_string()),
+                        updated_at: r.try_get("updated_at").unwrap_or_default(),
+                    })
+                    .collect()
+            })
     }
 
     pub async fn query_user_moderation_state_full_row(
         &self,
         user_hash: &str,
-    ) -> Result<Option<SqliteRow>, AppError> {
-        sqlx::query(
+    ) -> Result<Option<ModerationStateFullRow>, AppError> {
+        let row = sqlx::query(
             "SELECT status, reason, updated_by, updated_at
              FROM user_moderation_state
              WHERE user_hash = ?
@@ -178,7 +203,13 @@ impl StatsStorage {
         .bind(user_hash)
         .fetch_optional(&self.pool)
         .await
-        .map_err(|e| AppError::Internal(format!("query user moderation full row: {e}")))
+        .map_err(|e| AppError::Internal(format!("query user moderation full row: {e}")))?;
+        Ok(row.map(|r| ModerationStateFullRow {
+            status: r.try_get("status").unwrap_or_else(|_| "active".to_string()),
+            reason: r.try_get("reason").unwrap_or(None),
+            updated_by: r.try_get("updated_by").unwrap_or(None),
+            updated_at: r.try_get("updated_at").unwrap_or(None),
+        }))
     }
 
     fn build_banned_detail(reason: Option<&str>) -> String {

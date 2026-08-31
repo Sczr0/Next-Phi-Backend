@@ -4,7 +4,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, sqlite::SqliteRow};
 
 use crate::error::AppError;
 
-use super::StatsStorage;
+use super::{LeaderboardTopRow, StatsStorage};
 
 const COUNT_PUBLIC_LEADERBOARD_TOTAL_SQL: &str = "SELECT COUNT(1) AS c
              FROM leaderboard_rks lr JOIN user_profile up ON up.user_hash=lr.user_hash AND up.is_public=1
@@ -71,8 +71,8 @@ impl StatsStorage {
         after_updated: &str,
         after_user: &str,
         limit: i64,
-    ) -> Result<Vec<SqliteRow>, AppError> {
-        sqlx::query(QUERY_LEADERBOARD_TOP_SEEK_SQL)
+    ) -> Result<Vec<LeaderboardTopRow>, AppError> {
+        let rows = sqlx::query(QUERY_LEADERBOARD_TOP_SEEK_SQL)
             .bind(after_score)
             .bind(after_score)
             .bind(after_updated)
@@ -81,28 +81,49 @@ impl StatsStorage {
             .bind(limit)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AppError::Internal(format!("query top seek: {e}")))
+            .map_err(|e| AppError::Internal(format!("query top seek: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(Self::leaderboard_top_row_from)
+            .collect())
     }
 
     pub async fn query_leaderboard_top_offset(
         &self,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<SqliteRow>, AppError> {
-        sqlx::query(QUERY_LEADERBOARD_TOP_OFFSET_SQL)
+    ) -> Result<Vec<LeaderboardTopRow>, AppError> {
+        let rows = sqlx::query(QUERY_LEADERBOARD_TOP_OFFSET_SQL)
             .bind(limit)
             .bind(offset)
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| AppError::Internal(format!("query top offset: {e}")))
+            .map_err(|e| AppError::Internal(format!("query top offset: {e}")))?;
+        Ok(rows
+            .into_iter()
+            .map(Self::leaderboard_top_row_from)
+            .collect())
     }
 
     pub async fn query_leaderboard_by_rank(
         &self,
         limit: i64,
         offset: i64,
-    ) -> Result<Vec<SqliteRow>, AppError> {
+    ) -> Result<Vec<LeaderboardTopRow>, AppError> {
         self.query_leaderboard_top_offset(limit, offset).await
+    }
+
+    /// 私有行映射：跨层泄露的终结——handler 不再看到 SqliteRow。
+    /// 解码默认值与历史 handler 侧一致（行为不变）。
+    fn leaderboard_top_row_from(r: SqliteRow) -> LeaderboardTopRow {
+        LeaderboardTopRow {
+            user_hash: r.try_get("user_hash").unwrap_or_default(),
+            alias: r.try_get("alias").ok(),
+            total_rks: r.try_get("total_rks").unwrap_or(0.0),
+            updated_at: r.try_get("updated_at").unwrap_or_default(),
+            sbt: r.try_get("sbt").unwrap_or(0),
+            sat: r.try_get("sat").unwrap_or(0),
+        }
     }
 
     pub async fn fetch_top3_details_for_users(

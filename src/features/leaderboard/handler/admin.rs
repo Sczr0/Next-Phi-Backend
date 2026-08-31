@@ -2,7 +2,6 @@ use crate::extract::{ValidatedJson, ValidatedQuery};
 use axum::http::HeaderMap;
 use axum::{extract::State, response::Json};
 use serde::{Deserialize, Serialize};
-use sqlx::Row;
 use std::collections::BTreeMap;
 
 use crate::{error::AppError, state::AppState};
@@ -165,11 +164,11 @@ pub async fn get_suspicious(
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
         out.push(SuspiciousItem {
-            user: mask_user_prefix(&r.get::<String, _>("user_hash")),
-            alias: r.try_get("alias").ok(),
-            score: r.try_get("total_rks").unwrap_or(0.0),
-            suspicion: r.try_get("suspicion_score").unwrap_or(0.0),
-            updated_at: r.try_get("updated_at").unwrap_or_default(),
+            user: mask_user_prefix(&r.user_hash),
+            alias: r.alias,
+            score: r.total_rks,
+            suspicion: r.suspicion_score,
+            updated_at: r.updated_at,
         });
     }
     Ok(Json(out))
@@ -249,17 +248,14 @@ pub async fn get_admin_leaderboard_users(
 
     let mut items = Vec::with_capacity(rows.len());
     for r in rows {
-        let is_hidden_i: i64 = r.try_get("is_hidden").unwrap_or(0);
         items.push(AdminLeaderboardUserItem {
-            user_hash: r.try_get("user_hash").unwrap_or_default(),
-            alias: r.try_get("alias").ok(),
-            score: r.try_get("total_rks").unwrap_or(0.0),
-            suspicion: r.try_get("suspicion_score").unwrap_or(0.0),
-            is_hidden: is_hidden_i != 0,
-            status: r
-                .try_get::<String, _>("status")
-                .unwrap_or_else(|_| "active".to_string()),
-            updated_at: r.try_get("updated_at").unwrap_or_default(),
+            user_hash: r.user_hash,
+            alias: r.alias,
+            score: r.total_rks,
+            suspicion: r.suspicion_score,
+            is_hidden: r.is_hidden != 0,
+            status: r.status,
+            updated_at: r.updated_at,
         });
     }
 
@@ -320,12 +316,10 @@ pub async fn get_admin_user_status(
     if let Some(r) = row {
         return Ok(Json(AdminUserStatusResponse {
             user_hash: q.user_hash,
-            status: r
-                .try_get::<String, _>("status")
-                .unwrap_or_else(|_| "active".to_string()),
-            reason: r.try_get("reason").unwrap_or(None),
-            updated_by: r.try_get("updated_by").unwrap_or(None),
-            updated_at: r.try_get("updated_at").unwrap_or(None),
+            status: r.status,
+            reason: r.reason,
+            updated_by: r.updated_by,
+            updated_at: r.updated_at,
         }));
     }
     Ok(Json(AdminUserStatusResponse {
