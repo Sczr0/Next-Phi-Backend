@@ -1,0 +1,41 @@
+[package]
+name = "impl-save"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0"
+
+# Phase 1：存档实现（获取/解密/解析/诊断）。领域专用上游适配器在此；
+# 通用上游（TapTap OAuth / 曲绘仓库 / GitHub）后续归 impl-upstream。
+# 依赖方向：impl-save -> [phi-common, phi-contract, phi-http, phi-save-codec]
+
+[dependencies]
+aes = "0.8"
+aes-gcm = "0.10"
+axum = "0.8.9"
+base64 = "0.22"
+cbc = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+cipher = "0.4"
+flate2 = "1.0"
+futures-util = "0.3"
+hex = "0.4"
+hmac = "0.12"
+once_cell = "1.20"
+pbkdf2 = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls-native-roots"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.10"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt", "time", "sync", "fs", "io-util", "macros"] }
+tracing = "0.1"
+utoipa = "5.5"
+zip = "2.2"
+# 内部 crate
+phi-common = { path = "../phi-common" }
+phi-contract = { path = "../phi-contract" }
+phi-http = { path = "../phi-http" }
+phi-save-codec = { path = "../phi-save-codec" }
+
+[lints]
+workspace = true
