@@ -1,0 +1,16 @@
+[package]
+name = "phi-contract"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0"
+
+[dependencies]
+# 红线（Charter §3.3）：只允许 std/轻量库。零 tokio、零 sqlx、零 reqwest、零渲染。
+serde = { version = "1.0", features = ["derive"] }
+# 例外（2026-09 记录）：utoipa 的 ToSchema 是编译期派生宏，无运行时依赖；
+# SongCandidatePreview 进入 ProblemDetails 的 OpenAPI schema，移除派生会改变
+# 对外文档（C1）。该例外随 Phase 2 契约定型时再评估迁移到独立 schema 层。
+utoipa = "5.5"
+
+[lints]
+workspace = true

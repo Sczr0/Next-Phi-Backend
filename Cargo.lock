@@ -2951,6 +2951,8 @@ dependencies = [
  "parquet",
  "pbkdf2",
  "phi-common",
+ "phi-contract",
+ "phi-http",
  "phi-save-codec",
  "png 0.17.16",
  "pprof",
@@ -2991,6 +2993,31 @@ dependencies = [
  "serde",
  "sha2 0.10.9",
  "tracing",
+]
+
+[[package]]
+name = "phi-contract"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "utoipa",
+]
+
+[[package]]
+name = "phi-http"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "phi-contract",
+ "phi-save-codec",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "utoipa",
+ "uuid",
+ "zip 2.4.2",
 ]
 
 [[package]]

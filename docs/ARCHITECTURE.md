@@ -68,6 +68,12 @@ impl-storage（SQLite，唯一 sqlx 所在） / impl-save / impl-render / impl-u
 
 ### 3.2 crate 结构（Phase 2 完成态）
 
+> **Phase 1 阶段性进度（2026-09）**：已物化 `phi-common`（config 纯类型）、
+> `phi-contract`（SongCandidatePreview 等对外契约类型）、`phi-http`
+> （AppError/ProblemDetails/request_id 中间件——**Phase 1 临时归属**，Phase 2
+> 组合根成型后并入 phi-server 网关层）。根 crate 的 `src/{config,error,request_id}.rs`
+> 与 `contracts/*`、`features/*/models` 均保留 re-export shim，调用点路径不变。
+
 ```
 Phi-Backend/
 ├── Cargo.toml                 # [workspace] + workspace.lints + workspace.dependencies
