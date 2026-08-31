@@ -7,6 +7,7 @@
 
 pub mod auth;
 pub mod chart;
+pub mod error;
 pub mod image;
 pub mod rks;
 pub mod save;
