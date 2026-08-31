@@ -135,7 +135,7 @@ impl StatsStorage {
             )
             .bind(i64::from(keep))
             .bind(batch_size)
-            .execute(&self.pool)
+            .execute(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("trim save_submissions: {e}")))?;
             let affected = i64::try_from(res.rows_affected()).unwrap_or(i64::MAX);
@@ -168,7 +168,7 @@ impl StatsStorage {
             .bind(details_json)
             .bind(suspicion_score)
             .bind(now_rfc3339)
-            .execute(&self.pool)
+            .execute(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("insert submission: {e}")))?;
         Ok(())
@@ -206,7 +206,7 @@ impl StatsStorage {
             let count_row =
                 sqlx::query("SELECT COUNT(1) as c FROM save_submissions WHERE user_hash = ?")
                     .bind(user_hash)
-                    .fetch_one(&self.pool)
+                    .fetch_one(&self.state_pool)
                     .await
                     .map_err(|e| AppError::Internal(format!("count rks history: {e}")))?;
             Ok::<i64, AppError>(count_row.try_get("c").unwrap_or(0))
@@ -228,7 +228,7 @@ impl StatsStorage {
                 .bind(&cursor.created_at)
                 .bind(cursor.id)
                 .bind(fetch_limit)
-                .fetch_all(&self.pool)
+                .fetch_all(&self.state_pool)
                 .await
                 .map_err(|e| AppError::Internal(format!("query rks history cursor: {e}")))
             } else {
@@ -243,7 +243,7 @@ impl StatsStorage {
                 .bind(user_hash)
                 .bind(fetch_limit)
                 .bind(offset)
-                .fetch_all(&self.pool)
+                .fetch_all(&self.state_pool)
                 .await
                 .map_err(|e| AppError::Internal(format!("query rks history: {e}")))
             }
@@ -268,7 +268,7 @@ impl StatsStorage {
     pub async fn get_peak_rks(&self, user_hash: &str) -> Result<f64, AppError> {
         let row = sqlx::query(PEAK_RKS_SQL)
             .bind(user_hash)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("get peak rks: {e}")))?;
 

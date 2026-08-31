@@ -120,9 +120,25 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
     if let Some(dir) = db_path.parent() {
         tokio::fs::create_dir_all(dir).await.ok();
     }
+    // D1（ADR-0002）：state_db_path 设置后双库连接；否则单文件兼容模式（历史行为）。
+    if let Some(state_path) = config.stats.state_db_path.as_deref() {
+        if let Some(dir) = PathBuf::from(state_path).parent() {
+            tokio::fs::create_dir_all(dir).await.ok();
+        }
+        tracing::info!(
+            "统计库: {} | 领域库(state.db): {}",
+            config.stats.sqlite_path,
+            state_path
+        );
+    }
 
     let storage = Arc::new(
-        StatsStorage::connect_sqlite(&config.stats.sqlite_path, config.stats.sqlite_wal).await?,
+        StatsStorage::connect_split(
+            &config.stats.sqlite_path,
+            config.stats.state_db_path.as_deref(),
+            config.stats.sqlite_wal,
+        )
+        .await?,
     );
     storage.init_schema().await?;
 

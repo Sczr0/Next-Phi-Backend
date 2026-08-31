@@ -9,7 +9,7 @@ impl StatsStorage {
         let row =
             sqlx::query("SELECT total_rks, updated_at FROM leaderboard_rks WHERE user_hash = ?")
                 .bind(user_hash)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&self.state_pool)
                 .await
                 .map_err(|e| AppError::Internal(format!("get prev rks: {e}")))?;
         if let Some(r) = row {
@@ -48,7 +48,7 @@ impl StatsStorage {
         .bind(is_hidden_i)
         .bind(now_rfc3339)
         .bind(now_rfc3339)
-        .execute(&self.pool)
+        .execute(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("upsert leaderboard: {e}")))?;
         Ok(())
@@ -63,7 +63,7 @@ impl StatsStorage {
         sqlx::query("UPDATE leaderboard_rks SET is_hidden=? WHERE user_hash=?")
             .bind(is_hidden_i)
             .bind(user_hash)
-            .execute(&self.pool)
+            .execute(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("update leaderboard hidden: {e}")))?;
         Ok(())
@@ -90,7 +90,7 @@ impl StatsStorage {
         .bind(best3_json)
         .bind(ap3_json)
         .bind(now_rfc3339)
-        .execute(&self.pool)
+        .execute(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("upsert details: {e}")))?;
         Ok(())

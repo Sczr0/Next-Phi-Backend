@@ -46,7 +46,7 @@ impl StatsStorage {
             q = q.bind(v);
         }
         q = q.bind(now_rfc3339).bind(user_hash);
-        q.execute(&self.pool)
+        q.execute(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("update profile visibility: {e}")))?;
         Ok(())
@@ -61,7 +61,7 @@ impl StatsStorage {
              FROM user_profile up LEFT JOIN leaderboard_rks lr ON lr.user_hash=up.user_hash WHERE up.alias = ?",
         )
         .bind(alias)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query public profile by alias: {e}")))?;
         Ok(row.map(Self::public_profile_row_from))
@@ -87,7 +87,7 @@ impl StatsStorage {
             "SELECT rks_composition_json, best_top3_json, ap_top3_json FROM leaderboard_details WHERE user_hash = ?",
         )
         .bind(user_hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query leaderboard details row: {e}")))?;
         Ok(row.map(Self::leaderboard_details_row_from))
@@ -134,7 +134,7 @@ impl StatsStorage {
         .bind(user_kind)
         .bind(now_rfc3339)
         .bind(now_rfc3339)
-        .execute(&self.pool)
+        .execute(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("ensure default public profile: {e}")))?;
         Ok(())
@@ -151,7 +151,7 @@ impl StatsStorage {
         .bind(user_hash)
         .bind(now_rfc3339)
         .bind(now_rfc3339)
-        .execute(&self.pool)
+        .execute(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("ensure user profile exists: {e}")))?;
         Ok(())
@@ -180,7 +180,7 @@ impl StatsStorage {
         .bind(Option::<String>::None)
         .bind(defaults.now_rfc3339)
         .bind(defaults.now_rfc3339)
-        .execute(&self.pool)
+        .execute(&self.state_pool)
         .await;
         match res {
             Ok(_) => Ok(()),

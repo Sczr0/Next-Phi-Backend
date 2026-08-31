@@ -1105,6 +1105,11 @@ pub struct StatsConfig {
     /// SQLite 文件路径
     #[serde(default = "StatsConfig::default_sqlite_path")]
     pub sqlite_path: String,
+    /// D1（ADR-0002）：领域库文件路径（leaderboard/资料/存档/封禁/会话 等 8 张表）。
+    /// None/空 = 单文件兼容模式（全部表在 sqlite_path，历史行为）；
+    /// 设置后分库（迁移前先运行 impl-storage 的 db_split 工具，切勿在未迁移的旧库上直接启用）。
+    #[serde(default, alias = "state-db-path", alias = "stateDbPath")]
+    pub state_db_path: Option<String>,
     /// 是否启用 WAL
     #[serde(default = "StatsConfig::default_sqlite_wal")]
     pub sqlite_wal: bool,
@@ -1175,6 +1180,7 @@ impl Default for StatsConfig {
             start_at: None,
             storage: Self::default_storage(),
             sqlite_path: Self::default_sqlite_path(),
+            state_db_path: None,
             sqlite_wal: true,
             batch_size: Self::default_batch_size(),
             flush_interval_ms: Self::default_flush_ms(),

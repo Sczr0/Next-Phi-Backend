@@ -265,5 +265,11 @@ pub struct RksHistoryPage {
 
 #[derive(Clone)]
 pub struct StatsStorage {
+    /// 统计库池：events + daily_* + stats_meta（高频 append + 聚合/归档）
     pub pool: SqlitePool,
+    /// 领域库池（D1/ADR-0002）：leaderboard_rks / leaderboard_details / user_profile /
+    /// save_submissions / session_token_blacklist / session_logout_gate /
+    /// user_moderation_state / moderation_flags
+    /// 单文件兼容模式下与 pool 指向同一文件。
+    pub state_pool: SqlitePool,
 }

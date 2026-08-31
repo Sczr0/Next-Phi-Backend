@@ -82,6 +82,10 @@ enabled = true
 storage = "sqlite"
 # SQLite 路径
 sqlite_path = "./resources/usage_stats.db"
+# D1 领域库路径（ADR-0002；双库模式：榜单/资料/存档/封禁/会话在 state_db，
+# events/聚合在 sqlite_path）。首次启用前请运行 db_split 迁移工具，切勿在未迁移的旧库上直接启用。
+# 留空（删除本行）= 单文件兼容模式。
+state_db_path = "./resources/state.db"
 # 启用 WAL
 sqlite_wal = true
 # 批量大小
@@ -90,6 +94,8 @@ batch_size = 100
 flush_interval_ms = 1000
 # 热数据保留天数
 retention_hot_days = 180
+# D5 保留策略（ADR-0003）：每用户保留最近提交条数；0=不清理。100 ≈ 约 3-5 年可回溯（低频玩家）。
+save_submissions_retention_per_user = 100
 # 每日聚合/归档时间（本地时区）
 daily_aggregate_time = "04:00"
 [stats.archive]
