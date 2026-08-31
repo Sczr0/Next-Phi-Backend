@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/phi-common",
     "crates/phi-save-codec",
 ]
 resolver = "3"
@@ -28,6 +29,7 @@ workspace = true
 
 [dependencies]
 # 内部 crate
+phi-common = { path = "crates/phi-common" }
 phi-save-codec = { path = "crates/phi-save-codec" }
 # 核心异步与服务框架
 tokio = { version = "1.41", features = ["full"] }

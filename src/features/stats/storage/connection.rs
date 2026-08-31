@@ -375,10 +375,12 @@ mod tests {
         let storage = build_storage(&path).await;
 
         // 造一行、删一行，制造可回收页面。
-        sqlx::query("INSERT INTO daily_user (date, user_hash, kind) VALUES ('2026-01-01', 'u1', 'save')")
-            .execute(&storage.pool)
-            .await
-            .expect("insert");
+        sqlx::query(
+            "INSERT INTO daily_user (date, user_hash, kind) VALUES ('2026-01-01', 'u1', 'save')",
+        )
+        .execute(&storage.pool)
+        .await
+        .expect("insert");
         sqlx::query("DELETE FROM daily_user WHERE date = '2026-01-01'")
             .execute(&storage.pool)
             .await

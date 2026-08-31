@@ -20,12 +20,14 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 # 内部 crate -> 允许的 normal 依赖（内部 crate 名）
 ALLOW = {
+    "phi-common": [],
     "phi-save-codec": [],
-    "phi-backend": ["phi-save-codec"],
+    "phi-backend": ["phi-common", "phi-save-codec"],
 }
 # 允许的 dev 依赖（内部 crate 名；如未来 impl-* -> phi-contract 的契约测试链）
 ALLOW_DEV = {
     "phi-backend": [],
+    "phi-common": [],
     "phi-save-codec": [],
 }
 

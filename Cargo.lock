@@ -2950,6 +2950,7 @@ dependencies = [
  "once_cell",
  "parquet",
  "pbkdf2",
+ "phi-common",
  "phi-save-codec",
  "png 0.17.16",
  "pprof",
@@ -2977,6 +2978,19 @@ dependencies = [
  "uuid",
  "webp",
  "zip 2.4.2",
+]
+
+[[package]]
+name = "phi-common"
+version = "0.1.0"
+dependencies = [
+ "config",
+ "ed25519-dalek",
+ "hex",
+ "once_cell",
+ "serde",
+ "sha2 0.10.9",
+ "tracing",
 ]
 
 [[package]]
