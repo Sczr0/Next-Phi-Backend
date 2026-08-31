@@ -283,6 +283,18 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
             if let Err(e) = agg_storage.vacuum_and_optimize().await {
                 tracing::warn!("统计库维护 (VACUUM/optimize) 失败: {e}");
             }
+            // D5（opt-in）：save_submissions 保留策略——每用户保留最近 N 条（配置 >0 才启用；
+            // 默认 0 = 不清理，零行为变化；影响 RKS 历史可回溯长度，见 ADR-0003）。
+            let keep = agg_cfg.save_submissions_retention_per_user;
+            if keep > 0 {
+                match agg_storage.trim_save_submissions_per_user(keep, 5000).await {
+                    Ok(n) if n > 0 => tracing::info!(
+                        "save_submissions 保留策略清理 {n} 条（每用户最近 {keep} 条）"
+                    ),
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("save_submissions 保留策略清理失败: {e}"),
+                }
+            }
         }
     });
 

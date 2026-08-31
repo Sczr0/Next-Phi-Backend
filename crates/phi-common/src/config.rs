@@ -1129,6 +1129,10 @@ pub struct StatsConfig {
     /// 每日聚合与归档时间（本地时区，如 "03:00"）
     #[serde(default = "StatsConfig::default_daily_time")]
     pub daily_aggregate_time: String,
+    /// D5 保留策略（opt-in）：每个用户保留的存档提交最近条数；0 = 不清理（默认）。
+    /// >0 时每日聚合循环内清理超限旧行（影响 RKS 历史接口可回溯长度，见 ADR-0003）。
+    #[serde(default = "StatsConfig::default_save_submissions_retention_per_user")]
+    pub save_submissions_retention_per_user: u32,
 }
 
 impl StatsConfig {
@@ -1159,6 +1163,9 @@ impl StatsConfig {
     fn default_daily_time() -> String {
         "03:00".to_string()
     }
+    const fn default_save_submissions_retention_per_user() -> u32 {
+        0
+    }
 }
 
 impl Default for StatsConfig {
@@ -1176,6 +1183,8 @@ impl Default for StatsConfig {
             user_hash_salt: None,
             timezone: Self::default_timezone(),
             daily_aggregate_time: Self::default_daily_time(),
+            save_submissions_retention_per_user: Self::default_save_submissions_retention_per_user(
+            ),
         }
     }
 }

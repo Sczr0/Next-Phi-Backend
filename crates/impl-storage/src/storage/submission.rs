@@ -13,12 +13,76 @@ const PEAK_RKS_SQL: &str = "SELECT total_rks as peak FROM save_submissions WHERE
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn peak_rks_query_uses_ordered_limit_instead_of_aggregate_scan() {
         let aggregate_fn = ["MAX", "("].concat();
         assert!(PEAK_RKS_SQL.contains("ORDER BY total_rks DESC LIMIT 1"));
         assert!(!PEAK_RKS_SQL.contains(&aggregate_fn));
+    }
+
+    /// D5 opt-in：每用户保留最近 N 条，更旧删除；keep=0 不清理。
+    #[tokio::test]
+    async fn trim_save_submissions_keeps_newest_per_user() {
+        let path = std::env::temp_dir().join(format!("phi_submission_trim_{}.db", Uuid::new_v4()));
+        let storage = StatsStorage::connect_sqlite(path.to_string_lossy().as_ref(), false)
+            .await
+            .expect("connect");
+        storage.init_schema().await.expect("schema");
+
+        for user in ["u1", "u2"] {
+            for i in 0..5 {
+                let created = format!("2026-01-0{}T00:00:00Z", i + 1);
+                sqlx::query(
+                    "INSERT INTO save_submissions (user_hash, total_rks, suspicion_score, created_at)
+                     VALUES (?, ?, 0.0, ?)",
+                )
+                .bind(user)
+                .bind(13.0 + f64::from(i))
+                .bind(created)
+                .execute(&storage.pool)
+                .await
+                .expect("seed");
+            }
+        }
+
+        // keep=0 -> 不清理
+        assert_eq!(
+            storage
+                .trim_save_submissions_per_user(0, 5000)
+                .await
+                .unwrap(),
+            0
+        );
+
+        // keep=2 -> 每用户保留最近 2 条（各删 3 条，共 6）
+        let deleted = storage
+            .trim_save_submissions_per_user(2, 5000)
+            .await
+            .expect("trim");
+        assert_eq!(deleted, 6);
+
+        for user in ["u1", "u2"] {
+            let count: i64 =
+                sqlx::query_scalar("SELECT COUNT(1) FROM save_submissions WHERE user_hash = ?")
+                    .bind(user)
+                    .fetch_one(&storage.pool)
+                    .await
+                    .expect("count");
+            assert_eq!(count, 2, "{user} 应保留 2 条");
+            // 保留的应是最新两条（i=4, i=3 -> created_at 2026-01-05/04）
+            let newest: String = sqlx::query_scalar(
+                "SELECT created_at FROM save_submissions WHERE user_hash = ? ORDER BY created_at DESC LIMIT 1",
+            )
+            .bind(user)
+            .fetch_one(&storage.pool)
+            .await
+            .expect("newest");
+            assert_eq!(newest, "2026-01-05T00:00:00Z");
+        }
+
+        let _ = std::fs::remove_file(&path);
     }
 }
 
@@ -40,6 +104,49 @@ fn row_to_rks_history_entry(row: sqlx::sqlite::SqliteRow) -> RksHistoryEntry {
 }
 
 impl StatsStorage {
+    /// D5 保留策略（opt-in，默认 0 不启用）：每个用户仅保留最近 `keep` 条
+    /// `save_submissions`，更旧的按 `(created_at DESC, id DESC)` 序删除。
+    ///
+    /// - 窗口函数 ROW_NUMBER() OVER (PARTITION BY user_hash ...) 要求 SQLite >= 3.25；
+    /// - 分批（内层 LIMIT）避免长事务锁写；返回累计删除行数；
+    /// - 影响：RKS 历史接口（/rks/history）可回溯长度收缩（见 ADR-0003）。
+    pub async fn trim_save_submissions_per_user(
+        &self,
+        keep: u32,
+        batch_size: i64,
+    ) -> Result<i64, AppError> {
+        if keep == 0 {
+            return Ok(0);
+        }
+        let mut total_deleted = 0i64;
+        loop {
+            let res = sqlx::query(
+                "DELETE FROM save_submissions WHERE id IN (
+                   SELECT id FROM (
+                     SELECT id,
+                            ROW_NUMBER() OVER (
+                              PARTITION BY user_hash
+                              ORDER BY created_at DESC, id DESC
+                            ) AS rn
+                     FROM save_submissions
+                   ) WHERE rn > ?
+                   LIMIT ?
+                 )",
+            )
+            .bind(i64::from(keep))
+            .bind(batch_size)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("trim save_submissions: {e}")))?;
+            let affected = i64::try_from(res.rows_affected()).unwrap_or(i64::MAX);
+            total_deleted += affected;
+            if affected < batch_size {
+                break;
+            }
+        }
+        Ok(total_deleted)
+    }
+
     pub async fn insert_submission(&self, record: SubmissionRecord<'_>) -> Result<(), AppError> {
         let SubmissionRecord {
             user_hash,
