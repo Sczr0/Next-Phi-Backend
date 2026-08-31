@@ -5,6 +5,7 @@ members = [
     "crates/impl-rks",
     "crates/impl-save",
     "crates/impl-storage",
+    "crates/impl-upstream",
     "crates/phi-common",
     "crates/phi-contract",
     "crates/phi-http",
@@ -39,6 +40,7 @@ impl-render = { path = "crates/impl-render" }
 impl-rks = { path = "crates/impl-rks" }
 impl-save = { path = "crates/impl-save" }
 impl-storage = { path = "crates/impl-storage" }
+impl-upstream = { path = "crates/impl-upstream" }
 phi-common = { path = "crates/phi-common" }
 phi-contract = { path = "crates/phi-contract" }
 phi-http = { path = "crates/phi-http" }

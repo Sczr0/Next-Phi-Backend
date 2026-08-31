@@ -5,6 +5,7 @@
 //! 定义从此处物化；根 crate 的 `contracts/*` 与 `features/*/models` 以
 //! re-export shim 保持原调用路径不变（Phase 1 纯搬迁，无行为变化）。
 
+pub mod auth;
 pub mod chart;
 pub mod image;
 pub mod rks;

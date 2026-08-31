@@ -1,0 +1,27 @@
+[package]
+name = "impl-upstream"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0"
+
+# Phase 1：出站上游客户端（v1 = TapTap OAuth / LeanCloud 登录客户端）。
+# 后续收口：GitHub OAuth、远端 info、曲绘仓库同步（依赖待解耦后迁入）。
+# 依赖方向：impl-upstream -> [phi-common, phi-contract, phi-http]
+
+[dependencies]
+base64 = "0.22"
+hmac = "0.12"
+rand = "0.8"
+reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls-native-roots"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha1 = "0.10"
+tokio = { version = "1", features = ["rt", "time", "sync", "macros"] }
+tracing = "0.1"
+# 内部 crate
+phi-common = { path = "../phi-common" }
+phi-contract = { path = "../phi-contract" }
+phi-http = { path = "../phi-http" }
+
+[lints]
+workspace = true

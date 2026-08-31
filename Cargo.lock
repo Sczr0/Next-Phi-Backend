@@ -2129,6 +2129,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "impl-upstream"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "hmac 0.12.1",
+ "phi-common",
+ "phi-contract",
+ "phi-http",
+ "rand 0.8.7",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha1 0.10.7",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3038,6 +3056,7 @@ dependencies = [
  "impl-rks",
  "impl-save",
  "impl-storage",
+ "impl-upstream",
  "jsonwebtoken",
  "lru",
  "md-5 0.10.6",
