@@ -27,10 +27,10 @@ jobs:
       with:
         shared-key: quality-gate-ubuntu
 
-    - name: 安装 Rust 工具链
-      uses: dtolnay/rust-toolchain@stable
+    - name: 安装 Rust 工具链（rust-toolchain.toml 钉死 1.98.0）
+      uses: dtolnay/rust-toolchain@1.98.0
       with:
-        toolchain: stable
+        toolchain: 1.98.0
         components: rustfmt, clippy
 
     - name: 检查格式
@@ -39,8 +39,17 @@ jobs:
     - name: 运行 Clippy
       run: cargo clippy --all-targets --all-features -- -D warnings -W clippy::pedantic
 
+    - name: 依赖方向检查（Charter §3.3）
+      run: python3 tools/check-deps.py
+
+    - name: ADR 编号连续性检查（Charter §7.6）
+      run: python3 tools/check-adr.py
+
     - name: 运行测试
       run: cargo test --all-targets --all-features
+
+    - name: 第三方依赖许可/漏洞审查（Charter §7.2）
+      uses: EmbarkStudios/cargo-deny-action@v2
 
   # 任务一：构建和创建发布产物（master / feat 分支触发编译）
   build-release:
@@ -85,10 +94,10 @@ jobs:
       with:
         shared-key: build-release-${{ runner.os }}-${{ matrix.target }}
       
-    - name: 安装 Rust 工具链
-      uses: dtolnay/rust-toolchain@stable
+    - name: 安装 Rust 工具链（rust-toolchain.toml 钉死 1.98.0）
+      uses: dtolnay/rust-toolchain@1.98.0
       with:
-        toolchain: stable
+        toolchain: 1.98.0
         targets: ${{ matrix.target }}
     
     # 使用预装好的 muslrust 容器进行 musl 构建，避免系统依赖问题
