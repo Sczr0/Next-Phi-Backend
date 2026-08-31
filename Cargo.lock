@@ -2036,6 +2036,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 
 [[package]]
+name = "impl-rks"
+version = "0.1.0"
+dependencies = [
+ "phi-contract",
+ "rand 0.8.7",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "utoipa",
+]
+
+[[package]]
 name = "impl-storage"
 version = "0.1.0"
 dependencies = [
@@ -2958,6 +2971,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "image",
+ "impl-rks",
  "impl-storage",
  "jsonwebtoken",
  "lru",
@@ -3018,6 +3032,7 @@ name = "phi-contract"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "phi-save-codec",
  "serde",
  "serde_json",
  "utoipa",
