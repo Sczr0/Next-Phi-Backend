@@ -1,0 +1,32 @@
+# 契约 crate 破坏性变更检测（Charter §7.3 第 6 道闸门——Phase 2 备案版）。
+# phi-contract 是全部端口的契约层：破坏性变更（枚举/方法签名）必须显式走 ADR + 主版本。
+# 说明（2026-09）：cargo-semver-checks 需要 baseline（发布版或 git 基线）；
+# phi-contract 尚未发布 crates.io 且 master 无该 crate——常规 push 无法正确比对，
+# 故本闸门为“手动触发备案”：在 feat 分支上手动运行，与上一次提交比对。
+# 一旦 phi-contract 正式发布（或 master 合入首版），将本工作流改为 PR 主闸门。
+name: semver-gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semver-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain (rust-toolchain.toml 钉死)
+        uses: dtolnay/rust-toolchain@1.98.0
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo-semver-checks (phi-contract, 基线 = HEAD~1)
+        uses: obi1kenobi/cargo-semver-checks-action@v2
+        with:
+          package: phi-contract
+          baseline-rev: HEAD~1

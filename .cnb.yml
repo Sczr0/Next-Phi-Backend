@@ -1,0 +1,46 @@
+# .cnb.yml — cnb.cool 云原生构建：构建 Docker 镜像并推送到 CNB Docker 制品库（国内直拉）。
+# 语法对照官方 zh/build/grammar.md；机制：services: [docker] 开启 dind + 自动注入
+# ${CNB_DOCKER_REGISTRY} / ${CNB_REPO_SLUG_LOWERCASE} / ${CNB_TOKEN_USER_NAME} / ${CNB_TOKEN}。
+#
+# 启用前提（cnb.cool 项目页一次性操作）：
+#   1. 开启"云原生构建"；
+#   2. 开启"Docker 制品库"，给当前用户/令牌授予该仓库写权限。
+# 之后任何 push 到 master 或打 tag 都会自动构建推送，无需手动。
+#
+# 产物：master push -> :latest 与 :nightly；tag（如 v1.0.0）-> :v1.0.0
+
+master:
+  push:
+    - name: build-and-push-latest
+      services:
+        - docker
+      env:
+        IMAGE: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
+      stages:
+        - name: docker login
+          script: docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
+        - name: build and push amd64
+          script: |
+            docker buildx build \
+              --platform linux/amd64 \
+              -t ${IMAGE}:latest \
+              -t ${IMAGE}:nightly \
+              --push .
+
+$:
+  tag_push:
+    - name: build-and-push-tag
+      services:
+        - docker
+      env:
+        IMAGE: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
+      stages:
+        - name: docker login
+          script: docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
+        - name: build and push amd64
+          script: |
+            TAG="${CNB_TAG:-latest}"
+            docker buildx build \
+              --platform linux/amd64 \
+              -t ${IMAGE}:${TAG} \
+              --push .
