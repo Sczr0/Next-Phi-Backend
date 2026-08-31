@@ -6,6 +6,7 @@
 //! Phase 2 时随 phi-server 网关层成形，最终并入组合根（Charter §3.7）。
 
 pub mod error;
+pub mod http;
 pub mod request_id;
 
 pub use error::{AppError, ProblemDetails, SaveProviderError, SearchError};

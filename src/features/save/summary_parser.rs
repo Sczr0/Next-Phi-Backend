@@ -1,3 +1,2 @@
-//! 存档摘要解析 — 委托给 phi-save-codec crate
-
-pub use phi_save_codec::{SummaryParsed, parse_summary_base64};
+//! 归档摘要解析 re-export（Phase 1 已迁至 impl-save）——shim 保持路径不变。
+pub use impl_save::summary_parser::*;

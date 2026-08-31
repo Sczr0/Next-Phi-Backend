@@ -32,9 +32,12 @@ ALLOW = {
     "impl-rks": ["phi-contract"],
     # 渲染实现：重 CPU 依赖隔离；认识契约/引擎/配置/错误面。
     "impl-render": ["impl-rks", "phi-common", "phi-contract", "phi-http"],
+    # 存档实现：获取/解密/解析/诊断；领域专用上游适配器在此。
+    "impl-save": ["phi-common", "phi-contract", "phi-http", "phi-save-codec"],
     "phi-backend": [
         "impl-render",
         "impl-rks",
+        "impl-save",
         "impl-storage",
         "phi-common",
         "phi-contract",
@@ -50,6 +53,7 @@ ALLOW_DEV = {
     "phi-http": [],
     "impl-render": [],
     "impl-rks": [],
+    "impl-save": [],
     "impl-storage": [],
     "phi-save-codec": [],
 }

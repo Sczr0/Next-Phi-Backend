@@ -3,6 +3,7 @@ members = [
     ".",
     "crates/impl-render",
     "crates/impl-rks",
+    "crates/impl-save",
     "crates/impl-storage",
     "crates/phi-common",
     "crates/phi-contract",
@@ -36,6 +37,7 @@ workspace = true
 # 内部 crate
 impl-render = { path = "crates/impl-render" }
 impl-rks = { path = "crates/impl-rks" }
+impl-save = { path = "crates/impl-save" }
 impl-storage = { path = "crates/impl-storage" }
 phi-common = { path = "crates/phi-common" }
 phi-contract = { path = "crates/phi-contract" }
