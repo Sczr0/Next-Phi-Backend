@@ -9,6 +9,7 @@ license = "AGPL-3.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2.0"
 # 例外（2026-09 记录）：Difficulty 的 From<phi_save_codec::Difficulty> 转换
 # 必须定义在本 crate（孤儿规则），故契约层单向依赖 codec crate（纯、零运行时）。
 phi-save-codec = { path = "../phi-save-codec" }

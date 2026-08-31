@@ -4,12 +4,9 @@
 //! 内部引用零修改：`crate::error` / `crate::models` 由本 crate 的 re-export 承托。
 //! 存储是"接口抽象（Phase 2）"之前的第一个可独立编译的实现 crate。
 
-/// 与根 crate 相同的错误面（AppError -> phi-http）；被迁移代码内 `crate::error::AppError`
-/// 由此解析，调用点零改动。
-pub mod error {
-    //! 错误 re-export（保持被迁移代码路径不变）。
-    pub use phi_http::error::*;
-}
+/// 错误面：re-export 承托被迁移代码的 `crate::error::AppError` 路径
+/// （phi-http），并持有领域存储错误（phi-contract）与 `map_sqlx` 转换点。
+pub mod error;
 
 /// 统计/存储领域模型（定义物化于 phi-contract）；被迁移代码内
 /// `super::super::models::EventInsert` 由此解析。
