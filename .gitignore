@@ -80,7 +80,6 @@ null
 # 锁文件（如需固定工作区可保留，此处忽略以减少噪音）
 # /sdk/ts/pnpm-lock.yaml
 
-*.md
-/docs/
+# docs/ 与 *.md 纳入版本控制（架构总纲领 / ADR / AGENTS.md 必须提交）
 2026-02-13
 phi-backend.exe
