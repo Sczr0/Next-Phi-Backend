@@ -34,11 +34,14 @@ ALLOW = {
     "impl-render": ["impl-rks", "phi-common", "phi-contract", "phi-http"],
     # 存档实现：获取/解密/解析/诊断；领域专用上游适配器在此。
     "impl-save": ["phi-common", "phi-contract", "phi-http", "phi-save-codec"],
+    # 出站上游客户端（v1：TapTap OAuth / LeanCloud）。
+    "impl-upstream": ["phi-common", "phi-contract", "phi-http"],
     "phi-backend": [
         "impl-render",
         "impl-rks",
         "impl-save",
         "impl-storage",
+        "impl-upstream",
         "phi-common",
         "phi-contract",
         "phi-http",
@@ -55,6 +58,7 @@ ALLOW_DEV = {
     "impl-rks": [],
     "impl-save": [],
     "impl-storage": [],
+    "impl-upstream": [],
     "phi-save-codec": [],
 }
 
