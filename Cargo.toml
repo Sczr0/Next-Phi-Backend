@@ -1,6 +1,7 @@
 [workspace]
 members = [
     ".",
+    "crates/impl-rks",
     "crates/impl-storage",
     "crates/phi-common",
     "crates/phi-contract",
@@ -32,6 +33,7 @@ workspace = true
 
 [dependencies]
 # 内部 crate
+impl-rks = { path = "crates/impl-rks" }
 impl-storage = { path = "crates/impl-storage" }
 phi-common = { path = "crates/phi-common" }
 phi-contract = { path = "crates/phi-contract" }

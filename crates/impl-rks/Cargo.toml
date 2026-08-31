@@ -1,0 +1,22 @@
+[package]
+name = "impl-rks"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0"
+
+# Phase 1：RKS 计算引擎（纯计算，无 IO/HTTP）。被渲染层（未来 impl-render）
+# 与业务层（rks/save handler）共享。依赖方向：impl-rks -> [phi-contract]
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+tracing = "0.1"
+utoipa = "5.5"
+phi-contract = { path = "../phi-contract" }
+
+[dev-dependencies]
+rand = "0.8"
+serde_json = "1.0"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[lints]
+workspace = true

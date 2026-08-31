@@ -2,22 +2,9 @@ use std::{collections::HashMap, fs, io::Read, path::Path};
 
 use crate::error::AppError;
 
-/// 单曲各难度定数
-#[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
-pub struct ChartConstants {
-    #[schema(example = 4.5)]
-    pub ez: Option<f32>,
-    #[schema(example = 7.9)]
-    pub hd: Option<f32>,
-    #[serde(rename = "in")]
-    #[schema(example = 9.6)]
-    pub in_level: Option<f32>,
-    #[schema(example = 12.3)]
-    pub at: Option<f32>,
-}
-
-/// 歌曲ID -> 定数映射
-pub type ChartConstantsMap = HashMap<String, ChartConstants>;
+// Phase 1 纯搬迁：ChartConstants/ChartConstantsMap 定义已物化到 phi-contract
+// （chart.rs）；此处 re-export 保持 crate::startup::chart_loader::ChartConstants 路径不变。
+pub use phi_contract::chart::{ChartConstants, ChartConstantsMap};
 
 /// 从 difficulty.csv 文件加载曲目定数映射
 pub fn load_chart_constants(file_path: &Path) -> Result<ChartConstantsMap, AppError> {

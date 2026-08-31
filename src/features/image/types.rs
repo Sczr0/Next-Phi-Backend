@@ -2,17 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::auth_contract::UnifiedSaveRequest;
 
-/// 渲染主题
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, utoipa::ToSchema, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-#[derive(Default)]
-pub enum Theme {
-    #[serde(alias = "white", alias = "WHITE")]
-    White,
-    #[serde(alias = "black", alias = "BLACK")]
-    #[default]
-    Black,
-}
+// Phase 1 纯搬迁：Theme 定义已物化到 phi-contract（image.rs）；
+// 此处 re-export 保持 crate::features::image::Theme 路径不变。
+pub use phi_contract::image::Theme;
 
 /// BN 渲染请求体
 #[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
