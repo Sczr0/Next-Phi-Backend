@@ -8,6 +8,25 @@
 
 ---
 
+> ## 执行记录（2026-09，feat 分支）
+>
+> | 项 | 状态 | 提交 |
+> |---|---|---|
+> | Phase 0 基建（toolchain/deny/AGENTS/CI 六闸门/phi-common） | ✅ | f50ba5e, 7fe5c89 |
+> | Phase 1 拆分（phi-contract/phi-http/impl-storage/rks/render/save/upstream + open_platform 存储并拢） | ✅ **完成** | 6626cc6…15ffb32 |
+> | 唯一 sqlx（运行时代码） | ✅ 达成（dev-deps 仅为金标准集成测试） | 15ffb32, b5ed370 |
+> | Phase 2 Step 1 StorageError | ✅ | d02427c |
+> | Phase 2 Step 2 端口首站（行类型收口） | ✅ | b5ed370 |
+> | Phase 2 Step 3 契约测试套件（fake + 真 SQLite 双验证） | ✅ | 0b79612 |
+> | Phase 2 Step 4 semver 闸门（备案版） | ♻️ | 896f638 |
+> | Docker 部署全套（镜像/compose/CNB/冒烟 CI/手册） | ✅ | 896f638 |
+> | 遗留 D1（state.db/stats.db 拆分） | ⏳ **需 owner 决策**（双库迁移方案 + 配置 + 维护关联，行为敏感） | — |
+> | 遗留 D5（save_submissions 保留策略） | ⏳ **需 owner 决策**（截断会影响 RKS 历史接口语义；方案：每用户保留最近 N 条 + 历史窗口） | — |
+>
+> 测试：241+ 全绿（103 root + impl-storage 28 + phi-contract 3 + 其余），每次提交 `cargo check --all-targets` = 0。
+
+---
+
 ## 1. 我们要做什么
 
 ### 1.1 项目一句话
