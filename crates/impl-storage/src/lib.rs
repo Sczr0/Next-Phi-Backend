@@ -19,4 +19,6 @@ pub mod storage;
 
 pub mod open_platform;
 
+pub mod repo;
+
 pub use storage::*;
