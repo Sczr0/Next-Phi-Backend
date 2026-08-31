@@ -1,3 +1,15 @@
+// 原根 crate lint 策略随迁移搬入（代码源自根包；与根 lib.rs 的 allow 列表一致）。
+#![allow(
+    clippy::similar_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::struct_excessive_bools,
+    clippy::items_after_statements,
+    clippy::module_name_repetitions
+)]
+
 //! impl-save：存档实现（Charter §3.2——存档：codec 解密 + 整理成领域模型）。
 //! Phase 1 纯搬迁 2026-09：client/provider/decryptor/parser/record_parser/
 //! summary_parser/inspector 自 features/save 迁入；handler（HTTP 编排）留根。
@@ -73,9 +85,9 @@ fn default_save_rks_blocking_parallelism() -> usize {
 /// `pub(crate) use` 链回，handler 调用点不变。
 #[must_use]
 pub fn save_decode_blocking_semaphore() -> &'static std::sync::Arc<tokio::sync::Semaphore> {
-    static SAVE_DECODE_BLOCKING_SEMAPHORE: once_cell::sync::Lazy<
+    static SAVE_DECODE_BLOCKING_SEMAPHORE: std::sync::LazyLock<
         std::sync::Arc<tokio::sync::Semaphore>,
-    > = once_cell::sync::Lazy::new(|| {
+    > = std::sync::LazyLock::new(|| {
         std::sync::Arc::new(tokio::sync::Semaphore::new(
             default_save_decode_blocking_parallelism(),
         ))
@@ -86,9 +98,9 @@ pub fn save_decode_blocking_semaphore() -> &'static std::sync::Arc<tokio::sync::
 /// RKS 计算阶段并发信号量。
 #[must_use]
 pub fn save_rks_blocking_semaphore() -> &'static std::sync::Arc<tokio::sync::Semaphore> {
-    static SAVE_RKS_BLOCKING_SEMAPHORE: once_cell::sync::Lazy<
+    static SAVE_RKS_BLOCKING_SEMAPHORE: std::sync::LazyLock<
         std::sync::Arc<tokio::sync::Semaphore>,
-    > = once_cell::sync::Lazy::new(|| {
+    > = std::sync::LazyLock::new(|| {
         std::sync::Arc::new(tokio::sync::Semaphore::new(
             default_save_rks_blocking_parallelism(),
         ))

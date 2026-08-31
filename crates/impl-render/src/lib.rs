@@ -1,3 +1,15 @@
+// 原根 crate lint 策略随迁移搬入（代码源自根包；与根 lib.rs 的 allow 列表一致）。
+#![allow(
+    clippy::similar_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::struct_excessive_bools,
+    clippy::items_after_statements,
+    clippy::module_name_repetitions
+)]
+
 //! impl-render：渲染实现（Phase 1 纯搬迁自 features/image/renderer.rs + renderer/，
 //! 2026-09）。SVG 模板（minijinja）+ resvg 光栅化 —— 重 CPU 依赖全在此 crate，
 //! 是"重依赖隔离"（Charter §3.2）的首次兑现。

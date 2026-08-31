@@ -1,3 +1,15 @@
+// 原根 crate lint 策略随迁移搬入（代码源自根包；与根 lib.rs 的 allow 列表一致）。
+#![allow(
+    clippy::similar_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::struct_excessive_bools,
+    clippy::items_after_statements,
+    clippy::module_name_repetitions
+)]
+
 //! impl-storage：存储实现（Charter §3.2——SQLite 唯一所在，收拢 SQL/池/DDL/索引/VACUUM）。
 //!
 //! Phase 1 从根 crate 纯搬迁（原 `src/features/stats/storage.rs` + `storage/` 整棵子树），
@@ -10,8 +22,9 @@ pub mod error;
 
 /// 统计/存储领域模型（定义物化于 phi-contract）；被迁移代码内
 /// `super::super::models::EventInsert` 由此解析。
+///
+/// 注：模块内不再使用内联文档（内/外文档属性不可同置，见 rustc 规则）。
 pub mod models {
-    //! 存储模型 re-export。
     pub use phi_contract::stats::*;
 }
 

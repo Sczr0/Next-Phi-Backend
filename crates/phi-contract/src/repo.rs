@@ -78,6 +78,10 @@ pub trait LeaderboardRepo: Send + Sync {
 /// | hidden    | 16.0      | 0.80      | 0         | hidden-u | (NULL)   | 0   |
 /// | banned    | 12.0      | 0.90      | 0         | banned-u | banned   | 0   |
 /// 公开榜 total = 3（apple/orange/pear）。
+///
+/// # Errors
+/// 首个违反契约语义的断言即返回 `Err(String)`（含断言说明，便于定位失败实现）。
+#[allow(clippy::too_many_lines)] // 断言密集型契约套件：分段注释即结构，拆分会破坏可读性
 pub async fn leaderboard_repo_contract_suite<R: LeaderboardRepo>(repo: &R) -> Result<(), String> {
     // 1. 公开榜计数
     let total = repo.count_public_total().await.map_err(|e| e.to_string())?;
@@ -113,7 +117,9 @@ pub async fn leaderboard_repo_contract_suite<R: LeaderboardRepo>(repo: &R) -> Re
     }
 
     // 5. seek：以上页末行作游标 -> 严格继续（无重复、顺序正确）
-    let last = top.last().expect("top 非空");
+    let Some(last) = top.last() else {
+        return Err("top 非空（seed 契约保证 3 条公开记录）".into());
+    };
     let seek = repo
         .top_seek(last.total_rks, &last.updated_at, &last.user_hash, 10)
         .await
@@ -141,10 +147,9 @@ pub async fn leaderboard_repo_contract_suite<R: LeaderboardRepo>(repo: &R) -> Re
         .public_profile_by_alias("hidden-u")
         .await
         .map_err(|e| e.to_string())?
+        && h.is_public != 0
     {
-        if h.is_public != 0 {
-            return Err("隐藏用户应 is_public=0（由读方判定 404）".into());
-        }
+        return Err("隐藏用户应 is_public=0（由读方判定 404）".into());
     }
 
     // 7. 排行详情

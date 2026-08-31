@@ -84,7 +84,7 @@ impl StatsStorage {
             .map_err(|e| AppError::Internal(format!("query top seek: {e}")))?;
         Ok(rows
             .into_iter()
-            .map(Self::leaderboard_top_row_from)
+            .map(|r| Self::leaderboard_top_row_from(&r))
             .collect())
     }
 
@@ -101,7 +101,7 @@ impl StatsStorage {
             .map_err(|e| AppError::Internal(format!("query top offset: {e}")))?;
         Ok(rows
             .into_iter()
-            .map(Self::leaderboard_top_row_from)
+            .map(|r| Self::leaderboard_top_row_from(&r))
             .collect())
     }
 
@@ -115,7 +115,7 @@ impl StatsStorage {
 
     /// 私有行映射：跨层泄露的终结——handler 不再看到 SqliteRow。
     /// 解码默认值与历史 handler 侧一致（行为不变）。
-    fn leaderboard_top_row_from(r: SqliteRow) -> LeaderboardTopRow {
+    fn leaderboard_top_row_from(r: &SqliteRow) -> LeaderboardTopRow {
         LeaderboardTopRow {
             user_hash: r.try_get("user_hash").unwrap_or_default(),
             alias: r.try_get("alias").ok(),

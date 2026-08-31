@@ -1,3 +1,15 @@
+// 原根 crate lint 策略随迁移搬入（代码源自根包；与根 lib.rs 的 allow 列表一致）。
+#![allow(
+    clippy::similar_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::struct_excessive_bools,
+    clippy::items_after_statements,
+    clippy::module_name_repetitions
+)]
+
 //! impl-rks：RKS 计算引擎实现（Phase 1 纯搬迁自 features/rks/engine.rs，
 //! 2026-09）。引擎是纯计算（无 IO/无 HTTP），被渲染层（未来 impl-render）
 //! 与业务层（rks/save handler）共享——是"薄缝"的天然候选（Phase 2 定 trait）。

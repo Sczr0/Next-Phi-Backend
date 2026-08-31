@@ -15,7 +15,7 @@ pub use phi_http::error::*;
 /// - 业务层不可见 sqlx——本函数是 impl 侧适配器，不是 `From` 实现
 ///   （孤儿规则禁止，且 `#[from]` 会把 sqlx 依赖拉进契约层）。
 #[must_use]
-pub fn map_sqlx(ctx: &str, e: sqlx::Error) -> StorageError {
+pub fn map_sqlx(ctx: &str, e: &sqlx::Error) -> StorageError {
     tracing::warn!(ctx, error = %e, "storage error");
     StorageError::Internal(format!("{ctx}: {e}"))
 }
@@ -27,7 +27,7 @@ mod tests {
     #[test]
     fn map_sqlx_preserves_context_in_domain_error() {
         // sqlx::Error::RowNotFound：构造一个真实 sqlx 错误（不做 From，走函数）。
-        let err = map_sqlx("leaderboard.top", sqlx::Error::RowNotFound);
+        let err = map_sqlx("leaderboard.top", &sqlx::Error::RowNotFound);
         assert_eq!(
             err,
             StorageError::Internal(format!("leaderboard.top: {}", sqlx::Error::RowNotFound))

@@ -94,7 +94,7 @@ async fn build_leaderboard_items(
     } else {
         let mut detail_users: Vec<String> = Vec::new();
         for r in &rows {
-            if (r.sbt != 0 || r.sat != 0) {
+            if r.sbt != 0 || r.sat != 0 {
                 detail_users.push(r.user_hash.clone());
             }
         }

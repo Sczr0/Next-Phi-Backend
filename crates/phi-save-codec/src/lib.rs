@@ -1,3 +1,15 @@
+// 原根 crate lint 策略随迁移搬入（代码源自根包；与根 lib.rs 的 allow 列表一致）。
+#![allow(
+    clippy::similar_names,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::too_many_lines,
+    clippy::doc_markdown,
+    clippy::struct_excessive_bools,
+    clippy::items_after_statements,
+    clippy::module_name_repetitions
+)]
+
 //! phi-save-codec: Phigros Cloud Save Binary Format Codec
 //!
 //! 提供 Phigros 存档二进制格式的解析能力，不依赖异步运行时。
