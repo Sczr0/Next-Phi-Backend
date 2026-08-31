@@ -22,12 +22,18 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 ALLOW = {
     "phi-common": [],
     "phi-save-codec": [],
-    "phi-backend": ["phi-common", "phi-save-codec"],
+    "phi-contract": [],
+    # Phase 1 临时：phi-http 位于根 crate 与契约之间（AppError 的 CodecError 映射）。
+    # Phase 2 组合根成型后并入 phi-server 网关层。
+    "phi-http": ["phi-contract", "phi-save-codec"],
+    "phi-backend": ["phi-common", "phi-contract", "phi-http", "phi-save-codec"],
 }
 # 允许的 dev 依赖（内部 crate 名；如未来 impl-* -> phi-contract 的契约测试链）
 ALLOW_DEV = {
     "phi-backend": [],
     "phi-common": [],
+    "phi-contract": [],
+    "phi-http": [],
     "phi-save-codec": [],
 }
 

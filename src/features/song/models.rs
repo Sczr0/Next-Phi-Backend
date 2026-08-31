@@ -5,6 +5,10 @@ use std::{
 
 use crate::startup::chart_loader::ChartConstants;
 
+// Phase 1 纯搬迁：SongCandidatePreview 定义已随契约层物化到 phi-contract
+// （AppError/ProblemDetails 的候选预览与业务层共享该类型）。
+pub use phi_contract::song::SongCandidatePreview;
+
 pub(crate) fn normalize_song_search_text(input: &str) -> String {
     input
         .chars()
@@ -31,14 +35,6 @@ pub struct SongInfo {
     pub illustrator: String,
     /// 四难度定数（可为空）
     pub chart_constants: ChartConstants,
-}
-
-/// 搜索候选预览（用于歧义查询时的提示）。
-#[derive(Debug, Clone, utoipa::ToSchema, serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SongCandidatePreview {
-    pub id: String,
-    pub name: String,
 }
 
 /// 歌曲目录内存索引
