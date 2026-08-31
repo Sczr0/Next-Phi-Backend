@@ -1,0 +1,41 @@
+# cargo-deny：第三方依赖许可证 / 安全通告审查（Charter §7.2，CI 第 5 道闸门）。
+# 允许清单依据当前依赖树采集（2026-09，cargo registry 本地缓存全量枚举）；
+# 新增依赖若不在清单内 -> CI 红，先评估再放行（放行必须附注释理由）。
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = [
+    # ── 宽松许可（当前依赖树实际使用）──
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "0BSD",
+    "Unlicense",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "CDDL-1.0",          # 依赖树中实际出现（如 libwebp-sys 家族）
+    "MPL-2.0",           # resvg/usvg/skrifa/tiny-skia 等 Mozilla 系
+    "NCSA",              # MIT-0/NCSA 变体描述
+    "Unicode-3.0",       # unicode-* 数据
+    # ── 工作区自身许可 ──
+    "AGPL-3.0-only",
+    "AGPL-3.0",
+]
+
+[bans]
+# 同 crate 多版本警告而非禁止（如 bitflags/rand/hashbrown 生态常见）；
+# 引发实际矛盾时再收紧为 deny 并记录理由。
+multiple-versions = "warn"
+
+[sources]
+# 当前无 git/路径外依赖；未来若引入 git 依赖（如协议 SDK），须在此白名单登记。
+# allow-git = ["https://github.com/..."]

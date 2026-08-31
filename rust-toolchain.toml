@@ -1,0 +1,6 @@
+# 钉死工具链版本（可复现构建，Charter §7.1）。
+# 与 CI（dtolnay/rust-toolchain@1.98.0）一致；升级需另立 ADR。
+[toolchain]
+channel = "1.98.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
