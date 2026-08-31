@@ -1,7 +1,7 @@
-# ADR-0002：state.db / stats.db 拆分方案（D1——待 owner 决策后实施）
+# ADR-0002：state.db / stats.db 拆分方案（D1——已接受并实施）
 
 - 日期：2026-09
-- 状态：草案（方案已定，**待 owner 拍板后实施**）
+- 状态：**已接受并实施**（2026-09：双池 + DDL 分组 + db_split 迁移工具 + 表集互斥断言落地）
 - 相关章节：docs/ARCHITECTURE.md §6（D1）、§5（迁移流程）
 
 ## 背景
@@ -47,6 +47,14 @@ impl-storage 内按表归属迁移 DDL 与查询方法——**这是一个纯内
 
 ## 待 owner 确认
 
-1. 按本方案拆，还是等 Phase 3（handler 切端口后）再拆？（**推荐**：随 Phase 2
-   端口收口后拆——表归属与读取方法已按域归位，拆库=只动池装配，风险最小）
-2. 迁移窗口与备份目录约定（建议 `resources/_bak_<日期>/`）。
+1. ~~按本方案拆，还是等 Phase 3（handler 切端口后）再拆？~~ —— **已决策：方案 A（现在拆，2026-09）**
+2. ~~迁移窗口与备份目录约定~~ —— 迁移工具自带 `<usage_stats.db>.bak-<ts>` 快照；窗口在维护窗执行（工具使用见部署手册 §5）。
+
+## 实施注记（2026-09）
+
+- 实现：`StatsStorage` 双池（`pool`=统计库，`state_pool`=领域库）；`connect_sqlite`（单文件兼容/测试）与
+  `connect_split(path, state_path, wal)`（双库）；`init_schema` DDL 按表集分组执行；领域表方法路由至 `state_pool`。
+- 迁移工具：`cargo run -p impl-storage --bin db_split -- <usage_stats.db> <state.db>`（备份→拷贝→删表→
+  VACUUM→integrity_check→**表集互斥断言**；目标是防止"漏删/多删"这类错误在线上悄悄发生）。
+- 配置：`stats.state_db_path`（None/空=单文件兼容；设置后双库）。
+- 验证：双库放置测试（表各自落位、互斥）+ db_split 逻辑测试 + 全部金标准测试。

@@ -1,6 +1,6 @@
-# ISSUE-0002：D5 save_submissions 保留策略——启用数值待 owner
+# ISSUE-0002：D5 save_submissions 保留策略——已解决
 
-- 状态：待解决（机制已落地，见 ADR-0003）
+- 状态：**已解决**（2026-09：机制落地 + owner 拍板启用值 100；config.example 已设 `save_submissions_retention_per_user = 100`）
 - 发现日期：2026-09
 - 发现方式：架构评审（§6 D5：`save_submissions` 非时间序列、无归档，随玩家持续增长）
 - 严重级：中

@@ -52,6 +52,22 @@ docker pull <CNB_DOCKER_REGISTRY>/<CNB_REPO_SLUG_LOWERCASE>:latest
 
 启用前提与产物地址说明见 `.cnb.yml` 头注。
 
+## 5b. 双库拆分迁移（D1/ADR-0002——一次性的维护窗操作）
+
+`state_db_path` 已默认写入 config.example.toml。**首次启用（或从旧单库升级）时必须先执行迁移**：
+
+```bash
+# 1) 停止服务（维护窗）
+# 2) 执行拆分工具（旧库自动备份为 <usage_stats.db>.bak-<ts>）
+cargo run -p impl-storage --bin db_split -- ./resources/usage_stats.db ./resources/state.db
+# 3) 启动服务（config.toml [stats] state_db_path = "./resources/state.db" 已生效）
+```
+
+工具含 **表集互斥断言**（两库各自恰好包含预期表集，任何漏删/多删立即失败并保留快照）+
+`VACUUM` + `integrity_check`。回滚：恢复 `.bak-<ts>` + 旧二进制（秒级）。
+注：`export` 单文件模式（删除 `state_db_path` 配置）仍向后兼容——未迁移的旧库直接跑双库配置会
+因断言缺失表而失败（安全失败，不会静默产生混合库）。
+
 ## 6. CI 冒烟验证
 
 `.github/workflows/docker-build.yml`：push 触碰构建面（Dockerfile/crates/Cargo.lock/config.example/工作流）时，
