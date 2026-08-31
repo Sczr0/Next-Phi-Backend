@@ -146,9 +146,9 @@ mod tests {
         feature: &str,
         action: &str,
         instance: &str,
-    ) -> crate::features::stats::models::EventInsert {
+    ) -> crate::models::EventInsert {
         use std::borrow::Cow;
-        crate::features::stats::models::EventInsert {
+        crate::models::EventInsert {
             ts_utc: ts,
             route: None,
             feature: Some(feature.to_string()),
@@ -305,7 +305,7 @@ mod tests {
         let d1 = today - chrono::Duration::days(2);
         let d2 = today - chrono::Duration::days(1);
 
-        let make_evt = |day: NaiveDate, user: &str| crate::features::stats::models::EventInsert {
+        let make_evt = |day: NaiveDate, user: &str| crate::models::EventInsert {
             ts_utc: sh
                 .from_local_datetime(&NaiveDateTime::new(
                     day,

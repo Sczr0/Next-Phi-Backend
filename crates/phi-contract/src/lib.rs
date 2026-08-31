@@ -6,3 +6,4 @@
 //! re-export shim 保持原调用路径不变（Phase 1 纯搬迁，无行为变化）。
 
 pub mod song;
+pub mod stats;

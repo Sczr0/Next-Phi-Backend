@@ -2036,6 +2036,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 
 [[package]]
+name = "impl-storage"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "futures-util",
+ "phi-contract",
+ "phi-http",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2941,6 +2958,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "image",
+ "impl-storage",
  "jsonwebtoken",
  "lru",
  "md-5 0.10.6",
@@ -2999,7 +3017,9 @@ dependencies = [
 name = "phi-contract"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "serde",
+ "serde_json",
  "utoipa",
 ]
 

@@ -307,10 +307,10 @@ mod tests {
         ip: Option<&str>,
         instance: Option<&str>,
         kind: Option<&str>,
-    ) -> crate::features::stats::models::EventInsert {
+    ) -> crate::models::EventInsert {
         use std::borrow::Cow;
         let extra_json = kind.map(|k| serde_json::json!({"user_kind": k}));
-        crate::features::stats::models::EventInsert {
+        crate::models::EventInsert {
             ts_utc: ts,
             route: route.map(String::from),
             feature: feature.map(String::from),
