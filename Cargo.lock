@@ -2036,6 +2036,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "89194689a993ab15268672e99e7b0e19da2da3268ac682e8f02d29d4d1434cd7"
 
 [[package]]
+name = "impl-render"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "ed25519-dalek",
+ "hex",
+ "hmac 0.12.1",
+ "image",
+ "impl-rks",
+ "lru",
+ "md-5 0.10.6",
+ "minijinja",
+ "once_cell",
+ "phi-common",
+ "phi-contract",
+ "phi-http",
+ "png 0.17.16",
+ "rand 0.8.7",
+ "resvg",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+ "tracing",
+ "unicode-width",
+ "uuid",
+ "webp",
+]
+
+[[package]]
 name = "impl-rks"
 version = "0.1.0"
 dependencies = [
@@ -2971,6 +3002,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "image",
+ "impl-render",
  "impl-rks",
  "impl-storage",
  "jsonwebtoken",

@@ -1,3 +1,5 @@
+// Phase 1 纯搬迁：cover_loader/signing 定义已迁至 impl-render；
+// 此处保留声明 + 同名 shim 文件（handler 内以 super::/crate::features::image:: 引用）。
 mod cover_loader;
 pub mod handler;
 mod renderer;

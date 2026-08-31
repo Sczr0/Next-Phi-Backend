@@ -13,6 +13,12 @@ use std::sync::OnceLock;
 fn ensure_config_inited() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(|| {
+        // 测试进程 cwd 随 `cargo test -p impl-render` / IDE 而变化（crate 目录），
+        // 而配置回退链（config.toml → config.example.toml）与相对资源路径
+        // （resources/templates/...）都以仓库根为基准——恢复仓库根 cwd，
+        // 与搬迁前（模块在根包内，cwd=仓库根）的语义完全一致。
+        let repo_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let _ = std::env::set_current_dir(&repo_root);
         // 注意：全局配置只允许初始化一次；为避免与其它测试（如管理员令牌测试）发生顺序依赖，
         // 在这里提前设置一个确定的默认管理员令牌集合。
         unsafe {
