@@ -43,14 +43,16 @@ Phigros 社区后端（Rust 2024 + axum + SQLite），提供存档解析、B27 �
 ## 测试
 
 ```bash
-cargo test --lib          # 单元测试（237 个，含统计存储）
-cargo test                # 全量（本机 bins/examples 链接受 IDE 文件锁影响时，用 --lib + --all-targets 交叉验证）
-cargo check --all-targets # 编译全目标（不链接，绕开本机锁）
+cargo test --workspace --lib  # 全部单测（各 crate 分别聚合统计）
+cargo check --all-targets     # 编译全目标（不链接，绕开本机 IDE 文件锁）
+cargo fmt --all -- --check    # 格式化
 ```
 
 - **金标准**：`tests/api_contract_v2.rs`、`auth_contract_v2.rs`、`song_search_controls.rs`、`leaderboard_*`、`b27_performance_test.rs` 等**不许改**（行为回归网）。
-- 新功能必须带测试；存储/统计改动优先挂临时库测试（见 `connection.rs` 的 `vacuum_and_optimize_runs_on_temp_db` 模式）。
-- 契约测试套件（未来）：`phi-contract` 泛型套件，fake 与实现都必须通过。
+- **契约测试**（Phase 2 起，权威）：`phi-contract::repo::leaderboard_repo_contract_suite`——**任何实现（fake / SQLite / 未来替换）必须通过**；新增实现 crate 时同步跑同一套件。
+- **错误规约**：impl 层新代码一律 `StorageError`（NotFound/Duplicate/ConnectionFailed/Internal）+ `map_sqlx` 转换；禁止把 sqlx/reqwest 错误直接冒出（孤儿规则见 phi-contract/src/error.rs）。
+- 新功能必须带测试；存储/统计改动优先挂临时库测试（见 `connection.rs` 的 `vacuum_and_optimize_runs_on_temp_db` 与 `submission.rs` 的 D5 测试模式）。
+- **D5 保留策略**：`trim_save_submissions_per_user` 是 opt-in（配置 >0 才清理，默认关闭）；改它之前先读 ADR-0003。
 
 ## 常用命令
 
