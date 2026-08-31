@@ -89,6 +89,9 @@ uuid = { version = "1", features = ["v4", "v7", "fast-rng"] }
 gethostname = "0.4"
 
 # SQLite 持久化
+# Phase 1 注：statst 与开放平台存储已沉降到 impl-storage；根仍保留 sqlx ——
+# leaderboard/handler 现存 ad-hoc 直连查询（admin/ranking/profile），
+# 待 Phase 2 随端口中收（收敛后本依赖即可移除）。
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "json"] }
 
 # Parquet 导出

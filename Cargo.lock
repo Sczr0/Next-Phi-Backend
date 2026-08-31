@@ -2118,6 +2118,7 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "futures-util",
+ "once_cell",
  "phi-contract",
  "phi-http",
  "serde",

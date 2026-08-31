@@ -20,4 +20,6 @@ pub mod models {
 
 pub mod storage;
 
+pub mod open_platform;
+
 pub use storage::*;
