@@ -2115,6 +2115,7 @@ dependencies = [
 name = "impl-storage"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "chrono-tz",
  "futures-util",
@@ -3116,11 +3117,13 @@ dependencies = [
 name = "phi-contract"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "phi-save-codec",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
+ "tokio",
  "utoipa",
 ]
 
