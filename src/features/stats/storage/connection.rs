@@ -17,7 +17,11 @@ impl StatsStorage {
             .busy_timeout(Duration::from_secs(5))
             .foreign_keys(true)
             .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
-            .log_statements(tracing::log::LevelFilter::Off);
+            .log_statements(tracing::log::LevelFilter::Off)
+            // D4: 新库直接使用增量自省（auto_vacuum=incremental），删除行后文件可回收；
+            // 既有库需在首次 VACUUM（日常维护，见 StatsStorage::vacuum_and_optimize）后生效——
+            // 增量模式无法单独从页面计数"重建"，必须配合一次 VACUUM 完成转换（SQLite 官方语义）。
+            .pragma("auto_vacuum", "incremental");
         if wal {
             opt = opt.journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
         }
@@ -94,12 +98,19 @@ impl StatsStorage {
         -- SELECT DISTINCT user_hash 走有序索引扫描（免 TEMP B-TREE 排序），
         -- 大区间（180 天）查询在低内存环境下差异可达数十秒。
         CREATE INDEX IF NOT EXISTS idx_daily_user_hash ON daily_user(user_hash);
+        -- D2: 日期区间复合索引。summary 快路径的 DAU 查询是
+        --   date BETWEEN ? AND ? + DISTINCT user_hash —— user-leading 索引覆盖不了
+        --   日期区间过滤，日期拉大时退化为近似全表扫；按 date 前导的复合索引让
+        --   区间过滤 + 去重都走索引（180 天区间是该查询的主要成本来源）。
+        CREATE INDEX IF NOT EXISTS idx_daily_user_date ON daily_user(date, user_hash);
         -- 按 client_ip_hash 聚合（每日去重，仅 route NOT NULL 的 http 行），用于 summary unique_ips 快速路径
         CREATE TABLE IF NOT EXISTS daily_ip (
             date TEXT NOT NULL,
             ip_hash TEXT NOT NULL,
             PRIMARY KEY(date, ip_hash)
         );
+        -- D2: 同 daily_user，unique_ips 的 date 区间 + DISTINCT 需要 date 前导索引。
+        CREATE INDEX IF NOT EXISTS idx_daily_ip_date ON daily_ip(date, ip_hash);
 
         CREATE TABLE IF NOT EXISTS daily_agg (
             date TEXT NOT NULL,
@@ -291,6 +302,26 @@ impl StatsStorage {
         Ok(())
     }
 
+    /// 日常数据库维护（D4/D7）：VACUUM 回收删除行占用的页面 + PRAGMA optimize 刷新查询计划。
+    ///
+    /// 注意：
+    /// - `VACUUM` 不可在事务内执行，且会短暂抢占数据库写锁——由每日凌晨维护任务
+    ///   （低峰）调用，`busy_timeout=5s` 兜底；
+    /// - 对既有库而言，连接级 `auto_vacuum=incremental`（见 connect_sqlite）仅写入
+    ///   头部标记，**首次 VACUUM 才完成模式转换**——本方法即该转换发生点；
+    /// - 高频调用无意义：无删除时 VACUUM 只是空转重建，因此固定在每日聚合任务后。
+    pub async fn vacuum_and_optimize(&self) -> Result<(), AppError> {
+        sqlx::query("VACUUM;")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("vacuum: {e}")))?;
+        sqlx::query("PRAGMA optimize;")
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("pragma optimize: {e}")))?;
+        Ok(())
+    }
+
     /// 为历史上未包含 `last_ts` 列的 `daily_agg` 表幂等补列；已存在时跳过。
     async fn ensure_daily_agg_last_ts_column(&self) -> Result<(), AppError> {
         let rows = sqlx::query("PRAGMA table_info(daily_agg)")
@@ -313,5 +344,57 @@ impl StatsStorage {
                 .map_err(|e| AppError::Internal(format!("alter daily_agg last_ts: {e}")))?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_db_path(prefix: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "phi_stats_conn_test_{}_{}.db",
+            prefix,
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    async fn build_storage(path: &std::path::Path) -> StatsStorage {
+        let storage = StatsStorage::connect_sqlite(path.to_string_lossy().as_ref(), false)
+            .await
+            .expect("connect sqlite");
+        storage.init_schema().await.expect("init schema");
+        storage
+    }
+
+    /// D7: 维护方法在有删除行的库上必须可执行（VACUUM 在临时库上完成 auto_vacuum 转换，
+    /// 且不产生错误）；同时验证 D2 复合索引已创建。
+    #[tokio::test]
+    async fn vacuum_and_optimize_runs_on_temp_db() {
+        let path = temp_db_path("vacuum_optimize");
+        let storage = build_storage(&path).await;
+
+        // 造一行、删一行，制造可回收页面。
+        sqlx::query("INSERT INTO daily_user (date, user_hash, kind) VALUES ('2026-01-01', 'u1', 'save')")
+            .execute(&storage.pool)
+            .await
+            .expect("insert");
+        sqlx::query("DELETE FROM daily_user WHERE date = '2026-01-01'")
+            .execute(&storage.pool)
+            .await
+            .expect("delete");
+
+        storage.vacuum_and_optimize().await.expect("vacuum ok");
+
+        // D2 索引应已随 init_schema 创建。
+        let idx: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type = 'index' AND name IN ('idx_daily_user_date', 'idx_daily_ip_date')",
+        )
+        .fetch_one(&storage.pool)
+        .await
+        .expect("query index");
+        assert_eq!(idx, 2, "D2 复合索引应存在");
+
+        let _ = std::fs::remove_file(&path);
     }
 }

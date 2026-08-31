@@ -230,7 +230,7 @@ phi-common → phi-save-codec(已有) → impl-save → impl-render → impl-ups
 | D3 | 聚合触碰请求路径 | 部分聚合/热窗口重算可能请求时触发，大范围时卡 | 聚合/归档/热窗口重算完全移出请求路径，由 phi-core 单生产者调度器执行 | Phase 2 |
 | D4 | SQLite 文件不收缩 | 清理后只 `wal_checkpoint(TRUNCATE)`（缩 WAL 不缩主库）；无 `VACUUM`/`auto_vacuum` | `PRAGMA auto_vacuum=incremental`（建库时）+ 定期 `VACUUM` | Phase 1 前（小 PR） |
 | D5 | `save_submissions` 无限增长 | 非时间序列、未归档，随玩家数持续增长 | 按 user 封顶（保留每人最近 N 条）或明确保留策略（另立 ADR 定 N） | Phase 2 后 |
-| D6 | summary 回退扫 `events` | 部分查询（`unique_ips` 等）回退到原始表 `COUNT(DISTINCT)`，最贵的单点查询 | 保证聚合表完整 + 正确索引，杜绝回退 | Phase 1 前（与 D2 同 PR） |
+| D6 | summary 回退扫 `events` | 部分查询（`unique_ips` 等）回退到原始表 `COUNT(DISTINCT)`，最贵的单点查询 | 保证聚合表完整 + 正确索引，杜绝回退（**2026-09 注**：本次已落地索引加速（D2）且聚合完整性由 backfill 哨兵+每日自愈保证；"杜绝回退"暂缓——feature 维度查询无法从 daily_* 服务（无该列），完整消除需 Phase 2 增列，回退路径本身已有 `idx_events_ts_user/ip` 索引支撑） | Phase 1 前（索引部分已随 D2 落地） |
 | D7 | 无 VACUUM/优化 | 数据库长期运行无维护 | 定期 `VACUUM` + `PRAGMA optimize` 纳入调度器 | 同上 |
 
 > 原则：D2/D4/D6/D7 是**低风险高收益小 PR**，应先行（不依赖重构）；D1/D3/D5 依赖分层落地。

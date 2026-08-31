@@ -277,6 +277,12 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
             }
             // 预聚合新写入后清理 summary 缓存，避免返回看不到上一日新增数据的旧结果。
             crate::features::stats::handler::invalidate_all_stats_summary_cache();
+            // D4/D7: 每日数据库维护——VACUUM 回收归档/清理后删除行占用的页面（配合
+            // 连接级 auto_vacuum=incremental 完成模式转换），PRAGMA optimize 刷新查询计划。
+            // 每次聚合后执行一次，低峰运行、频率与聚合一致。
+            if let Err(e) = agg_storage.vacuum_and_optimize().await {
+                tracing::warn!("统计库维护 (VACUUM/optimize) 失败: {e}");
+            }
         }
     });
 
