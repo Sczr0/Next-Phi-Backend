@@ -1,7 +1,7 @@
-# ADR-0003：save_submissions 保留策略（D5——opt-in 机制已落地，数值待 owner）
+# ADR-0003：save_submissions 保留策略（D5——已接受，启用值已定 100）
 
 - 日期：2026-09
-- 状态：已接受（机制）；待 owner 定具体数值
+- 状态：**已接受并启用**（机制落地 + owner 拍板 100，config.example 已设 `save_submissions_retention_per_user = 100`）
 - 相关章节：docs/ARCHITECTURE.md §6（D5）
 
 ## 背景
@@ -35,6 +35,5 @@ RKS 历史接口（`/rks/history`，`query_rks_history_page` 的 `(created_at,id
 
 ## 待 owner 确认
 
-- `keep` 取值（建议 100）；
-- 是否需要"历史曲线长跨度"豁免（如需，替代方案：归档提交流水到 Parquet——与
-  `events` 归档同管线，工作量 +1 轮）。
+- ~~`keep` 取值~~ —— **已决策：100（2026-09）**；如未来需要更长跨度曲线，走"归档提交流水到 Parquet"扩展（本 ADR §候选方案）。
+- ~~是否需要"历史曲线长跨度"豁免~~ —— 当前评估不需要；如业务出现请以本 ADR 的 Parquet 扩展方案立项。
