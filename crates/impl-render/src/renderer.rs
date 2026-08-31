@@ -131,22 +131,26 @@ const DEFAULT_PLAYER_NAME: &str = "Phigros Player";
 const COVER_ASPECT_RATIO: f64 = 512.0 / 270.0;
 
 /// 获取全局字体数据库
+#[must_use]
 pub fn get_global_font_db() -> Arc<fontdb::Database> {
     resources::get_global_font_db()
 }
 
 /// 获取背景图片缓存
 #[allow(dead_code)]
+#[must_use]
 pub fn get_background_cache() -> &'static std::sync::Mutex<LruCache<PathBuf, Arc<str>>> {
     resources::get_background_cache()
 }
 
 /// 获取封面文件列表
+#[must_use]
 pub fn get_cover_files() -> &'static [PathBuf] {
     resources::get_cover_files()
 }
 
 /// 获取封面元数据（只读，无锁）
+#[must_use]
 pub fn get_cover_metadata_map() -> &'static HashMap<String, String> {
     resources::get_cover_metadata_map()
 }

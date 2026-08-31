@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::save_contract::{Difficulty, DifficultyRecord};
 use crate::startup::chart_loader::{ChartConstants, ChartConstantsMap};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// 单张谱面的 RKS 结果
 #[derive(Debug, Clone, Serialize, utoipa::ToSchema)]

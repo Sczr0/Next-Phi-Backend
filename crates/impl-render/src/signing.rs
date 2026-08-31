@@ -37,6 +37,7 @@ fn md5_hex(input: &str) -> String {
 /// - TypeC: `/6688749e.../6694d30a/ill/song_id.png`
 /// - TypeD: `/ill/song_id.png?token=cadcec4a...&t=1721029907`
 #[allow(clippy::expect_used)] // 系统时钟不应早于1970
+#[must_use]
 pub fn sign_url(config: &IllustrationSigningConfig, path: &str) -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -174,6 +175,7 @@ fn svg_sha256(svg: &str) -> String {
 /// 签名 payload = `{timestamp}:{uid}:{rid}:{nonce}:{content_hash}`
 /// 使用 HMAC-SHA256 + server key 生成签名。
 #[allow(clippy::expect_used)] // 系统时钟不应早于1970
+#[must_use]
 pub fn sign_svg(
     svg: &str,
     config: &ImageSigningConfig,
@@ -385,6 +387,7 @@ fn build_sig_line_v4(sig: &SvgSignature) -> String {
 /// 根据签名版本构建签名字符串。
 /// `pub`（原 `pub(crate)`）：跨 crate 后由根 crate 的 shim（`pub use impl_render::signing::*`）
 /// 保持 `crate::features::image::signing::build_sig_line_any` 可达（image/handler 使用）。
+#[must_use]
 pub fn build_sig_line_any(sig: &SvgSignature) -> String {
     if sig.ed_sig.is_some() {
         build_sig_line_v4(sig)
@@ -434,6 +437,7 @@ fn wrap_sig_lines(full: &str) -> Vec<String> {
 ///
 /// 不会修改画布尺寸：底栏须在渲染阶段已预留足够高度
 /// （见 `bn_layout::BnLayout::footer_height` 与 `song_sections::write_footer`）。
+#[must_use]
 pub fn inject_sig_footer(svg: &str, sig: &SvgSignature) -> String {
     let full = build_sig_line_any(sig);
     let lines = wrap_sig_lines(&full);
@@ -635,6 +639,7 @@ fn strip_svg_signature(svg: &str) -> String {
 /// 从 SVG 字符串中提取签名信息（v3 或 v4-beta）。
 ///
 /// 自动检测版本：先尝试 v4-beta pattern，再回退 v3。
+#[must_use]
 pub fn extract_svg_signature(svg: &str) -> Option<SvgSignature> {
     let pattern_v4 = format!("{LILITH_SIG_PREFIX}:{LILITH_SIG_VERSION_V4}:");
     if let Some(sig) = extract_svg_signature_inner(svg, &pattern_v4) {

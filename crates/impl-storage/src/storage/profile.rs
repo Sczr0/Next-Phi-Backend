@@ -64,10 +64,10 @@ impl StatsStorage {
         .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query public profile by alias: {e}")))?;
-        Ok(row.map(Self::public_profile_row_from))
+        Ok(row.map(|r| Self::public_profile_row_from(&r)))
     }
 
-    fn public_profile_row_from(r: SqliteRow) -> PublicProfileRow {
+    fn public_profile_row_from(r: &SqliteRow) -> PublicProfileRow {
         PublicProfileRow {
             user_hash: r.try_get("user_hash").unwrap_or_default(),
             is_public: r.try_get("is_public").unwrap_or(0),
@@ -90,10 +90,10 @@ impl StatsStorage {
         .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query leaderboard details row: {e}")))?;
-        Ok(row.map(Self::leaderboard_details_row_from))
+        Ok(row.map(|r| Self::leaderboard_details_row_from(&r)))
     }
 
-    fn leaderboard_details_row_from(r: SqliteRow) -> LeaderboardDetailsRow {
+    fn leaderboard_details_row_from(r: &SqliteRow) -> LeaderboardDetailsRow {
         LeaderboardDetailsRow {
             rks_composition_json: r
                 .try_get::<Option<String>, _>("rks_composition_json")
