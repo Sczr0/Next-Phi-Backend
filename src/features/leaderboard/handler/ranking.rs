@@ -1,7 +1,6 @@
 use crate::extract::ValidatedQuery;
 use axum::{extract::State, response::Json};
 use serde::Deserialize;
-use sqlx::{Row, sqlite::SqliteRow};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -86,7 +85,7 @@ async fn fetch_top3_details_map(
 
 async fn build_leaderboard_items(
     storage: &crate::stats_contract::StatsStorage,
-    rows: Vec<SqliteRow>,
+    rows: Vec<crate::stats_contract::LeaderboardTopRow>,
     rank_base: i64,
     lite: bool,
 ) -> Vec<LeaderboardTopItem> {
@@ -95,12 +94,8 @@ async fn build_leaderboard_items(
     } else {
         let mut detail_users: Vec<String> = Vec::new();
         for r in &rows {
-            let sbt: i64 = r.try_get("sbt").unwrap_or(0);
-            let sat: i64 = r.try_get("sat").unwrap_or(0);
-            if (sbt != 0 || sat != 0)
-                && let Ok(uh) = r.try_get::<String, _>("user_hash")
-            {
-                detail_users.push(uh);
+            if (r.sbt != 0 || r.sat != 0) {
+                detail_users.push(r.user_hash.clone());
             }
         }
         fetch_top3_details_map(storage, &detail_users).await
@@ -108,12 +103,12 @@ async fn build_leaderboard_items(
 
     let mut items = Vec::with_capacity(rows.len());
     for (idx, r) in rows.into_iter().enumerate() {
-        let user_hash: String = r.try_get("user_hash").unwrap_or_default();
-        let alias: Option<String> = r.try_get("alias").ok();
-        let score: f64 = r.try_get("total_rks").unwrap_or(0.0);
-        let updated_at: String = r.try_get("updated_at").unwrap_or_default();
-        let sbt: i64 = r.try_get("sbt").unwrap_or(0);
-        let sat: i64 = r.try_get("sat").unwrap_or(0);
+        let user_hash = r.user_hash;
+        let alias = r.alias;
+        let score = r.total_rks;
+        let updated_at = r.updated_at;
+        let sbt = r.sbt;
+        let sat = r.sat;
 
         let mut best_top3: Option<Vec<ChartTextItem>> = None;
         let mut ap_top3: Option<Vec<ChartTextItem>> = None;
@@ -226,9 +221,9 @@ pub async fn get_top(
     let (mut last_score, mut last_updated, mut last_user_hash) =
         (None::<f64>, None::<String>, None::<String>);
     if has_more && let Some(r) = rows.last() {
-        last_score = r.try_get::<f64, _>("total_rks").ok();
-        last_updated = r.try_get::<String, _>("updated_at").ok();
-        last_user_hash = r.try_get::<String, _>("user_hash").ok();
+        last_score = Some(r.total_rks);
+        last_updated = Some(r.updated_at.clone());
+        last_user_hash = Some(r.user_hash.clone());
     }
 
     let items = build_leaderboard_items(storage, rows, page_rank_base, lite).await;
@@ -344,9 +339,9 @@ pub async fn get_by_rank(
     let (mut last_score, mut last_updated, mut last_user_hash) =
         (None::<f64>, None::<String>, None::<String>);
     if has_more && let Some(r) = rows.last() {
-        last_score = r.try_get::<f64, _>("total_rks").ok();
-        last_updated = r.try_get::<String, _>("updated_at").ok();
-        last_user_hash = r.try_get::<String, _>("user_hash").ok();
+        last_score = Some(r.total_rks);
+        last_updated = Some(r.updated_at.clone());
+        last_user_hash = Some(r.user_hash.clone());
     }
 
     let items = build_leaderboard_items(storage, rows, start_rank, lite).await;

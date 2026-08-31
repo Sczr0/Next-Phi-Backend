@@ -1,6 +1,5 @@
 use crate::extract::ValidatedPath;
 use axum::{extract::State, response::Json};
-use sqlx::Row;
 
 use crate::{error::AppError, state::AppState};
 
@@ -236,16 +235,15 @@ pub async fn get_public_profile(
     let Some(r) = row else {
         return Err(AppError::Search(crate::error::SearchError::NotFound));
     };
-    let is_public: i64 = r.try_get("is_public").unwrap_or(0);
-    if is_public == 0 {
+    if r.is_public == 0 {
         return Err(AppError::Search(crate::error::SearchError::NotFound));
     }
-    let user_hash: String = r.try_get("user_hash").unwrap_or_default();
-    let score: f64 = r.try_get("total_rks").unwrap_or(0.0);
-    let updated_at: String = r.try_get("updated_at").unwrap_or_default();
-    let show_rc: i64 = r.try_get("show_rks_composition").unwrap_or(0);
-    let show_b3: i64 = r.try_get("show_best_top3").unwrap_or(0);
-    let show_ap3: i64 = r.try_get("show_ap_top3").unwrap_or(0);
+    let user_hash = r.user_hash;
+    let score = r.total_rks;
+    let updated_at = r.updated_at;
+    let show_rc = r.show_rks_composition;
+    let show_b3 = r.show_best_top3;
+    let show_ap3 = r.show_ap_top3;
 
     let mut resp = PublicProfileResponse {
         alias: alias.clone(),
@@ -259,19 +257,19 @@ pub async fn get_public_profile(
         && let Some(d) = storage.query_leaderboard_details_row(&user_hash).await?
     {
         if show_rc != 0
-            && let Ok(Some(j)) = d.try_get::<String, _>("rks_composition_json").map(Some)
+            && let Some(j) = d.rks_composition_json.as_deref()
         {
-            resp.rks_composition = serde_json::from_str::<RksCompositionText>(&j).ok();
+            resp.rks_composition = serde_json::from_str::<RksCompositionText>(j).ok();
         }
         if show_b3 != 0
-            && let Ok(Some(j)) = d.try_get::<String, _>("best_top3_json").map(Some)
+            && let Some(j) = d.best_top3_json.as_deref()
         {
-            resp.best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
+            resp.best_top3 = serde_json::from_str::<Vec<ChartTextItem>>(j).ok();
         }
         if show_ap3 != 0
-            && let Ok(Some(j)) = d.try_get::<String, _>("ap_top3_json").map(Some)
+            && let Some(j) = d.ap_top3_json.as_deref()
         {
-            resp.ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(&j).ok();
+            resp.ap_top3 = serde_json::from_str::<Vec<ChartTextItem>>(j).ok();
         }
     }
     Ok(Json(resp))

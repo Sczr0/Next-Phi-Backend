@@ -88,11 +88,8 @@ qrcode = "0.14"
 uuid = { version = "1", features = ["v4", "v7", "fast-rng"] }
 gethostname = "0.4"
 
-# SQLite 持久化
-# Phase 1 注：statst 与开放平台存储已沉降到 impl-storage；根仍保留 sqlx ——
-# leaderboard/handler 现存 ad-hoc 直连查询（admin/ranking/profile），
-# 待 Phase 2 随端口中收（收敛后本依赖即可移除）。
-sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "json"] }
+# SQLite 持久化：运行时代码已全部沉降到 impl-storage（唯一 sqlx 所在铁律达成）；
+# sqlx 现仅服务集成测试（见 [dev-dependencies] 注）。
 
 # Parquet 导出
 parquet = { version = "59.2", features = ["arrow"] }
@@ -129,6 +126,8 @@ sd-notify = "0.4"
 
 [dev-dependencies]
 tower = { version = "0.5.2", features = ["util"] }
+# 金标准集成测试（tests/leaderboard_storage.rs 等）直接 sqlx 断言——保留于 dev。
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "json"] }
 
 [target.'cfg(unix)'.dev-dependencies]
 pprof = { version = "0.14", features = ["flamegraph", "criterion"] }
