@@ -1,0 +1,59 @@
+# Docker 镜像构建 + 容器冒烟验证（D-01 防烂闸门，Charter §8.6）。
+# 背景：README/部署曾只讲"源码运行"——本 workflow 把 Docker 路径升级为
+# "真实构建 + 起容器冒烟"：/health 200 + SQLite 文件生成（docs/deployment.md §6）。
+# 触发：push 触碰构建面（Dockerfile / crates / Cargo.* / config.example / 本 workflow）；
+# 也可手动补跑。与 release 同定位（发布面验证），不进 PR 主闸门。
+name: docker-build
+
+on:
+  push:
+    branches: [master, feat]
+    paths:
+      - "Dockerfile"
+      - "crates/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "config.example.toml"
+      - ".github/workflows/docker-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (gha layer cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: phi-backend:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test (/health 200 + SQLite 生成)
+        run: |
+          set -euo pipefail
+          cid=$(docker run -d -p 3939:3939 phi-backend:ci)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+
+          ok=0
+          for _ in $(seq 1 90); do
+            if curl -sf -o /dev/null "http://127.0.0.1:3939/health"; then
+              ok=1; break
+            fi
+            sleep 1
+          done
+          test "$ok" = 1 || { echo "[FAIL] /health 90s 内未 200"; exit 1; }
+          echo "[OK] /health 200"
+
+          # 容器内两个 SQLite 库已自动创建（挂载前目录内生成）
+          docker exec "$cid" sh -c 'ls -la /app/resources/*.db' || { echo "[FAIL] SQLite 未生成"; exit 1; }
+          echo "[OK] SQLite 数据库已生成"

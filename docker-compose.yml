@@ -1,0 +1,36 @@
+# Phi-Backend 容器编排（D-01，Charter §8.1）。
+# 一键起：docker compose up -d --build
+# 验收：curl -s http://127.0.0.1:3939/health   # -> 200
+# 配置策略：密钥只经环境变量注入（优先级高于 config.toml，见 config.rs get_config_path）；
+# 覆盖配置文件（可选）：取消下方 config.toml 挂载注释。
+services:
+  phi-backend:
+    build: .
+    image: phi-backend:latest
+    container_name: phi-backend
+    restart: unless-stopped
+    ports:
+      - "3939:3939"          # API / docs / health
+    volumes:
+      - phi-data:/app/resources   # 曲绘仓库(ill) + SQLite（usage_stats.db / open_platform.db）
+      - phi-info:/app/info        # 歌曲/难度数据（difficulty.csv / info.csv / nicklist.yaml）
+      # 覆盖配置（可选；基于 config.example.toml 修改，敏感值放环境变量）
+      # - ./config.toml:/app/config.toml:ro
+    environment:
+      # ── 密钥/敏感配置：必须由部署方注入（严禁提交 git / 留在镜像）──
+      # APP_SESSION_JWT_SECRET: "changeme"
+      # APP_SESSION_EXCHANGE_SHARED_SECRET: "changeme"
+      # APP_SESSION_AUTH_EMBED_SECRET: "changeme"
+      # APP_STATS_USER_HASH_SALT: "changeme"   # ⚠️ 身份键：一旦定下永不轮换（C2）
+      # APP_LEADERBOARD_ADMIN_TOKENS: "t1,t2"
+      # APP_OPEN_PLATFORM_GITHUB_CLIENT_SECRET: "changeme"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3939/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    stop_signal: SIGTERM   # 优雅停机：维护广播 + 宽限窗口（shutdown.rs）
+volumes:
+  phi-data:
+  phi-info:
