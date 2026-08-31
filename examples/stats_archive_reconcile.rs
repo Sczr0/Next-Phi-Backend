@@ -256,7 +256,11 @@ async fn connect_readonly_storage(db_path: &Path) -> Result<StatsStorage, AppErr
         .await
         .map_err(|e| AppError::Internal(format!("sqlite connect readonly: {e}")))?;
 
-    Ok(StatsStorage { pool })
+    // 只读单库模式（D1 拆分后：领域池与统计池同文件——本示例仅读统计表，同池即可）。
+    Ok(StatsStorage {
+        pool: pool.clone(),
+        state_pool: pool,
+    })
 }
 
 #[tokio::main]

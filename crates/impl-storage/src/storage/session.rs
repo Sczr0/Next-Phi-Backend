@@ -23,7 +23,7 @@ impl StatsStorage {
         .bind(jti)
         .bind(expires_at)
         .bind(created_at)
-        .execute(&self.pool)
+        .execute(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("insert session blacklist: {e}")))?;
         Ok(())
@@ -39,7 +39,7 @@ impl StatsStorage {
         )
         .bind(jti)
         .bind(now_rfc3339)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query session blacklist: {e}")))?;
         Ok(row.is_some())
@@ -63,7 +63,7 @@ impl StatsStorage {
         .bind(logout_before)
         .bind(expires_at)
         .bind(updated_at)
-        .execute(&self.pool)
+        .execute(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("upsert session logout gate: {e}")))?;
         Ok(())
@@ -79,7 +79,7 @@ impl StatsStorage {
         )
         .bind(user_hash)
         .bind(now_rfc3339)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query session logout gate: {e}")))?;
         Ok(row.and_then(|r| r.try_get::<String, _>("logout_before").ok()))
@@ -100,7 +100,7 @@ impl StatsStorage {
         .bind(now_rfc3339)
         .bind(user_hash)
         .bind(now_rfc3339)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query session revoke state: {e}")))?;
         let blacklisted_num: i64 = row.try_get("blacklisted").unwrap_or(0);
@@ -115,14 +115,14 @@ impl StatsStorage {
         let blacklist_deleted =
             sqlx::query("DELETE FROM session_token_blacklist WHERE expires_at <= ?")
                 .bind(now_rfc3339)
-                .execute(&self.pool)
+                .execute(&self.state_pool)
                 .await
                 .map_err(|e| AppError::Internal(format!("cleanup session blacklist: {e}")))?
                 .rows_affected();
 
         let gate_deleted = sqlx::query("DELETE FROM session_logout_gate WHERE expires_at <= ?")
             .bind(now_rfc3339)
-            .execute(&self.pool)
+            .execute(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("cleanup session logout gate: {e}")))?
             .rows_affected();

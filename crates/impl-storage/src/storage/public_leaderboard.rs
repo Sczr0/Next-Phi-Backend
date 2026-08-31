@@ -59,7 +59,7 @@ mod tests {
 impl StatsStorage {
     pub async fn count_public_leaderboard_total(&self) -> Result<i64, AppError> {
         let row = sqlx::query(COUNT_PUBLIC_LEADERBOARD_TOTAL_SQL)
-            .fetch_one(&self.pool)
+            .fetch_one(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("count public leaderboard total: {e}")))?;
         Ok(row.try_get("c").unwrap_or(0))
@@ -79,7 +79,7 @@ impl StatsStorage {
             .bind(after_updated)
             .bind(after_user)
             .bind(limit)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("query top seek: {e}")))?;
         Ok(rows
@@ -96,7 +96,7 @@ impl StatsStorage {
         let rows = sqlx::query(QUERY_LEADERBOARD_TOP_OFFSET_SQL)
             .bind(limit)
             .bind(offset)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("query top offset: {e}")))?;
         Ok(rows
@@ -143,7 +143,7 @@ impl StatsStorage {
         qb.push(")");
         let rows = qb
             .build()
-            .fetch_all(&self.pool)
+            .fetch_all(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("fetch top3 details: {e}")))?;
         let mut map = std::collections::HashMap::with_capacity(rows.len());
@@ -168,7 +168,7 @@ impl StatsStorage {
             .bind(updated_at)
             .bind(updated_at)
             .bind(user_hash)
-            .fetch_one(&self.pool)
+            .fetch_one(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("count public leaderboard higher: {e}")))?;
         Ok(row.try_get("higher").unwrap_or(0))

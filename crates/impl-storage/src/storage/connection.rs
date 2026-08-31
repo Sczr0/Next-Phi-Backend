@@ -7,7 +7,24 @@ use crate::error::AppError;
 use super::StatsStorage;
 
 impl StatsStorage {
+    /// 单库连接（兼容/测试）：统计池与领域池指向**同一文件**（历史行为）。
     pub async fn connect_sqlite(path: &str, wal: bool) -> Result<Self, AppError> {
+        Self::connect_split(path, None, wal).await
+    }
+
+    /// D1（ADR-0002）双库连接：统计池 = `path`；领域池 = `state_path`
+    /// （None 时指向同一文件——单文件兼容模式）。
+    pub async fn connect_split(
+        path: &str,
+        state_path: Option<&str>,
+        wal: bool,
+    ) -> Result<Self, AppError> {
+        let pool = Self::open_pool(path, wal).await?;
+        let state_pool = Self::open_pool(state_path.unwrap_or(path), wal).await?;
+        Ok(Self { pool, state_pool })
+    }
+
+    async fn open_pool(path: &str, wal: bool) -> Result<SqlitePool, AppError> {
         // 关键：通过 `SqliteConnectOptions` 的 pragma/factories 设置，确保池中每条连接
         // （含后台归档/清理、summary 读连接）都生效，避免旧实现里手动 PRAGMA
         // 只作用于首条连接而导致其它连接仍走默认 synchronous=FULL 的开销。
@@ -28,11 +45,11 @@ impl StatsStorage {
         let pool = SqlitePool::connect_with(opt)
             .await
             .map_err(|e| AppError::Internal(format!("sqlite connect: {e}")))?;
-        Ok(Self { pool })
+        Ok(pool)
     }
 
     pub async fn init_schema(&self) -> Result<(), AppError> {
-        let ddl = r"
+        let stats_ddl = r"
         CREATE TABLE IF NOT EXISTS events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts_utc TEXT NOT NULL,
@@ -148,6 +165,15 @@ impl StatsStorage {
             key TEXT PRIMARY KEY,
             value TEXT
         );
+        ";
+        sqlx::query(stats_ddl)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::Internal(format!("init stats schema: {e}")))?;
+
+        // D1（ADR-0002）：领域库 DDL（8 张业务表）——在领域池执行
+        //（单文件兼容模式下与 stats 池同一文件，双库模式写入 state.db）。
+        let state_ddl = r"
 
         -- Leaderboard tables (no images, textual details only)
         CREATE TABLE IF NOT EXISTS leaderboard_rks (
@@ -237,10 +263,10 @@ impl StatsStorage {
         );
         CREATE INDEX IF NOT EXISTS idx_moderation_flags_user_created ON moderation_flags(user_hash, created_at DESC);
         ";
-        sqlx::query(ddl)
-            .execute(&self.pool)
+        sqlx::query(state_ddl)
+            .execute(&self.state_pool)
             .await
-            .map_err(|e| AppError::Internal(format!("init schema: {e}")))?;
+            .map_err(|e| AppError::Internal(format!("init state schema: {e}")))?;
         // `daily_agg` 在 fast-path 中需要按 feature/route/max(ts_utc) 输出 last_ts，
         // 而初始建表不含该列，需幂等补一次。
         self.ensure_daily_agg_last_ts_column().await?;
@@ -398,5 +424,55 @@ mod tests {
         assert_eq!(idx, 2, "D2 复合索引应存在");
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// D1（ADR-0002）：双库模式下统计表/领域表各自落位、互斥。
+    #[tokio::test]
+    async fn connect_split_places_tables_in_their_files() {
+        let stats_path = temp_db_path("split_stats");
+        let state_path = temp_db_path("split_state");
+        let storage = StatsStorage::connect_split(
+            stats_path.to_string_lossy().as_ref(),
+            Some(state_path.to_string_lossy().as_ref()),
+            false,
+        )
+        .await
+        .expect("split connect");
+        storage.init_schema().await.expect("schema");
+
+        // 统计文件应含统计表、不含领域表
+        let stats_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name IN ('events','daily_agg','stats_meta')",
+        )
+        .fetch_one(&storage.pool)
+        .await
+        .expect("stats tables");
+        assert_eq!(stats_tables, 3, "统计文件应含事件/聚合/元表");
+        let domain_in_stats: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name IN ('leaderboard_rks','save_submissions','session_token_blacklist')",
+        )
+        .fetch_one(&storage.pool)
+        .await
+        .expect("domain-in-stats");
+        assert_eq!(domain_in_stats, 0, "统计文件不得含领域表（互斥）");
+
+        // 领域文件应含领域表、不含统计表
+        let domain_tables: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name IN ('leaderboard_rks','save_submissions','session_token_blacklist','moderation_flags')",
+        )
+        .fetch_one(&storage.state_pool)
+        .await
+        .expect("domain tables");
+        assert_eq!(domain_tables, 4, "领域文件应含业务表");
+        let stats_in_state: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' AND name IN ('events','daily_agg','stats_meta')",
+        )
+        .fetch_one(&storage.state_pool)
+        .await
+        .expect("stats-in-state");
+        assert_eq!(stats_in_state, 0, "领域文件不得含统计表（互斥）");
+
+        let _ = std::fs::remove_file(&stats_path);
+        let _ = std::fs::remove_file(&state_path);
     }
 }

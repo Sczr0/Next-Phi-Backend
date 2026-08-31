@@ -63,7 +63,7 @@ impl StatsStorage {
         )
         .bind(min_score)
         .bind(limit)
-        .fetch_all(&self.pool)
+        .fetch_all(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query suspicious rows: {e}")))?;
         Ok(rows
@@ -113,7 +113,7 @@ impl StatsStorage {
         }
         let row = count_qb
             .build()
-            .fetch_one(&self.pool)
+            .fetch_one(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("admin users count: {e}")))?;
         Ok(row.try_get("c").unwrap_or(0))
@@ -170,7 +170,7 @@ impl StatsStorage {
         qb.push(" LIMIT ").push_bind(page_size);
         qb.push(" OFFSET ").push_bind(offset);
         qb.build()
-            .fetch_all(&self.pool)
+            .fetch_all(&self.state_pool)
             .await
             .map_err(|e| AppError::Internal(format!("admin users list: {e}")))
             .map(|rows| {
@@ -201,7 +201,7 @@ impl StatsStorage {
              LIMIT 1",
         )
         .bind(user_hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query user moderation full row: {e}")))?;
         Ok(row.map(|r| ModerationStateFullRow {
@@ -227,7 +227,7 @@ impl StatsStorage {
             "SELECT status, reason FROM user_moderation_state WHERE user_hash = ? LIMIT 1",
         )
         .bind(user_hash)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.state_pool)
         .await
         .map_err(|e| AppError::Internal(format!("query moderation state: {e}")))?;
 
