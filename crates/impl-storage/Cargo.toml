@@ -2,7 +2,7 @@
 name = "impl-storage"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 # Phase 1：唯一 sqlx 所在（Charter §3.3 铁律 2）。
 # 依赖方向（临时 ALLOW）：impl-storage -> [phi-contract, phi-http]

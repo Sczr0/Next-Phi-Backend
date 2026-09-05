@@ -2,7 +2,7 @@
 name = "impl-save"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 # Phase 1：存档实现（获取/解密/解析/诊断）。领域专用上游适配器在此；
 # 通用上游（TapTap OAuth / 曲绘仓库 / GitHub）后续归 impl-upstream。
@@ -30,7 +30,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["rt", "time", "sync", "fs", "io-util", "macros"] }
 tracing = "0.1"
 utoipa = "5.5"
-zip = "2.2"
+zip = "3"
 # 内部 crate
 phi-common = { path = "../phi-common" }
 phi-contract = { path = "../phi-contract" }

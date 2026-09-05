@@ -17,7 +17,7 @@ resolver = "3"
 name = "phi-backend"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 [workspace.lints.clippy]
 # 文档注释以中文为主，`doc_markdown` 会产生大量误报并污染注释文本。
@@ -74,7 +74,7 @@ sha1 = "0.10"
 sha2 = "0.10"
 md-5 = "0.10"
 jsonwebtoken = "9.3"
-zip = "2.2"
+zip = "3"
 flate2 = "1.0"
 base64 = "0.22"
 hex = "0.4"
@@ -86,7 +86,7 @@ moka = { version = "0.12", features = ["future"] }
 futures-util = "0.3"
 qrcode = "0.14"
 uuid = { version = "1", features = ["v4", "v7", "fast-rng"] }
-gethostname = "0.4"
+gethostname = "0.5"
 
 # SQLite 持久化：运行时代码已全部沉降到 impl-storage（唯一 sqlx 所在铁律达成）；
 # sqlx 现仅服务集成测试（见 [dev-dependencies] 注）。
@@ -105,7 +105,7 @@ config = "0.15"
 once_cell = "1.20"
 
 # Git 操作
-git2 = { version = "0.20", features = ["vendored-openssl"] }
+git2 = { version = "0.21", features = ["vendored-openssl", "https"] }
 
 # 时间与日期
 chrono = { version = "0.4", features = ["serde"] }
@@ -113,11 +113,11 @@ chrono-tz = "0.9"
 
 # SVG 渲染为 PNG
 resvg = "0.48"
-tiny-skia = { version = "0.11", features = ["png"] }
-png = "0.17"
+tiny-skia = { version = "0.12", features = ["png-format"] }
+png = "0.18"
 image = { version = "0.25", features = ["webp"] }
 webp = "0.3.1"
-lru = "0.16"
+lru = "0.18"
 num_cpus = "1.16"
 
 # systemd 支持（仅在Linux下生效）

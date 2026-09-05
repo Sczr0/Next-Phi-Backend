@@ -2,7 +2,7 @@
 name = "impl-render"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 # Phase 1：渲染实现（SVG 模板 + resvg 光栅化）。重 CPU 依赖隔离在此
 # （Charter §3.2：让 resvg/image 不污染契约与业务层）。
@@ -15,7 +15,7 @@ ed25519-dalek = "2"
 hex = "0.4"
 hmac = "0.12"
 image = { version = "0.25", features = ["webp"] }
-lru = "0.16"
+lru = "0.18"
 md-5 = "0.10"
 minijinja = { version = "2.14", features = ["loader"] }
 once_cell = "1.20"

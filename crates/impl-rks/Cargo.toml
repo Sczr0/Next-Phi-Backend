@@ -2,7 +2,7 @@
 name = "impl-rks"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 # Phase 1：RKS 计算引擎（纯计算，无 IO/HTTP）。被渲染层（未来 impl-render）
 # 与业务层（rks/save handler）共享。依赖方向：impl-rks -> [phi-contract]

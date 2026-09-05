@@ -2,7 +2,7 @@
 name = "impl-upstream"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 # Phase 1：出站上游客户端（v1 = TapTap OAuth / LeanCloud 登录客户端）。
 # 后续收口：GitHub OAuth、远端 info、曲绘仓库同步（依赖待解耦后迁入）。

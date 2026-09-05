@@ -2,7 +2,7 @@
 name = "phi-http"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 # Phase 1 临时定位：HTTP/网关层共享件（AppError/ProblemDetails/request_id
 # 中间件）。Phase 2 组合根成型后并入 phi-server 网关层（Charter §3.7）。
@@ -16,7 +16,7 @@ serde_json = "1.0"
 thiserror = "2.0"
 utoipa = "5.5"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls-native-roots"] }
-zip = "2.2"
+zip = "3"
 uuid = { version = "1", features = ["v4", "fast-rng"] }
 tokio = { version = "1", features = ["rt", "net", "time", "macros"] }
 # 内部 crate

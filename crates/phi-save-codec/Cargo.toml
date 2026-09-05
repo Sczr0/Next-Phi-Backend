@@ -3,7 +3,7 @@ name = "phi-save-codec"
 version = "0.1.0"
 edition = "2024"
 description = "Phigros Cloud Save binary format codec (no_std compatible)"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 [lib]
 crate-type = ["rlib"]

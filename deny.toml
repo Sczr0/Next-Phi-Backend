@@ -4,6 +4,16 @@
 
 [advisories]
 yanked = "deny"
+# RUSTSEC 豁免（Charter §7.2）：仅限"无可用修复"或"生产产物不可达"两类，逐条附理由。
+ignore = [
+    # paste：作者已归档仓库（1.0.15 为最后发布版），无可用升级；
+    # 经 pulp(exr/rav1e) 进入 image 渲染链，属图像栈传递依赖。
+    "RUSTSEC-2024-0436",
+    # quick-xml：仅经 pprof[flamegraph] -> inferno 引入（dev 依赖，不进 release 产物）；
+    # pprof 0.14.1 为当前最新，无更高版本可解除对 inferno 0.11 的钉版。
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
 
 [licenses]
 allow = [
