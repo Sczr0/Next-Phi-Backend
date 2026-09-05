@@ -2,7 +2,7 @@
 name = "phi-contract"
 version = "0.1.0"
 edition = "2024"
-license = "AGPL-3.0"
+license = "AGPL-3.0-only"
 
 [dependencies]
 # 红线（Charter §3.3）：只允许 std/轻量库。零 tokio、零 sqlx、零 reqwest、零渲染。
