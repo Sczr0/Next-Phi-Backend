@@ -22,16 +22,20 @@ jobs:
       shell: pwsh
       run: ./scripts/check-stage2-no-cross-feature.ps1
 
-    - name: 恢复Cargo缓存
-      uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: quality-gate-ubuntu
-
     - name: 安装 Rust 工具链（rust-toolchain.toml 钉死 1.98.0）
       uses: dtolnay/rust-toolchain@1.98.0
       with:
         toolchain: 1.98.0
         components: rustfmt, clippy
+
+    # 官方推荐顺序：先装工具链再恢复缓存（key 含 rustc 版本，避免读到 runner
+    # 预装 stable 造成潜在 key 漂移）；cache-on-failure 使失败运行也保存缓存，
+    # 避免"闸门红一阵 → 缓存断供 → 之后全员冷编译"。
+    - name: 恢复Cargo缓存
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: quality-gate-ubuntu
+        cache-on-failure: true
 
     - name: 检查格式
       run: cargo fmt --all -- --check
@@ -59,6 +63,9 @@ jobs:
       github.event_name == 'workflow_dispatch'
     needs: quality-gate
     strategy:
+      # 单平台失败不连坐其余平台：失败/取消的 job 不会执行 rust-cache 的
+      # 保存步骤，一个平台挂会冻结全部平台的缓存更新（2026-09-05 事故）。
+      fail-fast: false
       matrix:
         include:
           # Windows x86_64
@@ -88,23 +95,33 @@ jobs:
     steps:
     - name: 检出代码
       uses: actions/checkout@v4
-      
-    - name: 恢复Cargo缓存
-      uses: Swatinem/rust-cache@v2
-      with:
-        shared-key: build-release-${{ runner.os }}-${{ matrix.target }}
-      
+
     - name: 安装 Rust 工具链（rust-toolchain.toml 钉死 1.98.0）
       uses: dtolnay/rust-toolchain@1.98.0
       with:
         toolchain: 1.98.0
         targets: ${{ matrix.target }}
-    
-    # 使用预装好的 muslrust 容器进行 musl 构建，避免系统依赖问题
+
+    # 先装工具链再恢复缓存（理由同 quality-gate）。
+    - name: 恢复Cargo缓存
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: build-release-${{ runner.os }}-${{ matrix.target }}
+        cache-on-failure: true
+
+    # 使用预装好的 muslrust 容器进行 musl 构建，避免系统依赖问题。
+    # RUSTUP_TOOLCHAIN=stable：容器内忽略仓库的 rust-toolchain.toml，改用镜像
+    # 自带的 musl-host stable 工具链（自带 musl std）。否则 rustup 会按 toml
+    # 自动 sync 出 gnu host 的 1.98.0（无 musl std），首个 crate 即 E0463
+    # （2026-09-05 事故：muslrust:stable 浮动 tag 镜像更新后引爆）。musl 产物
+    # 的 rustc 随镜像追新，与其余平台的钉版 1.98.0 有意不同（静态自包含二进制，
+    # 行为不受影响）。
     - name: 使用 muslrust 容器构建 (Linux musl)
       if: matrix.target == 'x86_64-unknown-linux-musl'
       run: |
-        docker run --rm -v "$PWD:/volume" -w /volume -e RUSTFLAGS="${{ matrix.rustflags }}" clux/muslrust:stable \
+        docker run --rm -v "$PWD:/volume" -w /volume \
+          -e RUSTFLAGS="${{ matrix.rustflags }}" -e RUSTUP_TOOLCHAIN=stable \
+          clux/muslrust:stable \
           cargo build --profile release-dist --target x86_64-unknown-linux-musl
     
     # Linux aarch64 仅安装交叉编译工具并指定 linker
