@@ -15,6 +15,7 @@ use phi_backend::features::auth::client::TapTapClient;
 use phi_backend::features::stats;
 use phi_backend::router::build_app;
 use phi_backend::startup::chart_loader::{ChartConstantsMap, load_chart_constants};
+use phi_backend::startup::observability::{fatal_exit, init_sentry, init_tracing};
 use phi_backend::startup::{run_startup_checks, song_loader};
 use phi_backend::state::AppState;
 use phi_backend::{ShutdownManager, SystemdWatchdog, config::AppConfig};
@@ -24,30 +25,29 @@ use tokio::sync::Semaphore;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "phi_backend=info,tower_http=info".into()),
-        )
-        .init();
+    init_tracing();
 
     let shutdown_manager = ShutdownManager::new();
 
     if let Err(e) = AppConfig::init_global() {
         tracing::error!("Config init failed: {}", e);
-        std::process::exit(1);
+        fatal_exit();
     }
     let config = AppConfig::global();
 
+    // Sentry 监控（DSN 未配置则禁用）；必须先于首个 tokio::spawn，
+    // 保证 worker 线程派生 hub 时已携带 client（详见 startup/observability.rs）
+    let _sentry_guard = init_sentry(config.sentry.dsn.as_deref());
+
     if let Err(e) = shutdown_manager.start_signal_handler() {
         tracing::error!("信号处理器启动失败: {}", e);
-        std::process::exit(1);
+        fatal_exit();
     }
 
     let watchdog = SystemdWatchdog::new(config.shutdown.watchdog.clone(), &shutdown_manager);
     if let Err(e) = watchdog.validate_config() {
         tracing::error!("看门狗配置验证失败: {}", e);
-        std::process::exit(1);
+        fatal_exit();
     }
 
     if let Err(e) = watchdog.notify_reloading() {
@@ -88,7 +88,7 @@ async fn main() {
 
     if let Err(e) = run_startup_checks(config).await {
         tracing::error!("Startup checks failed: {}", e);
-        std::process::exit(1);
+        fatal_exit();
     }
 
     // 加载 difficulty.csv
@@ -96,13 +96,13 @@ async fn main() {
     let csv_path = info_dir.join("difficulty.csv");
     let mut chart_map: ChartConstantsMap = load_chart_constants(&csv_path).unwrap_or_else(|e| {
         tracing::error!("Failed to load difficulty.csv: {}", e);
-        std::process::exit(1);
+        fatal_exit();
     });
 
     // 加载歌曲目录
     let mut song_catalog = song_loader::load_song_catalog(&info_dir).unwrap_or_else(|e| {
         tracing::error!("Failed to load info.csv or nicklist.yaml: {}", e);
-        std::process::exit(1);
+        fatal_exit();
     });
 
     // 尝试从远端加载更新的 info 文件
@@ -127,7 +127,7 @@ async fn main() {
         Ok(c) => Arc::new(c),
         Err(e) => {
             tracing::error!("TapTap client init failed: {}", e);
-            std::process::exit(1);
+            fatal_exit();
         }
     };
     let qrcode_service =
@@ -155,24 +155,24 @@ async fn main() {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("开放平台存储初始化失败: {}", e);
-                std::process::exit(1);
+                fatal_exit();
             }
         };
         if let Err(e) = op_storage.init_schema().await {
             tracing::error!("开放平台存储建表失败: {}", e);
-            std::process::exit(1);
+            fatal_exit();
         }
         if let Err(e) =
             phi_backend::features::open_platform::storage::init_global(Arc::new(op_storage))
         {
             tracing::error!("开放平台存储注册失败: {}", e);
-            std::process::exit(1);
+            fatal_exit();
         }
         if let Err(e) =
             phi_backend::features::open_platform::auth::init_global(&config.open_platform)
         {
             tracing::error!("开放平台鉴权服务初始化失败: {}", e);
-            std::process::exit(1);
+            fatal_exit();
         }
     }
 
@@ -222,7 +222,7 @@ async fn main() {
         .await
         .unwrap_or_else(|e| {
             tracing::error!("Bind address failed {}: {}", addr, e);
-            std::process::exit(1);
+            fatal_exit();
         });
 
     tracing::info!("Server: http://{}", addr);
@@ -285,7 +285,7 @@ async fn main() {
 
     if let Err(e) = graceful.await {
         tracing::error!("服务器运行错误: {}", e);
-        std::process::exit(1);
+        fatal_exit();
     }
 
     tracing::info!("服务器已优雅关闭");

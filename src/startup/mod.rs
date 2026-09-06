@@ -2,6 +2,8 @@
 pub mod chart_loader;
 /// 启动检查工具模块
 pub mod checks;
+/// 可观测性引导（tracing 订阅装配 + Sentry 初始化，ADR-0005）
+pub mod observability;
 /// 远端 info 文件加载器
 pub mod remote_info;
 /// 歌曲与别名加载器（info.csv / nicklist.yaml）

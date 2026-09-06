@@ -9,6 +9,7 @@
     clippy::items_after_statements,
     clippy::module_name_repetitions
 )]
+#![cfg_attr(test, allow(clippy::panic, clippy::unwrap_used, clippy::expect_used))]
 
 //! phi-common：共享纯类型底座（Charter §4.0 Phase 0）。
 //!

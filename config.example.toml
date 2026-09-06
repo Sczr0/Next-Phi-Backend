@@ -297,3 +297,8 @@ rate_limit_per_minute = 120
 # 如果希望新建 key 默认可调用个人数据接口，可加入 profile.read
 # 示例: default_scopes = ["public.read", "profile.read"]
 default_scopes = ["public.read"]
+
+# Sentry 错误监控（详见 docs/adr/0005-sentry-error-monitoring.md）
+# DSN 留空 = 完全禁用；生产环境建议通过环境变量 APP_SENTRY_DSN 注入，勿将 DSN 提交进 git
+[sentry]
+dsn = ""

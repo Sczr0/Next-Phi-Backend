@@ -637,6 +637,9 @@ pub struct AppConfig {
     /// 排行榜配置（纯文字）
     #[serde(default)]
     pub leaderboard: LeaderboardConfig,
+    /// Sentry 错误监控配置（DSN 为空 = 禁用；环境变量 `APP_SENTRY_DSN` 覆盖）
+    #[serde(default)]
+    pub sentry: SentryConfig,
 }
 
 impl AppConfig {
@@ -797,6 +800,7 @@ impl Default for AppConfig {
             save: SaveLimitsConfig::default(),
             shutdown: ShutdownConfig::default(),
             leaderboard: LeaderboardConfig::default(),
+            sentry: SentryConfig::default(),
         }
     }
 }
@@ -1491,5 +1495,66 @@ impl Default for LeaderboardConfig {
             default_show_ap_top3: Self::default_show_ap3(),
             admin_tokens: Self::default_admin_tokens(),
         }
+    }
+}
+
+/// Sentry 错误监控配置（ADR-0005）。
+///
+/// DSN 未配置或为空串时监控完全禁用，进程内不产生任何 Sentry 开销；
+/// 生产环境建议通过环境变量 `APP_SENTRY_DSN` 注入，DSN 不得进入版本库。
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SentryConfig {
+    /// Sentry 项目 DSN；空 = 禁用
+    #[serde(default)]
+    pub dsn: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SentryConfig;
+
+    /// config.toml 显式写了 `[sentry]` 段时，dsn 能正确反序列化。
+    #[test]
+    fn sentry_dsn_parses_from_toml_section() {
+        let file = config::File::from_str(
+            "[sentry]\ndsn = \"https://public@example.ingest.sentry.io/42\"",
+            config::FileFormat::Toml,
+        );
+        let builder = config::Config::builder()
+            .add_source(file)
+            .build()
+            .expect("配置源构建不应失败");
+        let sentry: SentryConfig = builder.get("sentry").expect("sentry 段应存在");
+        assert_eq!(
+            sentry.dsn.as_deref(),
+            Some("https://public@example.ingest.sentry.io/42")
+        );
+    }
+
+    /// 环境变量覆盖路径：`APP_SENTRY_DSN` → `sentry.dsn`（与 `APP_API_PREFIX` 同一映射规则）。
+    #[test]
+    fn sentry_dsn_env_override_maps_to_sentry_dsn() {
+        // edition 2024 下 set_var 为 unsafe；测试进程内独占该变量名，无并行冲突
+        unsafe {
+            std::env::set_var(
+                "APP_SENTRY_DSN",
+                "https://public@example.ingest.sentry.io/42",
+            )
+        };
+        let builder = config::Config::builder()
+            .add_source(
+                config::Environment::with_prefix("APP")
+                    .separator("_")
+                    .try_parsing(true),
+            )
+            .build()
+            .expect("环境变量源构建不应失败");
+        let sentry: SentryConfig = builder
+            .get("sentry")
+            .expect("sentry 段应由 APP_SENTRY_DSN 生成");
+        assert_eq!(
+            sentry.dsn.as_deref(),
+            Some("https://public@example.ingest.sentry.io/42")
+        );
     }
 }
