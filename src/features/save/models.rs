@@ -109,6 +109,10 @@ pub struct ParsedSaveDoc {
 pub struct SaveResponseDoc {
     /// 解析后的存档对象
     pub data: ParsedSaveDoc,
+    /// 玩家昵称（ADR-0004）：能解析会话令牌（sessionToken / Bearer 内嵌 /
+    /// externalCredentials.sessiontoken）时返回；无令牌或解析失败时整体省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
 }
 
 #[derive(Debug, Serialize, utoipa::ToSchema)]
@@ -120,4 +124,7 @@ pub struct SaveAndRksResponseDoc {
     /// 按难度统计的 C/FC/P 成绩数量（仅 calculate_rks=true 时返回）
     #[serde(rename = "gradeCounts")]
     pub grade_counts: CfcPCountsByDifficulty,
+    /// 玩家昵称（ADR-0004）：能解析会话令牌时返回；无令牌或解析失败时整体省略。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
 }

@@ -24,23 +24,36 @@ pub enum SaveApiResponse {
     SaveAndRks(SaveAndRksResponseDoc),
 }
 
-#[derive(serde::Serialize)]
-struct SaveDataBody<'a> {
-    data: &'a provider::ParsedSave,
-}
-
 #[derive(Debug, serde::Serialize)]
 pub struct SaveAndRksResponse {
     pub save: provider::ParsedSave,
     pub rks: PlayerRksResult,
     #[serde(rename = "gradeCounts")]
     pub grade_counts: super::super::models::CfcPCountsByDifficulty,
+    /// 顶层玩家昵称（ADR-0004）：能解析会话令牌时返回，否则整体省略（字节兼容）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
 }
 
-pub(super) fn serialize_save_data_body(parsed: &provider::ParsedSave) -> Result<Bytes, AppError> {
-    serde_json::to_vec(&SaveDataBody { data: parsed })
-        .map(Bytes::from)
-        .map_err(|e| AppError::Internal(format!("serialize save data response failed: {e}")))
+#[derive(serde::Serialize)]
+struct SaveDataBody<'a> {
+    data: &'a provider::ParsedSave,
+    /// 顶层玩家昵称（ADR-0004）：缓存 miss 时一并烤入正文，陈旧 ≤ save 缓存 TTL；
+    /// 无令牌/解析失败时整体省略，响应字节与历史版本一致。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nickname: Option<&'a str>,
+}
+
+pub(super) fn serialize_save_data_body(
+    parsed: &provider::ParsedSave,
+    nickname: Option<&str>,
+) -> Result<Bytes, AppError> {
+    serde_json::to_vec(&SaveDataBody {
+        data: parsed,
+        nickname,
+    })
+    .map(Bytes::from)
+    .map_err(|e| AppError::Internal(format!("serialize save data response failed: {e}")))
 }
 
 fn serialize_json_bytes<T: serde::Serialize>(value: &T, label: &str) -> Result<Bytes, AppError> {
@@ -53,8 +66,13 @@ fn json_bytes_response(body: Bytes) -> Response {
     (StatusCode::OK, [(CONTENT_TYPE, "application/json")], body).into_response()
 }
 
+/// 构建响应。
+///
+/// `nickname`（ADR-0004）仅用于 rks 复合响应的顶层字段；纯存档响应的正文
+/// （`data.data_body`）已在缓存填充阶段把昵称烤入，此处原样返回。
 pub(super) fn build_save_response(
     data: &SaveWithCache,
+    nickname: Option<String>,
     rks_opt: Option<(&RksComputeResult, &provider::ParsedSave)>,
 ) -> Result<Response, AppError> {
     let (body, calc_rks, calc_ms) = if let Some((rks_result, full_save)) = rks_opt {
@@ -71,6 +89,7 @@ pub(super) fn build_save_response(
             },
             rks: rks_result.rks.clone(),
             grade_counts,
+            nickname,
         };
         let body = serialize_json_bytes(&resp, "save+rks response")?;
         (body, true, rks_result.calc_ms)
@@ -236,7 +255,9 @@ mod tests {
     use std::collections::HashMap;
 
     use super::compute_grade_counts;
+    use super::serialize_save_data_body;
     use crate::features::save::models::{Difficulty, DifficultyRecord};
+    use crate::features::save::provider;
 
     fn rec(difficulty: Difficulty, score: u32, is_full_combo: bool) -> DifficultyRecord {
         DifficultyRecord {
@@ -248,6 +269,29 @@ mod tests {
             push_acc: None,
             push_acc_hint: None,
         }
+    }
+
+    /// ADR-0004：nickname=Some 时出现在顶层；None 时字段整体省略（字节兼容）。
+    #[test]
+    fn save_data_body_nickname_field_is_additive_and_omissible() {
+        let parsed = provider::ParsedSave {
+            game_record: HashMap::new(),
+            game_progress: None,
+            user: None,
+            settings: None,
+            game_key: None,
+            summary_parsed: None,
+            updated_at: None,
+        };
+
+        let with_nickname = serialize_save_data_body(&parsed, Some("Allay")).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&with_nickname).unwrap();
+        assert_eq!(v["nickname"], "Allay");
+        assert!(v.get("data").is_some());
+
+        let without = serialize_save_data_body(&parsed, None).unwrap();
+        let s = String::from_utf8(without.to_vec()).unwrap();
+        assert!(!s.contains("nickname"), "字段省略而非 null：{s}");
     }
 
     #[test]

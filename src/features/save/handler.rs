@@ -38,6 +38,11 @@ pub(super) struct SaveWithCache {
     pub(super) parsed: Arc<provider::ParsedSave>,
     pub(super) data_body: Bytes,
     pub(super) cache_status: &'static str,
+    /// 缓存 miss/skip 时已解析的昵称（已烤入 `data_body`）；hit 时为 `None`。
+    pub(super) nickname: Option<String>,
+    /// hit 时回传未消费的昵称后台任务（仅 calculate_rks 响应需要时才等待；
+    /// 丢弃时任务自行完成并温暖昵称缓存，ADR-0004）。
+    pub(super) nickname_task: Option<tokio::task::JoinHandle<Option<String>>>,
     auth_ms: i64,
     source_ms: i64,
     meta_ms: i64,
@@ -176,6 +181,22 @@ async fn authenticate_for_save(
 
 // ── Phase 3: 元数据获取 + 缓存 ──
 
+/// 提取可用于 `users/me` 的会话令牌（ADR-0004）：body 官方 sessionToken 优先，
+/// 其次 externalCredentials.sessiontoken（其存档流程本就走官方接口）。
+fn effective_session_token(payload: &UnifiedSaveRequest) -> Option<&str> {
+    if let Some(token) = payload.session_token.as_deref() {
+        return (!token.is_empty()).then_some(token);
+    }
+    payload
+        .external_credentials
+        .as_ref()
+        .and_then(|creds| creds.sessiontoken.as_deref())
+        .filter(|token| !token.is_empty())
+}
+
+// 参数均为调用点就地可得的上下文（认证产物/共享状态/计时打点/昵称任务），
+// 拆结构体只会增加一层转发；与本 crate 对形状类 lint 的整体宽容一致（lib.rs allow 列表）。
+#[allow(clippy::too_many_arguments)]
 async fn fetch_save_with_cache(
     source: SaveSource,
     taptap_version: Option<&str>,
@@ -184,6 +205,7 @@ async fn fetch_save_with_cache(
     stats: Option<&crate::stats_contract::StatsHandle>,
     auth_ms: i64,
     source_ms: i64,
+    nickname_task: Option<tokio::task::JoinHandle<Option<String>>>,
 ) -> Result<SaveWithCache, AppError> {
     let save_cfg = &crate::config::AppConfig::global().save;
 
@@ -233,7 +255,7 @@ async fn fetch_save_with_cache(
         None
     };
 
-    let (parsed, data_body, cache_lookup_ms, decode_ms, cache_status) =
+    let (parsed, data_body, cache_lookup_ms, decode_ms, cache_status, nickname, nickname_task) =
         if let Some(key) = cache_key.as_ref() {
             let t_cache = Instant::now();
             if let Some(entry) = save_cache().get(key).await {
@@ -254,12 +276,16 @@ async fn fetch_save_with_cache(
                 let parsed = entry.parsed.clone();
                 let data_body_bytes = entry.data_body_bytes.clone();
                 let save_decode_ms = duration_ms_i64(t_decode.elapsed());
+                // hit：正文已带 miss 时烤入的昵称；后台任务原样回传，
+                // 仅 calculate_rks 响应需要时才由调用方等待（ADR-0004）。
                 (
                     parsed,
                     data_body_bytes,
                     cache_lookup_ms,
                     save_decode_ms,
                     "hit",
+                    None,
+                    nickname_task,
                 )
             } else {
                 let cache_lookup_ms = duration_ms_i64(t_cache.elapsed());
@@ -278,7 +304,13 @@ async fn fetch_save_with_cache(
                 let t_decode = Instant::now();
                 let parsed = provider::get_decrypted_save_from_meta(meta, chart_constants).await?;
                 let parsed = Arc::new(parsed);
-                let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
+                // 昵称任务与存档下载/解密并发执行，此处只等剩余时间（ADR-0004）。
+                let nickname = match nickname_task {
+                    Some(handle) => handle.await.ok().flatten(),
+                    None => None,
+                };
+                let data_body_bytes =
+                    serialize_save_data_body(parsed.as_ref(), nickname.as_deref())?;
                 let save_decode_ms = duration_ms_i64(t_decode.elapsed());
                 save_cache()
                     .insert(
@@ -295,6 +327,8 @@ async fn fetch_save_with_cache(
                     cache_lookup_ms,
                     save_decode_ms,
                     "miss",
+                    nickname,
+                    None,
                 )
             }
         } else {
@@ -314,9 +348,21 @@ async fn fetch_save_with_cache(
             let t_decode = Instant::now();
             let parsed = provider::get_decrypted_save_from_meta(meta, chart_constants).await?;
             let parsed = Arc::new(parsed);
-            let data_body_bytes = serialize_save_data_body(parsed.as_ref())?;
+            let nickname = match nickname_task {
+                Some(handle) => handle.await.ok().flatten(),
+                None => None,
+            };
+            let data_body_bytes = serialize_save_data_body(parsed.as_ref(), nickname.as_deref())?;
             let save_decode_ms = duration_ms_i64(t_decode.elapsed());
-            (parsed, data_body_bytes, 0_i64, save_decode_ms, "skipped")
+            (
+                parsed,
+                data_body_bytes,
+                0_i64,
+                save_decode_ms,
+                "skipped",
+                nickname,
+                None,
+            )
         };
 
     let cache_lookup_status = if cache_status == "skipped" {
@@ -347,6 +393,8 @@ async fn fetch_save_with_cache(
         parsed,
         data_body,
         cache_status,
+        nickname,
+        nickname_task,
         auth_ms,
         source_ms,
         meta_ms,
@@ -584,7 +632,7 @@ fn spawn_leaderboard_write(
         ("calculate_rks" = Option<bool>, Query, description = "是否计算玩家RKS（true=计算，默认不计算）"),
     ),
     responses(
-        (status = 200, description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段，并为每个谱面回填 push_acc 与 push_acc_hint（推分提示）", body = SaveApiResponse),
+        (status = 200, description = "成功解析存档；当 calculate_rks=true 时同时包含 rks 字段，并为每个谱面回填 push_acc 与 push_acc_hint（推分提示）。响应顶层在能解析会话令牌（sessionToken / Bearer 内嵌凭证 / externalCredentials.sessiontoken）时附带 nickname 字段（ADR-0004）；无令牌或解析失败时该字段整体省略", body = SaveApiResponse),
         (status = 400, description = "请求参数错误", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
         (status = 401, description = "认证失败", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
         (status = 403, description = "用户已被封禁", body = crate::error::ProblemDetails, content_type = "application/problem+json"),
@@ -615,8 +663,19 @@ pub async fn get_save_data(
         dur_ms = source_ms, "save performance"
     );
 
+    // Phase 2.5: 昵称解析（ADR-0004）。有会话令牌（直接传入 / Bearer 合并 /
+    // external.sessiontoken）即后台起任务，与存档元信息获取及下载并发执行；
+    // 失败/超时降级为字段省略，绝不影响 /save 成功。
+    let nickname_task = effective_session_token(&auth.payload).map(|token| {
+        let token = token.to_owned();
+        let taptap_version = auth.taptap_version.clone();
+        tokio::spawn(async move {
+            super::nickname::resolve_session_nickname(&token, taptap_version.as_deref()).await
+        })
+    });
+
     // Phase 3: 元数据获取 + 缓存
-    let data = fetch_save_with_cache(
+    let mut data = fetch_save_with_cache(
         source,
         auth.taptap_version.as_deref(),
         auth.user_hash.as_deref(),
@@ -624,6 +683,7 @@ pub async fn get_save_data(
         state.stats.as_ref(),
         auth.auth_ms,
         source_ms,
+        nickname_task,
     )
     .await?;
 
@@ -673,16 +733,32 @@ pub async fn get_save_data(
     };
 
     // Phase 5: 构建响应
+    // 昵称（ADR-0004）：纯存档响应的正文已在缓存填充阶段烤入昵称（miss/skip
+    // 解析、hit 沿用），无需在此等待；仅 calculate_rks 的复合响应需要显式
+    // nickname 字段——miss 时 `data.nickname` 已就绪，hit 时才等待后台任务
+    // （昵称缓存 TTL 内为纯内存命中）。
+    let nickname = if calc_rks {
+        if data.nickname.is_some() {
+            data.nickname.clone()
+        } else {
+            match data.nickname_task.take() {
+                Some(handle) => handle.await.ok().flatten(),
+                None => None,
+            }
+        }
+    } else {
+        None
+    };
     let response = if let Some(ref rks_result) = rks_opt {
         if calc_rks {
             // 包含 RKS 的复合响应
-            build_save_response(&data, Some((rks_result, data.parsed.as_ref())))?
+            build_save_response(&data, nickname, Some((rks_result, data.parsed.as_ref())))?
         } else {
             // need_leaderboard 但不需要 RKS 响应
-            build_save_response(&data, None)?
+            build_save_response(&data, None, None)?
         }
     } else {
-        build_save_response(&data, None)?
+        build_save_response(&data, None, None)?
     };
 
     // 最终性能统计
@@ -749,7 +825,9 @@ pub fn create_save_router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::build_save_cache_key;
+    use super::{build_save_cache_key, effective_session_token};
+    use crate::features::save::client::ExternalApiCredentials;
+    use crate::features::save::models::UnifiedSaveRequest;
 
     #[test]
     fn build_save_cache_key_requires_user_and_updated_at() {
@@ -759,5 +837,65 @@ mod tests {
         let key = build_save_cache_key(Some("u1"), Some("2026-02-10T00:00:00Z"), Some("global"))
             .expect("cache key");
         assert_eq!(key, "u1:2026-02-10T00:00:00Z:global");
+    }
+
+    /// ADR-0004：会话令牌提取矩阵。
+    #[test]
+    fn effective_session_token_covers_all_token_paths() {
+        let token_of =
+            |payload: &UnifiedSaveRequest| effective_session_token(payload).map(str::to_owned);
+
+        // 官方 sessionToken 优先。
+        let direct = UnifiedSaveRequest {
+            session_token: Some("r:direct".to_string()),
+            external_credentials: None,
+            taptap_version: None,
+        };
+        assert_eq!(token_of(&direct).as_deref(), Some("r:direct"));
+
+        // Bearer 合并后等价于直接 sessionToken（payload 已被填充），此处验证即可。
+        // external.sessiontoken 作为回退。
+        let external = UnifiedSaveRequest {
+            session_token: None,
+            external_credentials: Some(ExternalApiCredentials {
+                platform: None,
+                platform_id: None,
+                sessiontoken: Some("r:external".to_string()),
+                api_user_id: None,
+                api_token: None,
+            }),
+            taptap_version: None,
+        };
+        assert_eq!(token_of(&external).as_deref(), Some("r:external"));
+
+        // 无令牌外部凭证 → None。
+        let external_no_token = UnifiedSaveRequest {
+            session_token: None,
+            external_credentials: Some(ExternalApiCredentials {
+                platform: Some("TapTap".to_string()),
+                platform_id: Some("12345".to_string()),
+                sessiontoken: None,
+                api_user_id: None,
+                api_token: None,
+            }),
+            taptap_version: None,
+        };
+        assert_eq!(token_of(&external_no_token), None);
+
+        // 空串按无令牌处理。
+        let empty_token = UnifiedSaveRequest {
+            session_token: Some(String::new()),
+            external_credentials: None,
+            taptap_version: None,
+        };
+        assert_eq!(token_of(&empty_token), None);
+
+        // 两者皆无 → None。
+        let none = UnifiedSaveRequest {
+            session_token: None,
+            external_credentials: None,
+            taptap_version: None,
+        };
+        assert_eq!(token_of(&none), None);
     }
 }

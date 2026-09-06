@@ -1,7 +1,5 @@
 use std::time::Instant;
 
-use crate::config::AppConfig;
-
 use super::runtime::duration_ms_i64;
 
 pub(super) async fn resolve_display_name(
@@ -24,27 +22,9 @@ pub(super) async fn resolve_display_name(
     ("Phigros Player".into(), 0)
 }
 
-/// 从 LeanCloud users/me 获取昵称（复用 phigros.cxx 的请求头部）
+/// 从 LeanCloud users/me 获取昵称（复用 phigros.cxx 的请求头部）。
+/// 委托 save 域的共享实现（ADR-0004）：带进程内缓存与总超时，
+/// 图片链路不再每次渲染都打上游。
 async fn fetch_nickname(session_token: &str, taptap_version: Option<&str>) -> Option<String> {
-    #[derive(serde::Deserialize)]
-    struct UserMe {
-        nickname: Option<String>,
-    }
-    let tap_config = AppConfig::global().taptap.resolve(taptap_version);
-    let url = format!("{}/users/me", tap_config.leancloud_base_url);
-    // 复用全局连接池，避免每次请求创建 Client。
-    let client = crate::http::client_default().ok()?;
-    let resp = client
-        .get(url)
-        .header("X-LC-Id", &tap_config.leancloud_app_id)
-        .header("X-LC-Key", &tap_config.leancloud_app_key)
-        .header("X-LC-Session", session_token)
-        .send()
-        .await
-        .ok()?;
-    if !resp.status().is_success() {
-        return None;
-    }
-    let me: UserMe = resp.json().await.ok()?;
-    me.nickname
+    crate::features::save::nickname::resolve_session_nickname(session_token, taptap_version).await
 }
