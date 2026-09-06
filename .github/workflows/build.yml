@@ -102,24 +102,43 @@ jobs:
         toolchain: 1.98.0
         targets: ${{ matrix.target }}
 
+    # musl 专用：先拉镜像并取 digest，作为缓存 key 输入。容器内 rustc 随
+    # muslrust:stable 浮动，而 rust-cache 的 key 默认只看宿主钉版工具链——
+    # 镜像一更新，恢复的旧产物指纹全灭（全量重编），且 rust-cache 因 "exact
+    # key 已命中" 拒绝回写，形成"命中却永不复用"死循环（2026-09-06 实证，
+    # 448 crate × 每次）。digest 进 key 后：镜像更新 → 换新 key（必然的
+    # 一次全量）→ 之后稳定命中。非 musl 平台本步跳过，后缀为空，key 与
+    # 历史完全一致，既有缓存不受扰动。
+    - name: 拉取 muslrust 镜像并取 digest（缓存 key 输入）
+      if: matrix.target == 'x86_64-unknown-linux-musl'
+      run: |
+        docker pull clux/muslrust:stable
+        DIGEST=$(docker inspect --format '{{index .RepoDigests 0}}' clux/muslrust:stable | cut -d: -f2)
+        echo "MUSL_KEY_SUFFIX=-${DIGEST:0:12}" >> "$GITHUB_ENV"
+
     # 先装工具链再恢复缓存（理由同 quality-gate）。
     - name: 恢复Cargo缓存
       uses: Swatinem/rust-cache@v2
       with:
-        shared-key: build-release-${{ runner.os }}-${{ matrix.target }}
+        shared-key: build-release-${{ runner.os }}-${{ matrix.target }}${{ env.MUSL_KEY_SUFFIX }}
         cache-on-failure: true
 
     # 使用预装好的 muslrust 容器进行 musl 构建，避免系统依赖问题。
-    # RUSTUP_TOOLCHAIN=stable：容器内忽略仓库的 rust-toolchain.toml，改用镜像
-    # 自带的 musl-host stable 工具链（自带 musl std）。否则 rustup 会按 toml
-    # 自动 sync 出 gnu host 的 1.98.0（无 musl std），首个 crate 即 E0463
-    # （2026-09-05 事故：muslrust:stable 浮动 tag 镜像更新后引爆）。musl 产物
-    # 的 rustc 随镜像追新，与其余平台的钉版 1.98.0 有意不同（静态自包含二进制，
-    # 行为不受影响）。
+    # 镜像已在"取 digest"步骤 pull，此处直接用本地同一份，探测与构建环境
+    # 一致。RUSTUP_TOOLCHAIN=stable：容器内忽略仓库的 rust-toolchain.toml，
+    # 改用镜像自带的 musl-host stable 工具链（自带 musl std）。否则 rustup
+    # 会按 toml 自动 sync 出 gnu host 的 1.98.0（无 musl std），首个 crate
+    # 即 E0463（2026-09-05 事故：muslrust:stable 浮动 tag 镜像更新后引爆）。
+    # musl 产物的 rustc 随镜像追新，与其余平台的钉版 1.98.0 有意不同（静态
+    # 自包含二进制，行为不受影响）。
+    # -v registry：rust-cache 缓存的宿主 ~/.cargo 不在容器视野内，不挂载的
+    # 话每次容器内重新下载全部 crate（随 --rm 丢弃）。只挂 registry 子目录
+    # （muslrust 官方推荐姿势），避免整个 CARGO_HOME 盖掉容器内 cargo 入口。
     - name: 使用 muslrust 容器构建 (Linux musl)
       if: matrix.target == 'x86_64-unknown-linux-musl'
       run: |
         docker run --rm -v "$PWD:/volume" -w /volume \
+          -v /home/runner/.cargo/registry:/usr/local/cargo/registry \
           -e RUSTFLAGS="${{ matrix.rustflags }}" -e RUSTUP_TOOLCHAIN=stable \
           clux/muslrust:stable \
           cargo build --profile release-dist --target x86_64-unknown-linux-musl
