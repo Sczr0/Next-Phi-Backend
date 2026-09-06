@@ -670,7 +670,7 @@ pub async fn get_save_data(
         let token = token.to_owned();
         let taptap_version = auth.taptap_version.clone();
         tokio::spawn(async move {
-            super::nickname::resolve_session_nickname(&token, taptap_version.as_deref()).await
+            crate::nickname::resolve_session_nickname(&token, taptap_version.as_deref()).await
         })
     });
 

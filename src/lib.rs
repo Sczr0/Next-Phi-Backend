@@ -59,6 +59,9 @@ pub mod image_api;
 pub mod leaderboard_api;
 #[path = "contracts/leaderboard_contract.rs"]
 pub mod leaderboard_contract;
+/// 玩家昵称解析（LeanCloud users/me）——/save 响应与图片链路共用（ADR-0004）。
+/// 顶层模块：被多个 feature 引用，stage2 闸门禁止 feature 互相引用。
+pub mod nickname;
 /// OpenAPI 文档（utoipa）
 pub mod openapi;
 #[path = "api/rks_api.rs"]

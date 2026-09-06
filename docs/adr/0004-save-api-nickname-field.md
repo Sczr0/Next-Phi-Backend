@@ -46,5 +46,6 @@ additive）须先立本 ADR。已核实 `tests/` 目录无任何测试钉定 `/s
   共享实现并获得缓存收益（原先每次渲染都打 users/me）。
 - 负面：有令牌路径的响应体多一个字段（严格 JSON 解析的客户端理论上可见）；
   缓存 miss 路径多一次上游调用（有昵称缓存限界）。无令牌路径零变化。
-- 实施状态：与本 ADR 同提交落地（save/nickname.rs 共享模块、handler 接线、
+- 实施状态：与本 ADR 同提交落地（顶层 `src/nickname.rs` 共享模块——stage2 闸门
+  禁止 feature 互相引用，故置于 features 之外、save/image 两侧引用、handler 接线、
   Swagger 更新、单测）。

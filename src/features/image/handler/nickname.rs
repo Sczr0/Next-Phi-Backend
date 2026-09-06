@@ -23,8 +23,8 @@ pub(super) async fn resolve_display_name(
 }
 
 /// 从 LeanCloud users/me 获取昵称（复用 phigros.cxx 的请求头部）。
-/// 委托 save 域的共享实现（ADR-0004）：带进程内缓存与总超时，
+/// 委托顶层共享实现（ADR-0004）：带进程内缓存与总超时，
 /// 图片链路不再每次渲染都打上游。
 async fn fetch_nickname(session_token: &str, taptap_version: Option<&str>) -> Option<String> {
-    crate::features::save::nickname::resolve_session_nickname(session_token, taptap_version).await
+    crate::nickname::resolve_session_nickname(session_token, taptap_version).await
 }

@@ -3,7 +3,6 @@ pub mod decryptor;
 pub mod handler;
 pub mod inspector;
 pub mod models;
-pub mod nickname;
 pub mod parser;
 pub mod provider;
 pub mod record_parser;
