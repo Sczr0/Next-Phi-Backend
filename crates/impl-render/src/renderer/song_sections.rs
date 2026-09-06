@@ -186,11 +186,14 @@ pub(super) fn write_footer(ctx: SongFooterRenderContext<'_>) -> Result<(), AppEr
     } = ctx;
 
     // 底部三段式布局（曲名卡片底缘 750 以下的 90px 内）：
-    //   声明行 baseline 在 height-74（整幅居中，非官方声明常驻）；
+    //   声明行 baseline 在 height-74，与底栏同 x / 同 end 锚点——右对齐构成
+    //   同一文本列（footer、签名行都贴右，声明若居中会在右对齐栈中显得突兀；
+    //   B27 整块居中，故两图对齐策略不同）；
     //   generated 行 baseline 在 height-56，下方两行 tspan 由签名注入在 +18/+36 处接续
     //   （画布 840 时分别为 802/820，距底缘 20px）。
     // footer 元素带 data-lilith-footer 标记供签名注入定位（不依赖文案内容），
     // text-anchor 显式写在属性上（签名行会复制它；CSS 里的 end 声明仅作兜底）。
+    let footer_x = f64::from(width) - padding;
     if let Some(disclaimer) = data
         .disclaimer_text
         .as_deref()
@@ -198,14 +201,13 @@ pub(super) fn write_footer(ctx: SongFooterRenderContext<'_>) -> Result<(), AppEr
     {
         writeln!(
             svg,
-            r#"<text x="50%" y="{}" class="text text-disclaimer" text-anchor="middle">{}</text>"#,
+            r#"<text x="{footer_x}" y="{}" class="text text-disclaimer" text-anchor="end">{}</text>"#,
             f64::from(height) - 74.0,
             escape_xml(disclaimer)
         )
         .map_err(svg_fmt_error)?;
     }
     let footer_y = f64::from(height) - 56.0;
-    let footer_x = f64::from(width) - padding;
     let time_str = format_utc8_datetime(&data.update_time, "%Y-%m-%d %H:%M:%S UTC+8");
     let right_text = match data.custom_footer_text.as_deref() {
         Some(txt) if !txt.is_empty() => escape_xml(txt),

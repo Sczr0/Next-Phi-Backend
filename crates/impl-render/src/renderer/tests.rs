@@ -193,8 +193,9 @@ fn generate_song_svg_contains_disclaimer_and_footer_marker() {
     let svg = generate_song_svg_string(&data, false, None, None).unwrap();
     // 画布加高为 840。
     assert!(svg.contains(r#"width="1400" height="840""#));
-    // 声明行：居中锚点写在属性上，类不声明 text-anchor（否则会覆盖属性）。
-    assert!(svg.contains(r#"class="text text-disclaimer" text-anchor="middle""#));
+    // 声明行：与底栏同 end 锚点、右对齐同一文本列（类不声明 text-anchor，
+    // 锚点由属性显式给定，避免 CSS 覆盖属性）。
+    assert!(svg.contains(r#"class="text text-disclaimer" text-anchor="end""#));
     assert!(svg.contains("本项目为非官方玩家项目测试声明。"));
     // 底栏带 marker（签名注入定位用），锚点 end 显式在属性上。
     assert!(svg.contains(r#"class="text text-footer" text-anchor="end" data-lilith-footer="1""#));

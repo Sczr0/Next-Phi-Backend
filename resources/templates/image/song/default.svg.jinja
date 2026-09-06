@@ -104,8 +104,9 @@
   {% endfor %}
 
   {# 非官方声明（合规要求常驻） + 底栏 #}
+  {# 声明行与底栏同 x / 同 end 锚点构成右侧同一文本列（与手写路径一致）。 #}
   {% if footer.disclaimer_xml %}
-  <text x="50%" y="{{ footer.disclaimer_y }}" class="text text-disclaimer" text-anchor="middle">{{ footer.disclaimer_xml }}</text>
+  <text x="{{ page.width - footer.pad }}" y="{{ footer.disclaimer_y }}" class="text text-disclaimer" text-anchor="end">{{ footer.disclaimer_xml }}</text>
   {% endif %}
   <text x="{{ page.width - footer.pad }}" y="{{ footer.y }}" class="text text-footer" text-anchor="end" data-lilith-footer="1">{{ footer.text_xml }}</text>
 </svg>
