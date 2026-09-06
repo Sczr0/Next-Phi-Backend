@@ -14,7 +14,7 @@ use crate::{
 };
 
 use super::{
-    context::image_footer_text,
+    context::{image_disclaimer_text, image_footer_text},
     output::{
         ImageOutputCacheSpec, ImageQueryOpts, SvgRenderOptions, image_content_headers,
         render_svg_output_bytes, validate_image_query_opts,
@@ -148,6 +148,7 @@ pub async fn render_bn_user(
         challenge_rank: None,
         data_string: None,
         custom_footer_text: image_footer_text(),
+        disclaimer_text: image_disclaimer_text(),
         is_user_generated: explicit,
     };
 

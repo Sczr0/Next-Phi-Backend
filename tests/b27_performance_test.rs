@@ -286,6 +286,7 @@ async fn test_b27_generation_with_flamegraph() {
         challenge_rank: None,
         data_string: None,
         custom_footer_text: Some(config.branding.footer_text.clone()),
+        disclaimer_text: Some(config.branding.disclaimer_text.clone()),
         is_user_generated: false,
     };
 

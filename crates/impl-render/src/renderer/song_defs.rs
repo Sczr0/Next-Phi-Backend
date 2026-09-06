@@ -57,6 +57,11 @@ pub(super) fn write_song_defs(ctx: SongDefsRenderContext<'_>) -> Result<SongDefs
         .text-difficulty-in {{ fill: #FFB347; }}
         .text-difficulty-at {{ fill: #FF6961; }}
         .text-footer {{ font-size: 14px; fill: #888888; text-anchor: end; }}
+        /* 非官方声明行与签名行：同 footer 观感，但绝不声明 text-anchor——
+           锚点由元素属性显式给定（CSS 规则会覆盖 presentation attribute，
+           声明了 anchor 的类会让注入元素上的 middle/end 属性失效）。 */
+        .text-disclaimer {{ font-size: 14px; fill: #888888; }}
+        .text-sig-line {{ font-size: 14px; fill: #888888; }}
         .text-constants {{ font-size: 18px; fill: #AAAAAA; }}
         .player-info-card {{ fill: rgba(40, 45, 60, 0.8); stroke: rgba(100, 100, 100, 0.4); stroke-width: 1; }}
         .difficulty-card {{ fill: url(#card-gradient); stroke: rgba(120, 120, 120, 0.5); stroke-width: 1.5; }} /* 使用渐变填充 */

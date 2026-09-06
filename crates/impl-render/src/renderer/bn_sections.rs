@@ -129,6 +129,7 @@ mod tests {
             challenge_rank: Some(("Green<&>\"".to_string(), "Lv<1&\"".to_string())),
             data_string: None,
             custom_footer_text: None,
+            disclaimer_text: None,
             is_user_generated: false,
         };
         let mut svg = String::new();
@@ -159,11 +160,25 @@ pub(super) fn write_footer(ctx: BnFooterRenderContext<'_>) -> Result<(), AppErro
         footer_height: _,
     } = ctx;
 
-    // 垂直居中：4 行文本块（生成行 + 签名 3 行）视觉高 ≈ 68px，
-    // 在 104px 底栏区内上下均分 → 首行 baseline = total - 74。
+    // 垂直布局：5 行文本块（声明行 + 生成行 + 签名 3 行）在 122px 底栏区内大致居中：
+    //   声明行 baseline = total - 92（整幅居中，非官方声明常驻）；
+    //   生成行 baseline = total - 74，签名行由注入在 +18/+36/+54 处接续。
     let footer_y = f64::from(total_height) - 74.0;
 
-    // 水平居中：x="50%" + text-anchor="middle"，签名继承此锚点。
+    // 水平居中：x="50%" + text-anchor="middle"（显式属性，签名行复制此锚点）。
+    if let Some(disclaimer) = stats
+        .disclaimer_text
+        .as_deref()
+        .filter(|txt| !txt.is_empty())
+    {
+        let disclaimer_y = footer_y - 18.0;
+        writeln!(
+            svg,
+            r#"<text x="50%" y="{disclaimer_y:.1}" class="text-disclaimer" text-anchor="middle">{}</text>"#,
+            escape_xml(disclaimer)
+        )
+        .map_err(svg_fmt_error)?;
+    }
     let generated_text = generated_at_utc8_text();
     let line_text = if let Some(custom) = &stats.custom_footer_text
         && !custom.is_empty()
@@ -174,7 +189,7 @@ pub(super) fn write_footer(ctx: BnFooterRenderContext<'_>) -> Result<(), AppErro
     };
     writeln!(
         svg,
-        r#"<text x="50%" y="{footer_y:.1}" class="text-footer" text-anchor="middle">{line_text}</text>"#
+        r#"<text x="50%" y="{footer_y:.1}" class="text-footer" text-anchor="middle" data-lilith-footer="1">{line_text}</text>"#
     )
     .map_err(svg_fmt_error)?;
 

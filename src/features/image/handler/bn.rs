@@ -19,7 +19,7 @@ use super::{
     bn_compute::{self, BnComputeInput, BnComputeOutput},
     context::{
         derive_image_user_identity, ensure_image_user_not_banned, image_cache_enabled,
-        image_footer_text,
+        image_disclaimer_text, image_footer_text,
     },
     nickname::resolve_display_name,
     output::{
@@ -246,6 +246,7 @@ pub async fn render_bn(
         challenge_rank,
         data_string,
         custom_footer_text: image_footer_text(),
+        disclaimer_text: image_disclaimer_text(),
         is_user_generated: false,
     };
 

@@ -15,6 +15,12 @@ pub(super) fn image_footer_text() -> Option<String> {
     Some(AppConfig::global().branding.footer_text.clone())
 }
 
+/// 图片底部非官方声明（合规要求常驻；配置留空则不渲染）。
+pub(super) fn image_disclaimer_text() -> Option<String> {
+    let text = AppConfig::global().branding.disclaimer_text.trim();
+    (!text.is_empty()).then(|| text.to_string())
+}
+
 pub(super) fn image_cache_enabled() -> bool {
     AppConfig::global().image.cache_enabled
 }

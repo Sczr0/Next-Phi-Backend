@@ -69,6 +69,8 @@ pub struct PlayerStats {
     pub challenge_rank: Option<(String, String)>, // 课题等级（颜色、等级）
     pub data_string: Option<String>,              // 格式化后的 Data 字符串
     pub custom_footer_text: Option<String>,
+    /// 底部非官方声明（合规要求常驻；None/空则不渲染）
+    pub disclaimer_text: Option<String>,
     pub is_user_generated: bool, // 标记是否为用户生成
 }
 
@@ -108,6 +110,8 @@ pub struct SongRenderData {
     pub illustration_path: Option<PathBuf>,
     /// 可选：右下角自定义文字
     pub custom_footer_text: Option<String>,
+    /// 底部非官方声明（合规要求常驻；None/空则不渲染）
+    pub disclaimer_text: Option<String>,
 }
 
 /// 排行榜渲染数据

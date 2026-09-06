@@ -138,6 +138,17 @@ pub(super) fn write_defs(ctx: BnDefsRenderContext<'_>) -> Result<BnDefsTiming, A
         palette.text_color,
     )
     .map_err(svg_fmt_error)?;
+    // 声明行/签名行：与 footer 同观感；绝不声明 text-anchor（锚点由元素属性
+    // 显式给定，CSS 规则会覆盖 presentation attribute，见 signing.rs 注释）。
+    write!(
+        svg,
+        r"
+        .text-disclaimer {{ font-size: 14px; fill: {secondary}; }}
+        .text-sig-line {{ font-size: 14px; fill: {secondary}; }}
+        ",
+        secondary = palette.text_secondary_color,
+    )
+    .map_err(svg_fmt_error)?;
     writeln!(svg, "</style>").map_err(svg_fmt_error)?;
     let style_elapsed = started_at.elapsed();
 

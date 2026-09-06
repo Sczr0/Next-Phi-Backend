@@ -74,6 +74,8 @@ format = "full"
 [branding]
 # 右下角自定义文字（留空则不显示）
 footer_text = "Powered by lilith.xtower.site"
+# 图片底部非官方声明（官方同人规范条例要求；留空则不显示，默认内置合规文案）
+# disclaimer_text = "本项目为非官方玩家项目，与南京鸽游网络有限公司及《Phigros》官方不存在授权、合作或运营关系。"
 
 [stats]
 # 是否启用统计

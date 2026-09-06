@@ -570,11 +570,31 @@ impl TapTapMultiConfig {
 }
 
 /// 品牌/展示配置
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrandingConfig {
     /// 右下角自定义文字（留空则不显示）
     #[serde(default)]
     pub footer_text: String,
+
+    /// 图片底部非官方声明（同人规范条例要求；留空则不显示）
+    #[serde(default = "default_disclaimer_text")]
+    pub disclaimer_text: String,
+}
+
+/// 非官方声明的默认文案（官方同人规范条例要求常驻展示）
+#[must_use]
+pub fn default_disclaimer_text() -> String {
+    "本项目为非官方玩家项目，与南京鸽游网络有限公司及《Phigros》官方不存在授权、合作或运营关系。"
+        .to_string()
+}
+
+impl Default for BrandingConfig {
+    fn default() -> Self {
+        Self {
+            footer_text: String::new(),
+            disclaimer_text: default_disclaimer_text(),
+        }
+    }
 }
 
 /// 应用配置

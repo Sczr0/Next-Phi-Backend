@@ -32,6 +32,11 @@
       .text-player-info { font-size: 22px; font-weight: 800; fill: #FFFFFF; }
       .text-player-rks { font-size: 20px; fill: #E0E0E0; }
       .text-footer { font-size: 14px; fill: #888888; text-anchor: end; }
+      {# 声明行/签名行：绝不声明 text-anchor，锚点由元素属性显式给定
+         （CSS 规则会覆盖 presentation attribute，声明了 anchor 的类
+         会让注入签名行上的锚点属性失效、文字错位）。 #}
+      .text-disclaimer { font-size: 14px; fill: #888888; }
+      .text-sig-line { font-size: 14px; fill: #888888; }
 
       .difficulty-card { fill: url(#card-gradient); stroke: rgba(120, 120, 120, 0.5); stroke-width: 1.5; filter: url(#card-shadow); }
       .difficulty-card-inactive { fill: rgba(40, 45, 60, 0.5); stroke: rgba(70, 70, 70, 0.3); stroke-width: 1; }
@@ -98,6 +103,10 @@
     </g>
   {% endfor %}
 
-  <text x="{{ page.width - footer.pad }}" y="{{ footer.y }}" class="text-footer">{{ footer.text_xml }}</text>
+  {# 非官方声明（合规要求常驻） + 底栏 #}
+  {% if footer.disclaimer_xml %}
+  <text x="50%" y="{{ footer.disclaimer_y }}" class="text text-disclaimer" text-anchor="middle">{{ footer.disclaimer_xml }}</text>
+  {% endif %}
+  <text x="{{ page.width - footer.pad }}" y="{{ footer.y }}" class="text text-footer" text-anchor="end" data-lilith-footer="1">{{ footer.text_xml }}</text>
 </svg>
 

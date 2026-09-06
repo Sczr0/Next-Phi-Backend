@@ -17,7 +17,7 @@ use crate::{
 use super::{
     context::{
         derive_image_user_identity, ensure_image_user_not_banned, image_cache_enabled,
-        image_footer_text,
+        image_disclaimer_text, image_footer_text,
     },
     nickname::resolve_display_name,
     output::{
@@ -212,6 +212,7 @@ pub async fn render_song(
         difficulty_scores,
         illustration_path,
         custom_footer_text: image_footer_text(),
+        disclaimer_text: image_disclaimer_text(),
     };
 
     // 等待许可与渲染分段计时
