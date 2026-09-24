@@ -26,6 +26,19 @@ use self::response::{
 
 // ── 内部阶段结果结构体 ──
 
+/// 序列化 `/save` 正文属 CPU 密集操作（整份 `ParsedSave`，可达数百 KB），
+/// 移出 tokio worker，避免大响应序列化阻塞运行时。
+async fn serialize_save_data_body_offloaded(
+    parsed: Arc<provider::ParsedSave>,
+    nickname: Option<String>,
+) -> Result<Bytes, AppError> {
+    tokio::task::spawn_blocking(move || {
+        serialize_save_data_body(parsed.as_ref(), nickname.as_deref())
+    })
+    .await
+    .map_err(|e| AppError::Internal(format!("save 序列化任务失败: {e}")))?
+}
+
 struct SaveAuth {
     user_hash: Option<String>,
     user_kind: Option<String>,
@@ -255,6 +268,16 @@ async fn fetch_save_with_cache(
         None
     };
 
+    // 单飞：同一缓存 key 的并发 /save 只允许一个任务真正下载+解密+序列化，
+    // 其余任务在锁后由既有缓存检查直接命中（仅在有缓存键时加锁）。
+    let _save_flight_guard = match cache_key.as_ref() {
+        Some(key) => {
+            let lock = crate::single_flight::keyed_lock(&format!("save:{key}")).await;
+            Some(lock.clone().lock_owned().await)
+        }
+        None => None,
+    };
+
     let (parsed, data_body, cache_lookup_ms, decode_ms, cache_status, nickname, nickname_task) =
         if let Some(key) = cache_key.as_ref() {
             let t_cache = Instant::now();
@@ -310,7 +333,7 @@ async fn fetch_save_with_cache(
                     None => None,
                 };
                 let data_body_bytes =
-                    serialize_save_data_body(parsed.as_ref(), nickname.as_deref())?;
+                    serialize_save_data_body_offloaded(parsed.clone(), nickname.clone()).await?;
                 let save_decode_ms = duration_ms_i64(t_decode.elapsed());
                 save_cache()
                     .insert(
@@ -352,7 +375,8 @@ async fn fetch_save_with_cache(
                 Some(handle) => handle.await.ok().flatten(),
                 None => None,
             };
-            let data_body_bytes = serialize_save_data_body(parsed.as_ref(), nickname.as_deref())?;
+            let data_body_bytes =
+                serialize_save_data_body_offloaded(parsed.clone(), nickname.clone()).await?;
             let save_decode_ms = duration_ms_i64(t_decode.elapsed());
             (
                 parsed,

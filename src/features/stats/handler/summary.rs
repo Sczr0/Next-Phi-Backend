@@ -227,6 +227,14 @@ pub async fn get_stats_summary(
         return Ok(Json((*cached).clone()));
     }
 
+    // 单飞：同一 key 的并发 miss 只允许一个任务计算（多秒聚合），
+    // 其余任务在锁后二次检查缓存直接命中，避免惊群打爆存储。
+    let flight = crate::single_flight::keyed_lock(&cache_key).await;
+    let _flight_guard = flight.lock().await;
+    if let Some(cached) = stats_summary_cache().get(&cache_key).await {
+        return Ok(Json((*cached).clone()));
+    }
+
     let start_utc_ref = start_utc.as_deref();
     let end_utc_ref = end_utc.as_deref();
     let feature_ref = q.feature.as_deref();

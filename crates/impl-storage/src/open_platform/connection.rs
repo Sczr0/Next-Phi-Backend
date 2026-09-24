@@ -1,6 +1,10 @@
 use std::path::Path;
+use std::time::Duration;
 
-use sqlx::{ConnectOptions, SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{
+    ConnectOptions,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 
 use crate::error::AppError;
 
@@ -8,27 +12,25 @@ use super::OpenPlatformStorage;
 
 impl OpenPlatformStorage {
     pub async fn connect_sqlite(path: &str, wal: bool) -> Result<Self, AppError> {
-        let opt = SqliteConnectOptions::new()
+        // 与统计库一致：把 journal_mode/synchronous/foreign_keys/busy_timeout 写进
+        // `SqliteConnectOptions`，确保**池中每条连接**都生效——此前的 per-connection
+        // `PRAGMA ...`（execute(&pool)）在池轮转下可能落到任意/其它连接，行为不确定。
+        let mut opt = SqliteConnectOptions::new()
             .filename(Path::new(path))
             .create_if_missing(true)
+            .busy_timeout(Duration::from_secs(5))
+            .foreign_keys(true)
+            .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
             .log_statements(tracing::log::LevelFilter::Off);
-        let pool = SqlitePool::connect_with(opt)
+        if wal {
+            opt = opt.journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+        }
+        let pool = SqlitePoolOptions::new()
+            .max_connections(4)
+            .acquire_timeout(Duration::from_secs(10))
+            .connect_with(opt)
             .await
             .map_err(|e| AppError::Internal(format!("open platform sqlite connect: {e}")))?;
-        if wal {
-            sqlx::query("PRAGMA journal_mode=WAL;")
-                .execute(&pool)
-                .await
-                .ok();
-        }
-        sqlx::query("PRAGMA synchronous=NORMAL;")
-            .execute(&pool)
-            .await
-            .ok();
-        sqlx::query("PRAGMA foreign_keys=ON;")
-            .execute(&pool)
-            .await
-            .ok();
         Ok(Self { pool })
     }
 

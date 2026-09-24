@@ -1,18 +1,24 @@
-use crate::extract::ValidatedQuery;
 use axum::{
     Router,
     extract::State,
     response::{IntoResponse, Json},
     routing::get,
 };
+use once_cell::sync::Lazy;
+use tokio::sync::Semaphore;
 
 use crate::error::AppError;
+use crate::extract::ValidatedQuery;
 use crate::features::song::models::{SearchMode, SongCandidatePreview, SongInfo};
 use crate::state::AppState;
 
 const DEFAULT_LIMIT: u32 = 20;
 const MAX_LIMIT: u32 = 100;
 const MAX_QUERY_CHARS: usize = 128;
+
+/// 搜索并发上限：搜索是 CPU 密集的目录扫描（O(N) 线性匹配 + 模糊回退），
+/// 统一挪到 `spawn_blocking` 并限制并发，避免耗尽 tokio 阻塞线程池。
+static SEARCH_SEMAPHORE: Lazy<Semaphore> = Lazy::new(|| Semaphore::new(num_cpus::get().max(2)));
 
 /// 分页响应（用于非 unique 查询）。
 #[derive(serde::Serialize, utoipa::ToSchema)]
@@ -187,11 +193,18 @@ pub async fn search_songs(
     }
 
     if let Some(mode) = multi_mode {
-        let results = state.song_catalog.search_multi(
-            q,
-            mode,
-            crate::features::song::models::SearchOptions::default(),
-        );
+        let _permit = SEARCH_SEMAPHORE.acquire().await.ok();
+        let catalog = state.song_catalog.clone();
+        let query = q.to_string();
+        let results = tokio::task::spawn_blocking(move || {
+            catalog.search_multi(
+                &query,
+                mode,
+                crate::features::song::models::SearchOptions::default(),
+            )
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("歌曲搜索任务失败: {e}")))?;
 
         if unique {
             match results.as_slice() {
@@ -221,10 +234,21 @@ pub async fn search_songs(
             Ok(Json(build_song_page(page_items, total, limit, offset)).into_response())
         }
     } else if unique {
-        let item = state.song_catalog.search_unique(q)?;
+        let _permit = SEARCH_SEMAPHORE.acquire().await.ok();
+        let catalog = state.song_catalog.clone();
+        let query = q.to_string();
+        let item = tokio::task::spawn_blocking(move || catalog.search_unique(&query))
+            .await
+            .map_err(|e| AppError::Internal(format!("歌曲搜索任务失败: {e}")))??;
         Ok(Json::<SongInfo>(item.as_ref().clone()).into_response())
     } else {
-        let (items, total) = state.song_catalog.search_page(q, offset, limit);
+        let _permit = SEARCH_SEMAPHORE.acquire().await.ok();
+        let catalog = state.song_catalog.clone();
+        let query = q.to_string();
+        let (items, total) =
+            tokio::task::spawn_blocking(move || catalog.search_page(&query, offset, limit))
+                .await
+                .map_err(|e| AppError::Internal(format!("歌曲搜索任务失败: {e}")))?;
         let page_items: Vec<SongInfo> = items.iter().map(|a| a.as_ref().clone()).collect();
         Ok(Json(build_song_page(page_items, total, limit, offset)).into_response())
     }

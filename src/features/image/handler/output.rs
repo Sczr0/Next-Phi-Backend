@@ -203,6 +203,20 @@ impl ImageOutputCacheSpec {
             i32::from(self.signing_enabled),
         )
     }
+
+    /// 用户自报成绩 BN（无 `user_hash`）：以请求体规范化哈希 + 输出维度构成缓存键。
+    pub(super) fn user_bn_cache_key(&self, request_hash: &str) -> String {
+        format!(
+            "anon:userbn:{}:{}:{}:{}:{}:{}:{}",
+            request_hash,
+            self.tpl_code,
+            self.fmt_code,
+            self.width_code,
+            self.webp_quality_code,
+            self.webp_lossless_code,
+            i32::from(self.signing_enabled),
+        )
+    }
 }
 
 const fn theme_cache_code(theme: Theme) -> &'static str {

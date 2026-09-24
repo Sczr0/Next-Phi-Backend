@@ -13,6 +13,27 @@ mod session;
 mod submission;
 mod summary;
 
+/// 连接池调优参数（D1/ADR-0002）。由组合根从配置注入——impl-storage 不依赖配置 crate。
+#[derive(Debug, Clone, Copy)]
+pub struct PoolTuning {
+    /// 统计库池最大连接数（events + daily_* + 聚合/归档）
+    pub stats_max_connections: u32,
+    /// 领域库池最大连接数（榜单 / 资料 / 存档 / 封禁 / 会话）
+    pub state_max_connections: u32,
+    /// 获取连接超时（秒）
+    pub acquire_timeout_secs: u64,
+}
+
+impl Default for PoolTuning {
+    fn default() -> Self {
+        Self {
+            stats_max_connections: 8,
+            state_max_connections: 4,
+            acquire_timeout_secs: 10,
+        }
+    }
+}
+
 /// 保存提交入库参数，减少函数参数数量
 pub struct SubmissionRecord<'a> {
     pub user_hash: &'a str,

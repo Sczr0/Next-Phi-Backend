@@ -11,7 +11,7 @@ use tokio::sync::{mpsc, watch};
 use crate::{config::AppConfig, error::AppError};
 use models::EventInsert;
 use once_cell::sync::OnceCell;
-use storage::StatsStorage;
+use storage::{PoolTuning, StatsStorage};
 
 /// 统计服务句柄：对外只暴露异步上报通道与优雅关闭
 #[derive(Clone)]
@@ -133,10 +133,15 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
     }
 
     let storage = Arc::new(
-        StatsStorage::connect_split(
+        StatsStorage::connect_split_tuned(
             &config.stats.sqlite_path,
             config.stats.state_db_path.as_deref(),
             config.stats.sqlite_wal,
+            PoolTuning {
+                stats_max_connections: config.stats.pool_max_connections,
+                state_max_connections: config.stats.state_pool_max_connections,
+                acquire_timeout_secs: config.stats.sqlite_acquire_timeout_secs,
+            },
         )
         .await?,
     );

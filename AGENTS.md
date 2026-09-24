@@ -86,3 +86,4 @@ python tools/check-adr.py          # ADR 编号连续
 - `stats/storage/summary.rs`：快路径以 `backfill_complete` 哨兵 + 逐日覆盖为前提；feature 维度查询走慢路径（有索引支撑），**不许**为了"快"删掉慢路径哨兵。
 - `stats/archive.rs`：**先归档、后清理**（`cleanup_skips_unarchived_days` 守卫防丢数据）；清理 `CLEANUP_DELETE_BATCH_SIZE=5000` 防长事务锁写。
 - `config.rs`：所有密钥默认从 `APP_*` 环境变量读取；**敏感值不得进 git**。
+- `src/rate_limit.rs` / `router.rs` 的 `[limits]` 中间件：限流/超时/body 上限是 C1 的**受控变更**（429/504/413），默认关闭/宽松（见 ADR-0006）；改动前先读该 ADR。

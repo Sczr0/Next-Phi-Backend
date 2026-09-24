@@ -509,6 +509,71 @@ impl Default for CorsConfig {
     }
 }
 
+/// 网关边缘防护配置（限流 / 请求超时 / 请求体上限）
+///
+/// 注意：这些中间件会新增对外响应语义（429 / 504 / 413），属对外契约 C1 的
+/// **受控变更**（见 `docs/adr/`）。默认全部宽松/关闭，正常流量零感知。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LimitsConfig {
+    /// 是否启用全站限流（默认关闭，上线先以宽松值试跑再开）
+    #[serde(default = "LimitsConfig::default_rate_limit_enabled")]
+    pub rate_limit_enabled: bool,
+    /// 全局每 IP 每分钟请求上限
+    #[serde(default = "LimitsConfig::default_rate_limit_per_minute")]
+    pub rate_limit_per_minute: u32,
+    /// 昂贵端点（图片渲染/存档/搜索）每 IP 每分钟请求上限
+    #[serde(default = "LimitsConfig::default_expensive_rate_limit_per_minute")]
+    pub expensive_rate_limit_per_minute: u32,
+    /// 单请求处理超时（秒），超时返回 504
+    #[serde(default = "LimitsConfig::default_request_timeout_secs")]
+    pub request_timeout_secs: u64,
+    /// 请求体最大字节数，超限返回 413
+    #[serde(default = "LimitsConfig::default_max_body_bytes")]
+    pub max_body_bytes: u64,
+    /// 是否信任 X-Forwarded-For / X-Real-IP 作为客户端 IP（网关在反代/CDN 后应开启）
+    #[serde(default = "LimitsConfig::default_trust_forwarded_for")]
+    pub trust_forwarded_for: bool,
+}
+
+impl LimitsConfig {
+    const fn default_rate_limit_enabled() -> bool {
+        false
+    }
+
+    const fn default_rate_limit_per_minute() -> u32 {
+        600
+    }
+
+    const fn default_expensive_rate_limit_per_minute() -> u32 {
+        60
+    }
+
+    const fn default_request_timeout_secs() -> u64 {
+        30
+    }
+
+    const fn default_max_body_bytes() -> u64 {
+        2_097_152
+    }
+
+    const fn default_trust_forwarded_for() -> bool {
+        true
+    }
+}
+
+impl Default for LimitsConfig {
+    fn default() -> Self {
+        Self {
+            rate_limit_enabled: Self::default_rate_limit_enabled(),
+            rate_limit_per_minute: Self::default_rate_limit_per_minute(),
+            expensive_rate_limit_per_minute: Self::default_expensive_rate_limit_per_minute(),
+            request_timeout_secs: Self::default_request_timeout_secs(),
+            max_body_bytes: Self::default_max_body_bytes(),
+            trust_forwarded_for: Self::default_trust_forwarded_for(),
+        }
+    }
+}
+
 /// TapTap 版本枚举
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -640,6 +705,9 @@ pub struct AppConfig {
     /// Sentry 错误监控配置（DSN 为空 = 禁用；环境变量 `APP_SENTRY_DSN` 覆盖）
     #[serde(default)]
     pub sentry: SentryConfig,
+    /// 网关边缘防护（限流 / 请求超时 / 请求体上限）
+    #[serde(default)]
+    pub limits: LimitsConfig,
 }
 
 impl AppConfig {
@@ -801,6 +869,7 @@ impl Default for AppConfig {
             shutdown: ShutdownConfig::default(),
             leaderboard: LeaderboardConfig::default(),
             sentry: SentryConfig::default(),
+            limits: LimitsConfig::default(),
         }
     }
 }
@@ -1162,6 +1231,15 @@ pub struct StatsConfig {
     /// >0 时每日聚合循环内清理超限旧行（影响 RKS 历史接口可回溯长度，见 ADR-0003）。
     #[serde(default = "StatsConfig::default_save_submissions_retention_per_user")]
     pub save_submissions_retention_per_user: u32,
+    /// D1/ADR-0002：统计库连接池最大连接数（默认 8）。
+    #[serde(default = "StatsConfig::default_pool_max_connections")]
+    pub pool_max_connections: u32,
+    /// D1/ADR-0002：领域库（state.db）连接池最大连接数（默认 4）。
+    #[serde(default = "StatsConfig::default_state_pool_max_connections")]
+    pub state_pool_max_connections: u32,
+    /// 连接池获取连接超时（秒，默认 10）。
+    #[serde(default = "StatsConfig::default_acquire_timeout_secs")]
+    pub sqlite_acquire_timeout_secs: u64,
 }
 
 impl StatsConfig {
@@ -1195,6 +1273,15 @@ impl StatsConfig {
     const fn default_save_submissions_retention_per_user() -> u32 {
         0
     }
+    const fn default_pool_max_connections() -> u32 {
+        8
+    }
+    const fn default_state_pool_max_connections() -> u32 {
+        4
+    }
+    const fn default_acquire_timeout_secs() -> u64 {
+        10
+    }
 }
 
 impl Default for StatsConfig {
@@ -1215,6 +1302,9 @@ impl Default for StatsConfig {
             daily_aggregate_time: Self::default_daily_time(),
             save_submissions_retention_per_user: Self::default_save_submissions_retention_per_user(
             ),
+            pool_max_connections: Self::default_pool_max_connections(),
+            state_pool_max_connections: Self::default_state_pool_max_connections(),
+            sqlite_acquire_timeout_secs: Self::default_acquire_timeout_secs(),
         }
     }
 }

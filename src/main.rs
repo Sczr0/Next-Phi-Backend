@@ -278,7 +278,11 @@ async fn main() {
         }
     };
 
-    let graceful = axum::serve(listener, app).with_graceful_shutdown(async {
+    let graceful = axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
         shutdown_signal.await;
         tracing::info!("开始优雅关闭HTTP服务器...");
     });

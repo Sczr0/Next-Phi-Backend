@@ -130,6 +130,13 @@ pub async fn get_daily_http(
         return Ok(Json((*cached).clone()));
     }
 
+    // 单飞：同一 key 的并发 miss 只允许一个任务计算，其余锁后二次检查命中。
+    let flight = crate::single_flight::keyed_lock(&cache_key).await;
+    let _flight_guard = flight.lock().await;
+    if let Some(cached) = daily_http_cache().get(&cache_key).await {
+        return Ok(Json((*cached).clone()));
+    }
+
     let (totals, routes) = query_daily_http(
         storage,
         tz,

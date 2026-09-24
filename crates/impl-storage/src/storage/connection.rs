@@ -1,10 +1,13 @@
 use std::{path::Path, time::Duration};
 
-use sqlx::{AssertSqlSafe, ConnectOptions, Row, SqlitePool, sqlite::SqliteConnectOptions};
+use sqlx::{
+    AssertSqlSafe, ConnectOptions, Row, SqlitePool,
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+};
 
 use crate::error::AppError;
 
-use super::StatsStorage;
+use super::{PoolTuning, StatsStorage};
 
 impl StatsStorage {
     /// 单库连接（兼容/测试）：统计池与领域池指向**同一文件**（历史行为）。
@@ -13,18 +16,45 @@ impl StatsStorage {
     }
 
     /// D1（ADR-0002）双库连接：统计池 = `path`；领域池 = `state_path`
-    /// （None 时指向同一文件——单文件兼容模式）。
+    /// （None 时指向同一文件——单文件兼容模式）。使用默认池调优参数。
     pub async fn connect_split(
         path: &str,
         state_path: Option<&str>,
         wal: bool,
     ) -> Result<Self, AppError> {
-        let pool = Self::open_pool(path, wal).await?;
-        let state_pool = Self::open_pool(state_path.unwrap_or(path), wal).await?;
+        Self::connect_split_tuned(path, state_path, wal, PoolTuning::default()).await
+    }
+
+    /// 同 `connect_split`，但由组合根显式注入连接池调优参数（D1/ADR-0002）。
+    pub async fn connect_split_tuned(
+        path: &str,
+        state_path: Option<&str>,
+        wal: bool,
+        tuning: PoolTuning,
+    ) -> Result<Self, AppError> {
+        let pool = Self::open_pool(
+            path,
+            wal,
+            tuning.stats_max_connections.max(1),
+            tuning.acquire_timeout_secs,
+        )
+        .await?;
+        let state_pool = Self::open_pool(
+            state_path.unwrap_or(path),
+            wal,
+            tuning.state_max_connections.max(1),
+            tuning.acquire_timeout_secs,
+        )
+        .await?;
         Ok(Self { pool, state_pool })
     }
 
-    async fn open_pool(path: &str, wal: bool) -> Result<SqlitePool, AppError> {
+    async fn open_pool(
+        path: &str,
+        wal: bool,
+        max_connections: u32,
+        acquire_timeout_secs: u64,
+    ) -> Result<SqlitePool, AppError> {
         // 关键：通过 `SqliteConnectOptions` 的 pragma/factories 设置，确保池中每条连接
         // （含后台归档/清理、summary 读连接）都生效，避免旧实现里手动 PRAGMA
         // 只作用于首条连接而导致其它连接仍走默认 synchronous=FULL 的开销。
@@ -42,7 +72,12 @@ impl StatsStorage {
         if wal {
             opt = opt.journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
         }
-        let pool = SqlitePool::connect_with(opt)
+        // 显式限制池大小与获取超时（此前未设置 → 走 sqlx 默认 10 连接 / 30s acquire），
+        // 与 busy_timeout=5s 协同，避免池饱和时请求长时间挂起。
+        let pool = SqlitePoolOptions::new()
+            .max_connections(max_connections)
+            .acquire_timeout(Duration::from_secs(acquire_timeout_secs.max(1)))
+            .connect_with(opt)
             .await
             .map_err(|e| AppError::Internal(format!("sqlite connect: {e}")))?;
         Ok(pool)
@@ -422,6 +457,29 @@ mod tests {
         .await
         .expect("query index");
         assert_eq!(idx, 2, "D2 复合索引应存在");
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// D1/ADR-0002：`connect_split_tuned` 应把显式池参数（max_connections）落到两个池。
+    #[tokio::test]
+    async fn connect_split_tuned_applies_pool_limits() {
+        let path = temp_db_path("pool_tuning");
+        let storage = StatsStorage::connect_split_tuned(
+            path.to_string_lossy().as_ref(),
+            None,
+            false,
+            PoolTuning {
+                stats_max_connections: 3,
+                state_max_connections: 2,
+                acquire_timeout_secs: 7,
+            },
+        )
+        .await
+        .expect("connect tuned");
+
+        assert_eq!(storage.pool.options().get_max_connections(), 3);
+        assert_eq!(storage.state_pool.options().get_max_connections(), 2);
 
         let _ = std::fs::remove_file(&path);
     }

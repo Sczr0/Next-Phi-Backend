@@ -10,6 +10,23 @@ port = 3939
 # API 路由前缀
 prefix = "/api/v2"
 
+# 网关边缘防护（限流 / 请求超时 / 请求体上限）
+# 注意：启用后会在异常/过载时新增对外响应语义（429 限流 / 504 超时 / 413 超限），
+# 属对外契约的受控变更（见 docs/adr）。默认全部宽松/关闭，正常流量零感知。
+[limits]
+# 是否启用全站限流（默认关闭；上线建议先以宽松值试跑再开）
+rate_limit_enabled = false
+# 全局每 IP 每分钟请求上限
+rate_limit_per_minute = 600
+# 昂贵端点（图片渲染 / 存档 / 搜索）每 IP 每分钟请求上限
+expensive_rate_limit_per_minute = 60
+# 单请求处理超时（秒），超时返回 504
+request_timeout_secs = 30
+# 请求体最大字节数，超限返回 413（默认 2MB）
+max_body_bytes = 2097152
+# 是否信任 X-Forwarded-For / X-Real-IP 作为客户端 IP（网关在反代/CDN 后应开启）
+trust_forwarded_for = true
+
 [cors]
 # 是否启用 CORS（默认关闭）
 enabled = false
@@ -90,6 +107,12 @@ sqlite_path = "./resources/usage_stats.db"
 state_db_path = "./resources/state.db"
 # 启用 WAL
 sqlite_wal = true
+# D1/ADR-0002：统计库连接池最大连接数（默认 8）
+pool_max_connections = 8
+# D1/ADR-0002：领域库（state.db）连接池最大连接数（默认 4）
+state_pool_max_connections = 4
+# 连接池获取连接超时（秒，默认 10）
+sqlite_acquire_timeout_secs = 10
 # 批量大小
 batch_size = 100
 # 刷新间隔（毫秒）

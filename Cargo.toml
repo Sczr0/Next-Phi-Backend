@@ -49,7 +49,9 @@ phi-save-codec = { path = "crates/phi-save-codec" }
 tokio = { version = "1.41", features = ["full"] }
 axum = "0.8.9"
 async-trait = "0.1"
-tower-http = { version = "0.7", features = ["fs", "compression-br", "compression-gzip", "cors"] }
+tower-http = { version = "0.7", features = ["fs", "compression-br", "compression-gzip", "cors", "timeout"] }
+# 网关边缘限流
+governor = "0.10"
 
 # 序列化与JSON
 serde = { version = "1.0", features = ["derive"] }

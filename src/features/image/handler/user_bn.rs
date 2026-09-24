@@ -1,6 +1,7 @@
 use crate::extract::{ValidatedJson, ValidatedQuery};
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use chrono::Utc;
+use sha2::{Digest, Sha256};
 
 use crate::{
     config::AppConfig,
@@ -14,7 +15,7 @@ use crate::{
 };
 
 use super::{
-    context::{image_disclaimer_text, image_footer_text},
+    context::{image_cache_enabled, image_disclaimer_text, image_footer_text},
     output::{
         ImageOutputCacheSpec, ImageQueryOpts, SvgRenderOptions, image_content_headers,
         render_svg_output_bytes, validate_image_query_opts,
@@ -82,6 +83,30 @@ pub async fn render_bn_user(
     ValidatedJson(req): ValidatedJson<RenderUserBnRequest>,
 ) -> Result<impl IntoResponse, AppError> {
     validate_image_query_opts(&q)?;
+
+    // 输出维度（fmt/模板/宽度/webp/签名）——缓存键与最终响应共用同一归一化口径。
+    let output = ImageOutputCacheSpec::from_query(&q, false);
+
+    // 缓存：用户自报成绩无 user_hash，键取「请求体规范化哈希 + 输出维度」。
+    // 请求体为纯结构体（无 HashMap），序列化稳定，可直接哈希；序列化失败则跳过缓存。
+    let cache_key = if image_cache_enabled() {
+        serde_json::to_vec(&req).ok().map(|payload| {
+            let mut hasher = Sha256::new();
+            hasher.update(&payload);
+            output.user_bn_cache_key(&hex::encode(hasher.finalize()))
+        })
+    } else {
+        None
+    };
+    if let Some(key) = cache_key.as_ref()
+        && let Some(bytes) = state.bn_image_cache.get(key).await
+    {
+        return Ok((
+            StatusCode::OK,
+            image_content_headers(output.content_type),
+            bytes,
+        ));
+    }
 
     let RenderUserBnRequest {
         theme,
@@ -152,7 +177,6 @@ pub async fn render_bn_user(
         is_user_generated: explicit,
     };
 
-    let output = ImageOutputCacheSpec::from_query(&q, false);
     let fmt_code = output.fmt_code;
     let public_illustration_base_url = output.public_illustration_base_url;
     // 等待许可与渲染分段计时
@@ -221,6 +245,11 @@ pub async fn render_bn_user(
             "unlocked": unlocked
         });
         stats_handle.track_feature("bestn_user", "generate_image", None, Some(extra));
+    }
+
+    // 缓存写入（成功渲染后）：与 bn 一致，缓存最终（已签名/已栅格化）字节。
+    if let Some(key) = cache_key {
+        state.bn_image_cache.insert(key, bytes.clone()).await;
     }
 
     let mut headers = image_content_headers(content_type);

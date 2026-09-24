@@ -3,12 +3,16 @@
 //! 将 route 注册、middleware 层叠、压缩策略等横切关注点从 main.rs 中提取，
 //! 保持 main.rs 专注于进程初始化与生命周期管理。
 
-use axum::http::{HeaderValue, header};
+use std::time::Duration;
+
+use axum::extract::DefaultBodyLimit;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::{Router, extract::Request, routing::get};
 use tower_http::compression::CompressionLayer;
 use tower_http::services::ServeDir;
+use tower_http::timeout::TimeoutLayer;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
@@ -23,6 +27,7 @@ use crate::features::stats::{
 };
 use crate::features::{auth, save, song};
 use crate::openapi::ApiDoc;
+use crate::rate_limit::{RateLimitState, expensive_rate_limit, global_rate_limit};
 use crate::state::AppState;
 
 fn compression_predicate() -> impl tower_http::compression::predicate::Predicate {
@@ -55,13 +60,27 @@ async fn ill_cache_control_middleware(req: Request, next: Next) -> Response {
     res
 }
 
-/// 构建 API 子路由（`/api/v2/*` 下所有功能端点 + bearer 鉴权中间件）。
-fn build_api_router(state: &AppState, config: &AppConfig) -> Router<AppState> {
-    let mut api_router = Router::<AppState>::new()
-        .nest("/auth", auth::create_auth_router())
+/// 构建 API 子路由（`/api/v2/*` 下所有功能端点 + bearer 鉴权 + 超时 + 昂贵端点限流）。
+fn build_api_router(
+    state: &AppState,
+    config: &AppConfig,
+    rate_limit: Option<RateLimitState>,
+) -> Router<AppState> {
+    // 昂贵端点（图片渲染 / 存档 / 搜索）：叠加更严的限流层。
+    let mut expensive = Router::<AppState>::new()
         .merge(save::create_save_router())
         .merge(song::create_song_router())
-        .merge(crate::features::image::create_image_router())
+        .merge(crate::features::image::create_image_router());
+    if let Some(rl) = rate_limit {
+        expensive = expensive.layer(axum::middleware::from_fn_with_state(
+            rl,
+            expensive_rate_limit,
+        ));
+    }
+
+    let mut api_router = Router::<AppState>::new()
+        .nest("/auth", auth::create_auth_router())
+        .merge(expensive)
         .merge(create_leaderboard_router())
         .merge(crate::features::rks::handler::create_rks_router())
         .merge(crate::features::stats::handler::create_stats_router());
@@ -73,9 +92,15 @@ fn build_api_router(state: &AppState, config: &AppConfig) -> Router<AppState> {
             .merge(open_platform::open_api::create_open_platform_open_api_router());
     }
 
-    api_router.layer(axum::middleware::from_fn_with_state(
+    api_router = api_router.layer(axum::middleware::from_fn_with_state(
         state.clone(),
         crate::features::auth::bearer::bearer_auth_middleware,
+    ));
+
+    // 请求超时（最外层）：慢 handler 被截断为 504，避免长时间占用连接与 worker。
+    api_router.layer(TimeoutLayer::with_status_code(
+        StatusCode::GATEWAY_TIMEOUT,
+        Duration::from_secs(config.limits.request_timeout_secs.max(1)),
     ))
 }
 
@@ -86,7 +111,8 @@ pub fn build_app(
     stats_handle: Option<&StatsHandle>,
 ) -> Router {
     let ill_root = config.illustration_path();
-    let api_router = build_api_router(&state, config);
+    let rate_limit = RateLimitState::from_config(&config.limits);
+    let api_router = build_api_router(&state, config, rate_limit.clone());
 
     let mut app = Router::<AppState>::new()
         .route("/health", get(health_check))
@@ -115,6 +141,15 @@ pub fn build_app(
     if let Some(layer) = build_cors_layer(&config.cors) {
         tracing::info!("CORS 已启用");
         app = app.layer(layer);
+    }
+
+    // 请求体上限：超限请求在提取阶段即被拒绝，避免超大 body 占内存/带宽。
+    let body_limit = usize::try_from(config.limits.max_body_bytes).unwrap_or(usize::MAX);
+    app = app.layer(DefaultBodyLimit::max(body_limit));
+
+    // 全局限流（宽松；昂贵端点已在 API 子路由叠加更严一层）
+    if let Some(rl) = rate_limit {
+        app = app.layer(axum::middleware::from_fn_with_state(rl, global_rate_limit));
     }
 
     // request_id 中间件（最外层）

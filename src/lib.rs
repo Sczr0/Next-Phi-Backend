@@ -47,6 +47,12 @@ pub mod http;
 /// 请求 request_id 中间件与上下文工具
 pub mod request_id;
 
+/// 网关边缘限流中间件（Phase 1）
+pub mod rate_limit;
+
+/// 进程内单飞计算锁（Phase 3，防缓存击穿）
+pub mod single_flight;
+
 #[path = "contracts/auth_contract.rs"]
 pub mod auth_contract;
 #[path = "api/auth_qrcode_api.rs"]

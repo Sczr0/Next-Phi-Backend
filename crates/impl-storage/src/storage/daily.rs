@@ -843,8 +843,9 @@ impl StatsStorage {
             .map_err(|e| {
                 AppError::Internal(format!("aggregate daily_status delete ({day}): {e}"))
             })?;
-        let rows = sqlx::query(
+        sqlx::query(
             r"
+            INSERT INTO daily_status (date, status, count)
             SELECT ? AS date, status, COUNT(1) AS cnt
             FROM events
             WHERE route IS NOT NULL AND status IS NOT NULL AND ts_utc >= ? AND ts_utc < ?
@@ -854,23 +855,9 @@ impl StatsStorage {
         .bind(day)
         .bind(start)
         .bind(end)
-        .fetch_all(&mut **tx)
+        .execute(&mut **tx)
         .await
-        .map_err(|e| AppError::Internal(format!("aggregate daily_status read ({day}): {e}")))?;
-        for r in rows {
-            let date: String = r.try_get("date").unwrap_or_else(|_| day.to_string());
-            let status: i64 = r.try_get("status").unwrap_or(0);
-            let cnt: i64 = r.try_get("cnt").unwrap_or(0);
-            sqlx::query("INSERT INTO daily_status (date, status, count) VALUES (?, ?, ?)")
-                .bind(date)
-                .bind(status)
-                .bind(cnt)
-                .execute(&mut **tx)
-                .await
-                .map_err(|e| {
-                    AppError::Internal(format!("aggregate daily_status insert ({day}): {e}"))
-                })?;
-        }
+        .map_err(|e| AppError::Internal(format!("aggregate daily_status ({day}): {e}")))?;
 
         // daily_instance：按 instance 聚合（涵盖 http 与业务打点事件），保留 MAX(ts_utc)。
         sqlx::query("DELETE FROM daily_instance WHERE date = ?")
