@@ -84,3 +84,5 @@ null
 # docs/ 与 *.md 纳入版本控制（架构总纲领 / ADR / AGENTS.md 必须提交）
 2026-02-13
 phi-backend.exe
+
+.commandcode
