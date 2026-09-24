@@ -8,6 +8,7 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use tokio::sync::{mpsc, watch};
 
+use crate::background::BackgroundTasks;
 use crate::{config::AppConfig, error::AppError};
 use models::EventInsert;
 use once_cell::sync::OnceCell;
@@ -102,8 +103,11 @@ fn hostname() -> &'static str {
         .as_str()
 }
 
-/// 初始化统计服务：创建 SQLite、spawn 批量写入与每日归档任务
-pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsStorage>), AppError> {
+/// 初始化统计服务：创建 SQLite、登记批量写入与每日归档任务
+pub async fn init_stats(
+    config: &AppConfig,
+    background: &BackgroundTasks,
+) -> Result<(StatsHandle, Arc<StatsStorage>), AppError> {
     if !config.stats.enabled {
         tracing::warn!("统计功能已禁用（config.stats.enabled=false）");
     }
@@ -238,7 +242,7 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
     // ── 每日预聚合任务（凌晨写入 daily_agg / daily_dau / daily_latency）──
     let agg_storage = storage.clone();
     let agg_cfg = config.stats.clone();
-    tokio::spawn(async move {
+    background.spawn(move |mut shutdown| async move {
         use chrono::{Duration, Timelike, Utc};
         use chrono_tz::Tz;
         loop {
@@ -274,7 +278,14 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
                 .to_std()
                 .unwrap_or(std::time::Duration::from_mins(1));
 
-            tokio::time::sleep(delay).await;
+            // 协作式关停：在两次聚合之间响应关停信号，不中断进行中的事务。
+            tokio::select! {
+                () = tokio::time::sleep(delay) => {}
+                _ = shutdown.changed() => {
+                    tracing::info!("每日预聚合任务收到关停信号，退出");
+                    break;
+                }
+            }
 
             // 聚合昨天的数据（配置时区的本地昨天；预聚合表统一按本地日口径存储）
             let yesterday = (Utc::now().with_timezone(&tz).date_naive() - Duration::days(1))
@@ -328,7 +339,7 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
             .timezone
             .parse()
             .unwrap_or(chrono_tz::Asia::Shanghai);
-        tokio::spawn(async move {
+        background.spawn(move |_shutdown| async move {
             // 先一次性修复历史遗留的 daily_agg / daily_latency 重复行（NULL 主键不强制唯一
             // 导致的重复累加），必须在启用快路径哨兵之前完成，否则 summary 仍会读到膨胀数据。
             if let Err(e) = catchup_storage.repair_daily_agg_duplicates_once().await {
@@ -365,8 +376,9 @@ pub async fn init_stats(config: &AppConfig) -> Result<(StatsHandle, Arc<StatsSto
     if config.stats.archive.parquet {
         let archiver_storage = storage.clone();
         let cfg = config.stats.clone();
-        tokio::spawn(async move {
-            crate::features::stats::archive::run_daily_archiver(archiver_storage, cfg).await;
+        background.spawn(move |shutdown| async move {
+            crate::features::stats::archive::run_daily_archiver(archiver_storage, cfg, shutdown)
+                .await;
         });
     }
 

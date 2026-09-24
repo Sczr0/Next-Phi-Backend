@@ -53,6 +53,9 @@ pub mod rate_limit;
 /// 进程内单飞计算锁（Phase 3，防缓存击穿）
 pub mod single_flight;
 
+/// 后台长驻任务注册表（Phase 5，协作式关停）
+pub mod background;
+
 #[path = "contracts/auth_contract.rs"]
 pub mod auth_contract;
 #[path = "api/auth_qrcode_api.rs"]

@@ -11,6 +11,7 @@
 
 use axum::body::Bytes;
 use moka::future::Cache;
+use phi_backend::background::BackgroundTasks;
 use phi_backend::features::auth::client::TapTapClient;
 use phi_backend::features::stats;
 use phi_backend::router::build_app;
@@ -60,16 +61,22 @@ async fn main() {
             config.watermark.dynamic_ttl_secs
         );
     }
+    // 后台长驻任务注册表（Phase 5）：统一登记，关停时协作式停止。
+    let background_tasks = Arc::new(BackgroundTasks::new());
+
     if config.watermark.unlock_dynamic {
         let wm = config.watermark.clone();
-        tokio::spawn(async move {
+        background_tasks.spawn(move |mut shutdown| async move {
             use tokio::time::{Duration, interval};
             let ttl = wm.dynamic_ttl_secs.max(1);
             let period = std::cmp::max(1, ttl / 4);
             let mut ticker = interval(Duration::from_secs(period));
             let mut last = String::new();
             loop {
-                ticker.tick().await;
+                tokio::select! {
+                    _ = ticker.tick() => {}
+                    _ = shutdown.changed() => break,
+                }
                 if let Some(code) = wm.current_dynamic_code() {
                     if code != last {
                         last.clone_from(&code);
@@ -134,7 +141,7 @@ async fn main() {
         Arc::new(phi_backend::features::auth::qrcode_service::QrCodeService::new());
 
     let (stats_handle_opt, stats_storage_opt) = if config.stats.enabled {
-        match stats::init_stats(config).await {
+        match stats::init_stats(config, &background_tasks).await {
             Ok((h, storage)) => (Some(h), Some(storage)),
             Err(e) => {
                 tracing::warn!("统计初始化失败：{}（将继续运行）", e);
@@ -241,6 +248,7 @@ async fn main() {
     let shutdown_timeout = shutdown_config.timeout_duration();
     let stats_handle_for_cleanup = stats_handle_opt.clone();
     let watchdog_for_shutdown = watchdog.clone();
+    let background_tasks_for_shutdown = background_tasks.clone();
     let shutdown_signal = async move {
         let reason = shutdown_manager.wait_for_shutdown().await;
         tracing::info!("接收到退出信号: {:?}，开始优雅退出...", reason);
@@ -263,6 +271,13 @@ async fn main() {
                     tracing::info!("统计服务已优雅关闭");
                 }
             }
+
+            // Phase 5：协作式停止每日聚合 / 归档维护 / 启动补齐 / 水印等长驻任务。
+            tracing::info!("开始停止后台长驻任务...");
+            background_tasks_for_shutdown
+                .shutdown(std::time::Duration::from_secs(3))
+                .await;
+            tracing::info!("后台长驻任务已停止");
 
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         })

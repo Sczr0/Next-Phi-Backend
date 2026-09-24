@@ -13,6 +13,7 @@ use chrono::{Datelike, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use parquet::arrow::ArrowWriter;
 use parquet::basic::{Compression, ZstdLevel};
 use parquet::file::properties::WriterProperties;
+use tokio::sync::watch;
 
 use crate::config::{StatsArchiveConfig, StatsConfig};
 use crate::error::AppError;
@@ -40,7 +41,11 @@ struct CleanupStats {
     deleted_rows: i64,
 }
 
-pub async fn run_daily_archiver(storage: Arc<StatsStorage>, cfg: StatsConfig) {
+pub async fn run_daily_archiver(
+    storage: Arc<StatsStorage>,
+    cfg: StatsConfig,
+    mut shutdown: watch::Receiver<bool>,
+) {
     // 启动后先执行一次轻量维护（限额补档 + 清理），避免长期缺口一直积累。
     if let Err(e) = run_maintenance_once(&storage, &cfg, Some(STARTUP_BACKFILL_MAX_DAYS)).await {
         tracing::warn!("统计维护（启动补偿）失败: {}", e);
@@ -53,7 +58,15 @@ pub async fn run_daily_archiver(storage: Arc<StatsStorage>, cfg: StatsConfig) {
         let next = next_occurrence(now, target.0, target.1);
         let sleep_dur = (next - now).to_std().unwrap_or(Duration::from_mins(1));
         tracing::info!("统计维护：将在 {} 触发", next);
-        tokio::time::sleep(sleep_dur).await;
+
+        // 协作式关停：在两次维护之间响应关停信号，不中断进行中的归档写盘。
+        tokio::select! {
+            () = tokio::time::sleep(sleep_dur) => {}
+            _ = shutdown.changed() => {
+                tracing::info!("统计维护任务收到关停信号，退出");
+                break;
+            }
+        }
 
         if let Err(e) = run_maintenance_once(&storage, &cfg, Some(DAILY_BACKFILL_MAX_DAYS)).await {
             tracing::warn!("统计维护失败: {}", e);
