@@ -98,6 +98,18 @@ async fn main() {
         fatal_exit();
     }
 
+    // 曲绘索引预热（目录扫描 + 反色预计算）与随后的 info 加载/远端拉取相互独立，
+    // 并发执行以避免串行叠加冷启动延迟；在 bind 前等待其完成，保证首个渲染不走冷扫描。
+    let prewarm = tokio::spawn(async {
+        let t = std::time::Instant::now();
+        match tokio::task::spawn_blocking(phi_backend::features::image::prewarm_illustration_assets)
+            .await
+        {
+            Ok(()) => tracing::info!("曲绘索引预热完成: {}ms", t.elapsed().as_millis()),
+            Err(e) => tracing::warn!("曲绘索引预热任务失败: {}", e),
+        }
+    });
+
     // 加载 difficulty.csv
     let info_dir = config.info_path();
     let csv_path = info_dir.join("difficulty.csv");
@@ -127,6 +139,11 @@ async fn main() {
                 tracing::warn!("远端 info 加载出错，继续使用本地数据: {e}");
             }
         }
+    }
+
+    // 等待曲绘索引预热完成后再对外服务。
+    if let Err(e) = prewarm.await {
+        tracing::warn!("曲绘索引预热 join 失败: {e}");
     }
 
     // 构建共享状态
