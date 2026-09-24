@@ -64,7 +64,9 @@ pub(super) struct SaveWithCache {
 }
 
 pub(super) struct RksComputeResult {
-    pub(super) game_record: HashMap<String, Vec<super::models::DifficultyRecord>>,
+    /// 仅 `calculate_rks=true` 时携带（已回填 `push_acc` 的可变副本）；其余路径为
+    /// `None`（调用方不需要），避免整份成绩表的无谓克隆。
+    pub(super) game_record: Option<HashMap<String, Vec<super::models::DifficultyRecord>>>,
     pub(super) rks: PlayerRksResult,
     best_top3_json: Option<String>,
     ap_top3_json: Option<String>,
@@ -443,50 +445,35 @@ async fn compute_rks_and_details(
     let t_calc = Instant::now();
     let join = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let game_record = parsed.game_record.clone();
-        if calc_rks {
-            let mut game_record = game_record;
+        // 仅 calculate_rks 路径需要可变副本（回填 push_acc 会原地改写成绩表）；
+        // 其余路径只读，直接借用 Arc 内的成绩表，避免整份克隆。
+        let owned_record = if calc_rks {
+            let mut game_record = parsed.game_record.clone();
             crate::rks_contract::engine::fill_push_acc_for_game_record(&mut game_record);
-            let rks_res = calculate_player_rks(&game_record, &state.chart_constants);
-            let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
-                let (best_top3, ap_top3, rks_comp) =
-                    build_textual_details_from_rks(&game_record, &rks_res, &state);
-                (
-                    serde_json::to_string(&best_top3).ok(),
-                    serde_json::to_string(&ap_top3).ok(),
-                    serde_json::to_string(&rks_comp).ok(),
-                )
-            } else {
-                (None, None, None)
-            };
+            Some(game_record)
+        } else {
+            None
+        };
+        let game_record = owned_record.as_ref().unwrap_or(&parsed.game_record);
+        let rks_res = calculate_player_rks(game_record, &state.chart_constants);
+        let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
+            let (best_top3, ap_top3, rks_comp) =
+                build_textual_details_from_rks(game_record, &rks_res, &state);
             (
-                game_record,
-                rks_res,
-                best_top3_json,
-                ap_top3_json,
-                rks_comp_json,
+                serde_json::to_string(&best_top3).ok(),
+                serde_json::to_string(&ap_top3).ok(),
+                serde_json::to_string(&rks_comp).ok(),
             )
         } else {
-            let rks_res = calculate_player_rks(&game_record, &state.chart_constants);
-            let (best_top3_json, ap_top3_json, rks_comp_json) = if need_leaderboard {
-                let (best_top3, ap_top3, rks_comp) =
-                    build_textual_details_from_rks(&game_record, &rks_res, &state);
-                (
-                    serde_json::to_string(&best_top3).ok(),
-                    serde_json::to_string(&ap_top3).ok(),
-                    serde_json::to_string(&rks_comp).ok(),
-                )
-            } else {
-                (None, None, None)
-            };
-            (
-                game_record,
-                rks_res,
-                best_top3_json,
-                ap_top3_json,
-                rks_comp_json,
-            )
-        }
+            (None, None, None)
+        };
+        (
+            owned_record,
+            rks_res,
+            best_top3_json,
+            ap_top3_json,
+            rks_comp_json,
+        )
     })
     .await;
     let (game_record, rks, best_top3_json, ap_top3_json, rks_comp_json) = match join {
@@ -776,7 +763,11 @@ pub async fn get_save_data(
     let response = if let Some(ref rks_result) = rks_opt {
         if calc_rks {
             // 包含 RKS 的复合响应
-            build_save_response(&data, nickname, Some((rks_result, data.parsed.as_ref())))?
+            build_save_response(
+                &data,
+                nickname.as_deref(),
+                Some((rks_result, data.parsed.as_ref())),
+            )?
         } else {
             // need_leaderboard 但不需要 RKS 响应
             build_save_response(&data, None, None)?

@@ -69,6 +69,24 @@ pub struct ParsedSave {
     pub updated_at: Option<String>,
 }
 
+/// `ParsedSave` 的借用视图：仅替换 `game_record`（如回填 `push_acc` 后的副本），
+/// 其余字段原样借用，避免整份存档克隆。
+///
+/// 字段顺序与 serde 属性必须与 [`ParsedSave`] 严格一致，以保证序列化后的
+/// JSON 字节不变（对外契约 C1）。
+#[derive(serde::Serialize)]
+pub struct ParsedSaveRef<'a> {
+    pub game_record: &'a HashMap<String, Vec<DifficultyRecord>>,
+    pub game_progress: Option<&'a super::parser::GameProgressParsed>,
+    pub user: Option<&'a super::parser::UserParsed>,
+    pub settings: Option<&'a super::parser::SettingsParsed>,
+    pub game_key: Option<&'a super::parser::GameKeyParsed>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "summaryParsed")]
+    pub summary_parsed: Option<&'a SummaryParsed>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "updatedAt")]
+    pub updated_at: Option<&'a String>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SaveSource {
     Official { session_token: String },

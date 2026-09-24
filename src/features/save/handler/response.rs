@@ -24,15 +24,17 @@ pub enum SaveApiResponse {
     SaveAndRks(SaveAndRksResponseDoc),
 }
 
-#[derive(Debug, serde::Serialize)]
-pub struct SaveAndRksResponse {
-    pub save: provider::ParsedSave,
-    pub rks: PlayerRksResult,
+/// `save` + `rks` 复合响应。借用式构造：`save.game_record` 用回填 `push_acc` 后的
+/// 副本，其余字段借用原存档，避免整份 `ParsedSave` 深拷贝。
+#[derive(serde::Serialize)]
+pub struct SaveAndRksResponse<'a> {
+    pub save: provider::ParsedSaveRef<'a>,
+    pub rks: &'a PlayerRksResult,
     #[serde(rename = "gradeCounts")]
-    pub grade_counts: super::super::models::CfcPCountsByDifficulty,
+    pub grade_counts: &'a super::super::models::CfcPCountsByDifficulty,
     /// 顶层玩家昵称（ADR-0004）：能解析会话令牌时返回，否则整体省略（字节兼容）。
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub nickname: Option<String>,
+    pub nickname: Option<&'a str>,
 }
 
 #[derive(serde::Serialize)]
@@ -72,23 +74,29 @@ fn json_bytes_response(body: Bytes) -> Response {
 /// （`data.data_body`）已在缓存填充阶段把昵称烤入，此处原样返回。
 pub(super) fn build_save_response(
     data: &SaveWithCache,
-    nickname: Option<String>,
+    nickname: Option<&str>,
     rks_opt: Option<(&RksComputeResult, &provider::ParsedSave)>,
 ) -> Result<Response, AppError> {
     let (body, calc_rks, calc_ms) = if let Some((rks_result, full_save)) = rks_opt {
-        let grade_counts = compute_grade_counts(&rks_result.game_record);
+        // calculate_rks 路径下 compute 阶段已产出回填 push_acc 的副本；其余情况
+        // 退化为原存档（此时不应走到这里，仅为无 panic 的兜底）。
+        let game_record = rks_result
+            .game_record
+            .as_ref()
+            .unwrap_or(&full_save.game_record);
+        let grade_counts = compute_grade_counts(game_record);
         let resp = SaveAndRksResponse {
-            save: provider::ParsedSave {
-                game_record: rks_result.game_record.clone(),
-                game_progress: full_save.game_progress.clone(),
-                user: full_save.user.clone(),
-                settings: full_save.settings.clone(),
-                game_key: full_save.game_key.clone(),
-                summary_parsed: full_save.summary_parsed.clone(),
-                updated_at: full_save.updated_at.clone(),
+            save: provider::ParsedSaveRef {
+                game_record,
+                game_progress: full_save.game_progress.as_ref(),
+                user: full_save.user.as_ref(),
+                settings: full_save.settings.as_ref(),
+                game_key: full_save.game_key.as_ref(),
+                summary_parsed: full_save.summary_parsed.as_ref(),
+                updated_at: full_save.updated_at.as_ref(),
             },
-            rks: rks_result.rks.clone(),
-            grade_counts,
+            rks: &rks_result.rks,
+            grade_counts: &grade_counts,
             nickname,
         };
         let body = serialize_json_bytes(&resp, "save+rks response")?;
@@ -348,5 +356,38 @@ mod tests {
         assert!(ez.get("C").is_some());
         assert!(ez.get("FC").is_some());
         assert!(ez.get("P").is_some());
+    }
+
+    /// 借用视图必须与 `ParsedSave` 序列化出的字节完全一致（对外契约 C1），
+    /// 否则 save+rks 响应会因借用式重构而改变响应体。
+    #[test]
+    fn parsed_save_ref_serializes_byte_identical_to_parsed_save() {
+        let mut game_record = HashMap::new();
+        game_record.insert(
+            "song_a".to_string(),
+            vec![rec(Difficulty::IN, 1_000_000, true)],
+        );
+        let parsed = provider::ParsedSave {
+            game_record,
+            game_progress: None,
+            user: None,
+            settings: None,
+            game_key: None,
+            summary_parsed: None,
+            updated_at: Some("2025-09-20T04:10:44.188Z".to_string()),
+        };
+        let view = provider::ParsedSaveRef {
+            game_record: &parsed.game_record,
+            game_progress: parsed.game_progress.as_ref(),
+            user: parsed.user.as_ref(),
+            settings: parsed.settings.as_ref(),
+            game_key: parsed.game_key.as_ref(),
+            summary_parsed: parsed.summary_parsed.as_ref(),
+            updated_at: parsed.updated_at.as_ref(),
+        };
+
+        let owned = serde_json::to_vec(&parsed).expect("serialize parsed");
+        let borrowed = serde_json::to_vec(&view).expect("serialize ref");
+        assert_eq!(owned, borrowed);
     }
 }
