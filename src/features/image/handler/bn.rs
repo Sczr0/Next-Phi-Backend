@@ -111,7 +111,7 @@ pub async fn render_bn(
     let t_auth_start = Instant::now();
     let source = to_save_source(&req.auth)?;
     let auth_duration = t_auth_start.elapsed();
-    tracing::info!(target: "bestn_performance", "用户凭证验证完成，耗时: {:?}ms", auth_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "用户凭证验证完成，耗时: {:?}ms", auth_duration.as_millis());
 
     let taptap_version = req.auth.taptap_version.as_deref();
     // 缓存前移：先拿 updatedAt（作为版本号）再决定是否需要下载/解密/解析存档本体。
@@ -140,7 +140,7 @@ pub async fn render_bn(
     if let (Some(user_hash), Some(key)) = (user_hash_for_cache.as_ref(), cache_key.as_ref()) {
         if let Some(p) = state.bn_image_cache.get(key).await {
             let _cache_duration = Instant::now().elapsed();
-            tracing::info!(target: "bestn_performance", "缓存命中，缓存键: {}", key);
+            tracing::debug!(target: "bestn_performance", "缓存命中，缓存键: {}", key);
 
             if let Some(h) = state.stats.as_ref() {
                 let total_ms = duration_ms_i64(t_total.elapsed());
@@ -173,11 +173,11 @@ pub async fn render_bn(
             let headers = image_content_headers(output.content_type);
 
             let total_duration = t_total.elapsed();
-            tracing::info!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
+            tracing::debug!(target: "bestn_performance", "BestN缓存命中完成，总耗时: {:?}ms (缓存命中)", total_duration.as_millis());
             return Ok((StatusCode::OK, headers, p));
         }
         let _cache_duration = Instant::now().elapsed();
-        tracing::info!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
+        tracing::debug!(target: "bestn_performance", "缓存未命中，缓存键: {}", key);
         if let Some(h) = state.stats.as_ref() {
             track_image_event(
                 h,
@@ -233,7 +233,7 @@ pub async fn render_bn(
     )
     .await;
     let nickname_duration = t_nickname_start.elapsed();
-    tracing::info!(target: "bestn_performance", "昵称获取完成: {}, 耗时: {:?}ms", display_name, nickname_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "昵称获取完成: {}, 耗时: {:?}ms", display_name, nickname_duration.as_millis());
 
     let stats = PlayerStats {
         ap_top_3_avg,
@@ -257,7 +257,7 @@ pub async fn render_bn(
     let render_permit = acquire_render_permit(&state).await?;
     let permits_avail = render_permit.permits_avail;
     let wait_ms = render_permit.wait_ms;
-    tracing::info!(target: "bestn_performance", "信号量获取完成，可用许可: {}, 等待时间: {:?}ms, 总获取时间: {:?}ms",
+    tracing::debug!(target: "bestn_performance", "信号量获取完成，可用许可: {}, 等待时间: {:?}ms, 总获取时间: {:?}ms",
                    permits_avail, wait_ms, render_permit.wait_elapsed.as_millis());
 
     let t_svg_start = Instant::now();
@@ -280,7 +280,7 @@ pub async fn render_bn(
     .await?;
     let svg_duration = t_svg_start.elapsed();
     let svg_size = svg.len();
-    tracing::info!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "SVG生成完成，SVG大小: {} 字符, 耗时: {:?}ms", svg_size, svg_duration.as_millis());
 
     // 签名注入：在 SVG 底部追加签名行，并提取签名字符串用于响应头
     let (signed_svg, sig_header) = {
@@ -332,7 +332,7 @@ pub async fn render_bn(
     let render_duration = t_render_start.elapsed();
     let render_ms = duration_ms_i64(render_duration);
     let bytes_len = bytes.len();
-    tracing::info!(target: "bestn_performance", "图片渲染完成，输出格式: {}, 字节大小: {}, 耗时: {:?}ms",
+    tracing::debug!(target: "bestn_performance", "图片渲染完成，输出格式: {}, 字节大小: {}, 耗时: {:?}ms",
                    content_type, bytes_len, render_duration.as_millis());
 
     // 统计：BestN 图片生成（带用户去敏哈希 + 榜单歌曲ID列表 + 用户凭证类型）
@@ -368,7 +368,7 @@ pub async fn render_bn(
         cache_put_duration = Some(t_cache_put.elapsed());
     }
     if let Some(cache_dur) = cache_put_duration {
-        tracing::info!(target: "bestn_performance", "缓存存储完成，耗时: {:?}ms", cache_dur.as_millis());
+        tracing::debug!(target: "bestn_performance", "缓存存储完成，耗时: {:?}ms", cache_dur.as_millis());
     }
 
     // Basic render metrics (total time and key阶段耗时)

@@ -80,7 +80,7 @@ pub(super) fn build_bn_compute_output(input: BnComputeInput) -> BnComputeOutput 
 
     let data_process_duration = t_flatten.elapsed();
     let data_record_count = all.len();
-    tracing::info!(target: "bestn_performance", "数据扁平化完成，记录数: {}, 耗时: {:?}ms", data_record_count, data_process_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "数据扁平化完成，记录数: {}, 耗时: {:?}ms", data_record_count, data_process_duration.as_millis());
 
     let t_sort_start = Instant::now();
     // 按 RKS 降序
@@ -88,14 +88,14 @@ pub(super) fn build_bn_compute_output(input: BnComputeInput) -> BnComputeOutput 
     let sort_duration = t_sort_start.elapsed();
 
     let top_len = usize_from_u32(n).min(all.len());
-    tracing::info!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "排序完成，目标TopN: {}, 排序耗时: {:?}ms", n, sort_duration.as_millis());
 
     let t_push_start = Instant::now();
     // 预计算推分 ACC（批量求解：避免每谱面重复扫描全量 records）
     let engine_all = build_engine_records_from_render_records(&all);
     let push_acc_map = calculate_push_acc_map(&all, &engine_all, top_len);
     let push_acc_duration = t_push_start.elapsed();
-    tracing::info!(target: "bestn_performance", "推分ACC计算完成，计算数量: {}, 耗时: {:?}ms", push_acc_map.len(), push_acc_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "推分ACC计算完成，计算数量: {}, 耗时: {:?}ms", push_acc_map.len(), push_acc_duration.as_millis());
 
     let flatten_ms = duration_ms_i64(t_flatten.elapsed());
     let t_stats_start = Instant::now();
@@ -106,7 +106,7 @@ pub(super) fn build_bn_compute_output(input: BnComputeInput) -> BnComputeOutput 
     let ap_top_3_avg = calculate_ap_top_3_avg(&all);
     let best_27_avg = calculate_best_27_avg(&all);
     let stats_duration = t_stats_start.elapsed();
-    tracing::info!(target: "bestn_performance", "统计数据计算完成，精确RKS: {:?}, AP Top3: {:?}, Best27: {:?}, 耗时: {:?}ms",
+    tracing::debug!(target: "bestn_performance", "统计数据计算完成，精确RKS: {:?}, AP Top3: {:?}, Best27: {:?}, 耗时: {:?}ms",
                    exact_rks, ap_top_3_avg, best_27_avg, stats_duration.as_millis());
 
     // 课题模式等级（优先使用 summaryParsed，其次使用 gameProgress.challengeModeRank）
@@ -122,7 +122,7 @@ pub(super) fn build_bn_compute_output(input: BnComputeInput) -> BnComputeOutput 
     }
     .and_then(parse_challenge_rank);
     let challenge_duration = t_challenge_start.elapsed();
-    tracing::info!(target: "bestn_performance", "挑战等级解析完成: {:?}, 耗时: {:?}ms", challenge_rank, challenge_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "挑战等级解析完成: {:?}, 耗时: {:?}ms", challenge_rank, challenge_duration.as_millis());
 
     let t_data_string_start = Instant::now();
     // Data 数（money）展示
@@ -132,12 +132,12 @@ pub(super) fn build_bn_compute_output(input: BnComputeInput) -> BnComputeOutput 
         .and_then(|progress| progress.money.as_ref())
         .and_then(format_data_string);
     let data_string_duration = t_data_string_start.elapsed();
-    tracing::info!(target: "bestn_performance", "Data字符串解析完成: {:?}, 耗时: {:?}ms", data_string, data_string_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "Data字符串解析完成: {:?}, 耗时: {:?}ms", data_string, data_string_duration.as_millis());
 
     let t_time_start = Instant::now();
     let update_time = parse_update_time_or_now(parsed.updated_at.as_deref());
     let time_parse_duration = t_time_start.elapsed();
-    tracing::info!(target: "bestn_performance", "更新时间解析完成, 耗时: {:?}ms", time_parse_duration.as_millis());
+    tracing::debug!(target: "bestn_performance", "更新时间解析完成, 耗时: {:?}ms", time_parse_duration.as_millis());
 
     let ap_top_3_scores = collect_ap_top_3_scores(&all);
 

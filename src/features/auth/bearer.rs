@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::{
     extract::{FromRequest, Request, State},
@@ -6,10 +7,10 @@ use axum::{
     response::Response,
 };
 use base64::Engine;
-use lru::LruCache;
+use moka::Expiry;
+use moka::future::Cache;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use tokio::sync::RwLock;
 
 use crate::auth_contract::UnifiedSaveRequest;
 use crate::error::AppError;
@@ -45,45 +46,57 @@ struct AuthDecryptCacheItem {
     expires_at_unix: i64,
 }
 
-type AuthDecryptCache = LruCache<String, AuthDecryptCacheItem>;
+/// 按条目绝对过期时间（token 的 `exp`）自动淘汰。moka 的 `get` 为并发无锁读，
+/// 取代此前 `RwLock<LruCache>`（读也需写锁，串行化所有 bearer 合并请求）。
+struct AuthDecryptExpiry;
 
-fn auth_decrypt_cache_capacity() -> usize {
+impl Expiry<String, AuthDecryptCacheItem> for AuthDecryptExpiry {
+    fn expire_after_create(
+        &self,
+        _key: &String,
+        value: &AuthDecryptCacheItem,
+        _created_at: Instant,
+    ) -> Option<Duration> {
+        let now_unix =
+            i64::try_from(SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()?;
+        let secs = value.expires_at_unix - now_unix;
+        if secs <= 0 {
+            Some(Duration::ZERO)
+        } else {
+            Some(Duration::from_secs(u64::try_from(secs).ok()?))
+        }
+    }
+}
+
+fn auth_decrypt_cache_capacity() -> u64 {
     std::env::var("APP_SESSION_AUTH_CACHE_CAPACITY")
         .ok()
-        .and_then(|v| v.parse::<usize>().ok())
+        .and_then(|v| v.parse::<u64>().ok())
         .filter(|v| *v > 0)
         .unwrap_or(50_000)
 }
 
-#[allow(clippy::expect_used)] // 缓存容量经 filter(>0) 保证非零
-static AUTH_DECRYPT_CACHE: Lazy<RwLock<AuthDecryptCache>> = Lazy::new(|| {
-    let cap = auth_decrypt_cache_capacity();
-    let non_zero = std::num::NonZeroUsize::new(cap).expect("cache capacity must be non-zero");
-    RwLock::new(LruCache::new(non_zero))
+static AUTH_DECRYPT_CACHE: Lazy<Cache<String, AuthDecryptCacheItem>> = Lazy::new(|| {
+    Cache::builder()
+        .max_capacity(auth_decrypt_cache_capacity())
+        .expire_after(AuthDecryptExpiry)
+        .build()
 });
 
-async fn cache_get_session_auth(token: &str, now_unix: i64) -> Option<UnifiedSaveRequest> {
-    let mut guard = AUTH_DECRYPT_CACHE.write().await;
-    let entry = guard.get(token).cloned();
-    match entry {
-        Some(item) if item.expires_at_unix > now_unix => Some(item.value),
-        Some(_) => {
-            guard.pop(token);
-            None
-        }
-        None => None,
-    }
+async fn cache_get_session_auth(token: &str) -> Option<UnifiedSaveRequest> {
+    AUTH_DECRYPT_CACHE.get(token).await.map(|item| item.value)
 }
 
 async fn cache_put_session_auth(token: String, value: UnifiedSaveRequest, expires_at_unix: i64) {
-    let mut guard = AUTH_DECRYPT_CACHE.write().await;
-    guard.put(
-        token,
-        AuthDecryptCacheItem {
-            value,
-            expires_at_unix,
-        },
-    );
+    AUTH_DECRYPT_CACHE
+        .insert(
+            token,
+            AuthDecryptCacheItem {
+                value,
+                expires_at_unix,
+            },
+        )
+        .await;
 }
 
 #[must_use]
@@ -276,8 +289,7 @@ pub async fn merge_auth_from_bearer_if_missing(
         BearerAuthState::Invalid(msg) => Err(AppError::Auth(msg.clone())),
         BearerAuthState::Valid(ctx) => {
             tracing::debug!(target: "phi_backend::auth::bearer", "merge auth from bearer: token-present=true");
-            let now_unix = chrono::Utc::now().timestamp();
-            if let Some(bound) = cache_get_session_auth(&ctx.token, now_unix).await {
+            if let Some(bound) = cache_get_session_auth(&ctx.token).await {
                 tracing::debug!(target: "phi_backend::auth::bearer", "merge auth from bearer: cache hit");
                 let request_taptap_version = auth.taptap_version.clone();
                 *auth = bound;
