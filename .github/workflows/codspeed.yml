@@ -1,0 +1,61 @@
+# CodSpeed 持续性能监测：渲染（B27 SVG/PNG）+ 存档解码基准。
+#
+# 首次接入步骤（一次性，仓库管理员）：
+# 1. 用 GitHub 账号登录 https://codspeed.io ，安装 CodSpeed App 并授权本仓库；
+# 2. 在仓库 Settings > Secrets and variables > Actions 添加 `CODSPEED_TOKEN`
+#    （CodSpace 平台仓库设置页提供）；
+# 3. 核对下方 gha-action 的主版本号（以 https://github.com/CodSpeedHQ/gha-action
+#    README 为准，本文件编写时为 v3）。
+#
+# 基准内容：
+# - crates/impl-render/benches/bn_render.rs：B27 SVG 生成 + PNG 光栅化
+#   （曲绘 fixture 见 benches/fixtures/，由 tools/gen-render-bench-fixtures.py 生成）
+# - crates/impl-save/benches/save_decode.rs：AES-256-CBC 解密 / PBKDF2 派生 /
+#   gameRecord 与 summary 解析
+#
+# 本地复现：`cargo bench -p impl-render --bench bn_render` /
+#           `cargo bench -p impl-save --bench save_decode`（criterion 原生输出）。
+name: CodSpeed
+
+on:
+  push:
+    branches: [ "master", "feat" ]
+  pull_request:
+    branches: [ "master", "feat" ]
+  workflow_dispatch:
+
+jobs:
+  benchmarks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+
+    - name: 安装 Rust 工具链（rust-toolchain.toml 钉死 1.98.0）
+      uses: dtolnay/rust-toolchain@1.98.0
+      with:
+        toolchain: 1.98.0
+
+    # 缓存键与 quality-gate 分离：codspeed 以独立 profile 构建 bench 目标，
+    # 混用会互相驱逐产物（同 build.yml 各矩阵平台独立 key 的理由）。
+    - name: 恢复Cargo缓存
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: codspeed-ubuntu
+        cache-on-failure: true
+
+    # 预编译二进制，与 bench 侧 codspeed-criterion-compat 5.0 配套
+    - name: 安装 cargo-codspeed
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-codspeed@5.0.2
+
+    - name: 构建基准测试
+      run: cargo codspeed build --workspace
+
+    - name: 运行基准测试并上传
+      uses: CodSpeedHQ/gha-action@v3
+      with:
+        token: ${{ secrets.CODSPEED_TOKEN }}
+        run: cargo codspeed run --workspace

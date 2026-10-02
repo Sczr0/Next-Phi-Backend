@@ -39,3 +39,12 @@ phi-save-codec = { path = "../phi-save-codec" }
 
 [lints]
 workspace = true
+
+# 基准测试（CodSpeed）：criterion 兼容层。本地 `cargo bench -p impl-save` 行为不变，
+# CI 中 `cargo codspeed run` 自动切换为 CodSpeed 采集（.github/workflows/codspeed.yml）。
+[dev-dependencies]
+criterion = { package = "codspeed-criterion-compat", version = "5.0" }
+
+[[bench]]
+name = "save_decode"
+harness = false
