@@ -9,6 +9,9 @@
     clippy::items_after_statements,
     clippy::module_name_repetitions
 )]
+// 测试代码里用 panic!/unwrap/expect 断言是惯例，豁免 restriction lint（仅测试构建生效）。
+// Phase 1 搬迁时遗漏（根 crate 与 phi-common 均有），见 ISSUE-0004。
+#![cfg_attr(test, allow(clippy::panic, clippy::unwrap_used, clippy::expect_used))]
 
 //! impl-save：存档实现（Charter §3.2——存档：codec 解密 + 整理成领域模型）。
 //! Phase 1 纯搬迁 2026-09：client/provider/decryptor/parser/record_parser/

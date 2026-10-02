@@ -9,6 +9,9 @@
     clippy::items_after_statements,
     clippy::module_name_repetitions
 )]
+// 测试代码里用 panic!/unwrap/expect 断言是惯例，豁免 restriction lint（仅测试构建生效）。
+// Phase 1 搬迁时遗漏（根 crate 与 phi-common 均有），见 ISSUE-0004。
+#![cfg_attr(test, allow(clippy::panic, clippy::unwrap_used, clippy::expect_used))]
 
 //! impl-render：渲染实现（Phase 1 纯搬迁自 features/image/renderer.rs + renderer/，
 //! 2026-09）。SVG 模板（minijinja）+ resvg 光栅化 —— 重 CPU 依赖全在此 crate，
