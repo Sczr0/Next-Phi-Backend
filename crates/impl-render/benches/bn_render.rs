@@ -14,8 +14,11 @@
 //! - 渲染管线按“工作区根”解析 `config.example.toml` 与 `resources/fonts`（git 跟踪）；
 //! - 曲绘不在 git（`.gitignore` 排除整个曲绘仓库，CI 检出后为空目录），基准使用
 //!   `benches/fixtures/` 下的小型降采样 fixture（tools/gen-render-bench-fixtures.py
-//!   生成，512x270，约为真实曲绘 1/16 像素量），经 `APP_RESOURCES_BASE_PATH` 注入——
-//!   相对路径注入与生产 `./resources` 同构，usvg 的相对解析行为一致；
+//!   生成，512x270，约为真实曲绘 1/16 像素量）。配置的环境变量覆盖以 `_` 为层级
+//!   分隔符，`APP_RESOURCES_BASE_PATH` 会被解析为 `resources.base.path` 而非
+//!   `resources.base_path`，无法用于注入；因此在临时目录生成一份 `config.toml`
+//!   （由 `config.example.toml` 派生，`illustration_folder` 指向 fixture 的绝对路径，
+//!   `base_path` 指向工作区 `resources` 以命中 git 跟踪的字体），并切换 CWD 到该目录；
 //! - 随机背景唯一化：fixture 的 illBlur 只放 1 张图，`select_random_background`
 //!   的随机选择退化为确定值。
 
@@ -51,8 +54,9 @@ const RECORD_COUNT: usize = 27;
 static INIT: Once = Once::new();
 
 /// 初始化渲染环境（每进程一次）：
-/// 1. bench 进程的 CWD 是 crate 目录，渲染管线按工作区根解析配置与字体，先切换；
-/// 2. 曲绘指向仓库内 fixture（覆盖 `resources.base_path`）；
+/// 1. 在临时目录生成 bench 专用 `config.toml`（资源路径全部为绝对路径），并切换 CWD
+///    到该目录——`AppConfig` 只从 CWD 读取 `config.toml`/`config.example.toml`；
+/// 2. 曲绘指向仓库内 fixture，字体沿用工作区 `resources/fonts`；
 /// 3. 初始化全局配置并预热曲绘索引，避免一次性成本计入首个迭代。
 fn init_render_env() {
     INIT.call_once(|| {
@@ -61,17 +65,37 @@ fn init_render_env() {
             .join("../..")
             .canonicalize()
             .expect("工作区根不存在");
-        std::env::set_current_dir(&ws_root).expect("切换 CWD 到工作区根失败");
+        let fixture_ill = manifest.join("benches/fixtures/resources/ill");
+        assert!(
+            fixture_ill.is_dir(),
+            "曲绘 fixture 目录缺失：{}",
+            fixture_ill.display()
+        );
 
-        // Safety：仅主线程执行（criterion 的报告线程尚未启动），无并发 env 读写。
-        unsafe {
-            std::env::set_var(
-                "APP_RESOURCES_BASE_PATH",
-                "crates/impl-render/benches/fixtures/resources",
-            );
-        }
+        let example = std::fs::read_to_string(ws_root.join("config.example.toml"))
+            .expect("读取工作区根的 config.example.toml 失败");
+        let toml_str = |p: &std::path::Path| format!("{:?}", p.to_string_lossy());
+        let config = example
+            .lines()
+            .map(|line| match line.split('=').next().map(str::trim) {
+                Some("base_path") => {
+                    format!("base_path = {}", toml_str(&ws_root.join("resources")))
+                }
+                Some("illustration_folder") => {
+                    format!("illustration_folder = {}", toml_str(&fixture_ill))
+                }
+                Some("info_path") => format!("info_path = {}", toml_str(&ws_root.join("info"))),
+                _ => line.to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
-        AppConfig::init_global().expect("配置初始化失败（需要工作区根的 config.example.toml）");
+        let run_dir = std::env::temp_dir().join("phi-backend-bn-render-bench");
+        std::fs::create_dir_all(&run_dir).expect("创建 bench 临时目录失败");
+        std::fs::write(run_dir.join("config.toml"), config).expect("写入 bench config.toml 失败");
+        std::env::set_current_dir(&run_dir).expect("切换 CWD 到 bench 临时目录失败");
+
+        AppConfig::init_global().expect("配置初始化失败");
 
         // 预热曲绘索引（目录扫描）并自检 fixture 生效
         let covers = get_cover_metadata_map();

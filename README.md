@@ -1,5 +1,7 @@
 # Phi-Backend
 
+[![CodSpeed](https://img.shields.io/endpoint?url=https://codspeed.io/badge.json)](https://app.codspeed.io/Sczr0/Next-Phi-Backend?utm_source=badge)
+
 Phi-Backend 是一个为 **Phigros 玩家社区** 提供成绩查询、图片渲染与榜单服务的高性能后端项目，为社区工具与站点提供存档解析、B27 成绩图生成、RKS 排行榜、开放平台 API 等核心能力支持。
 
 基于 Rust 2024 + axum + SQLite 构建，无 Node 运行时依赖，单二进制部署。

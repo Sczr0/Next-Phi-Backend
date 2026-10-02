@@ -15,3 +15,10 @@ workspace = true
 serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1", default-features = false, features = ["alloc"] }
 base64 = "0.22"
+
+[dev-dependencies]
+divan = { version = "5.0.2", package = "codspeed-divan-compat" }
+
+[[bench]]
+name = "codec"
+harness = false

@@ -1,20 +1,20 @@
-# CodSpeed 持续性能监测：渲染（B27 SVG/PNG）+ 存档解码基准。
+# CodSpeed 持续性能监测：渲染（B27 SVG/PNG）+ 存档解码 + RKS 引擎基准。
 #
-# 首次接入步骤（一次性，仓库管理员）：
-# 1. 用 GitHub 账号登录 https://codspeed.io ，安装 CodSpeed App 并授权本仓库；
-# 2. 在仓库 Settings > Secrets and variables > Actions 添加 `CODSPEED_TOKEN`
-#    （CodSpace 平台仓库设置页提供）；
-# 3. 核对下方 gha-action 的主版本号（以 https://github.com/CodSpeedHQ/gha-action
-#    README 为准，本文件编写时为 v3）。
+# 认证：OIDC（`id-token: write`），无需配置 `CODSPEED_TOKEN` secret；
+# 仓库需已在 https://codspeed.io 安装 CodSpeed GitHub App 并授权。
+# 模式：simulation（CPU 指令级模拟，结果确定、低噪声，并自动生成火焰图）。
 #
 # 基准内容：
 # - crates/impl-render/benches/bn_render.rs：B27 SVG 生成 + PNG 光栅化
 #   （曲绘 fixture 见 benches/fixtures/，由 tools/gen-render-bench-fixtures.py 生成）
 # - crates/impl-save/benches/save_decode.rs：AES-256-CBC 解密 / PBKDF2 派生 /
 #   gameRecord 与 summary 解析
+# - crates/impl-rks/benches/rks_engine.rs：B30/RKS 计算、推分 ACC 批量求解与回填
+# - crates/phi-save-codec/benches/codec.rs：gameRecord 二进制/JSON 与 summary 解析
 #
 # 本地复现：`cargo bench -p impl-render --bench bn_render` /
-#           `cargo bench -p impl-save --bench save_decode`（criterion 原生输出）。
+#           `cargo bench -p impl-save --bench save_decode`（criterion 原生输出）/
+#           `cargo bench -p impl-rks -p phi-save-codec`（divan 原生输出）。
 name: CodSpeed
 
 on:
@@ -22,7 +22,12 @@ on:
     branches: [ "master", "feat" ]
   pull_request:
     branches: [ "master", "feat" ]
+  # 允许 CodSpeed 触发回溯性能分析以生成初始数据
   workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # CodSpeed OIDC 认证
 
 jobs:
   benchmarks:
@@ -45,17 +50,17 @@ jobs:
         shared-key: codspeed-ubuntu
         cache-on-failure: true
 
-    # 预编译二进制，与 bench 侧 codspeed-criterion-compat 5.0 配套
+    # 预编译二进制，与 bench 侧 codspeed-criterion-compat / codspeed-divan-compat 5.0 配套
     - name: 安装 cargo-codspeed
       uses: taiki-e/install-action@v2
       with:
         tool: cargo-codspeed@5.0.2
 
     - name: 构建基准测试
-      run: cargo codspeed build --workspace
+      run: cargo codspeed build -m simulation --workspace
 
     - name: 运行基准测试并上传
-      uses: CodSpeedHQ/gha-action@v3
+      uses: CodSpeedHQ/action@v5
       with:
-        token: ${{ secrets.CODSPEED_TOKEN }}
+        mode: simulation
         run: cargo codspeed run --workspace
