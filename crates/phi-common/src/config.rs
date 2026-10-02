@@ -749,6 +749,15 @@ impl AppConfig {
         CONFIG.get().expect("配置未初始化，请先调用 init_global()")
     }
 
+    /// 获取全局配置单例（未初始化时返回 `None`）。
+    ///
+    /// 供"配置是可选加速项、缺席须有回退"的底层组件使用（例如字体目录解析：
+    /// 配置未就绪时退回进程工作目录/可执行文件目录的历史约定，而不是 panic）。
+    #[must_use]
+    pub fn try_global() -> Option<&'static AppConfig> {
+        CONFIG.get()
+    }
+
     /// 初始化全局配置
     pub fn init_global() -> Result<(), ConfigError> {
         let config = Self::load()?;

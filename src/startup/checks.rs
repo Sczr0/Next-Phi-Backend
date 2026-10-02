@@ -50,7 +50,7 @@ pub async fn run_startup_checks(config: &AppConfig) -> Result<(), AppError> {
     }
 
     // 检查字体资源（仅告警，不阻断启动）
-    ensure_font_resources();
+    ensure_font_resources(config);
 
     // 注：曲绘索引预热已移至 main（与远端 info 拉取并发执行），此处不再串行预热。
 
@@ -217,13 +217,18 @@ fn update_repository(path: &Path) -> Result<(), AppError> {
 }
 
 /// 确保字体文件存在（必要时仅告警）
-fn ensure_font_resources() {
-    use std::path::PathBuf;
-    let font_dir = PathBuf::from("resources/fonts");
+fn ensure_font_resources(config: &AppConfig) {
+    // 与渲染管线一致：自带字体位于 `resources.base_path/fonts`（而非固定 `./resources`）。
+    let font_dir = config.resources_path().join("fonts");
     let required_font = "Source Han Sans & Saira Hybrid-Regular #5446.ttf";
     if font_dir.join(required_font).exists() {
         tracing::info!("字体存在: {}", required_font);
     } else {
-        tracing::warn!("未找到必需字体文件: {}", required_font);
+        tracing::warn!(
+            "未找到必需字体文件: {}（期望目录: {:?}）——若系统也未安装 CJK 字体，\
+             服务端渲染图片的文本将缺失",
+            required_font,
+            font_dir
+        );
     }
 }

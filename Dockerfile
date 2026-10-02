@@ -22,6 +22,11 @@ RUN apk add --no-cache fontconfig font-noto-cjk font-noto
 # 运行时仅二进制 + 配置模板；资源（曲绘/info/SQLite）经卷挂载（见 docker-compose.yml）
 COPY --from=builder /src/target/x86_64-unknown-linux-musl/release-dist/phi-backend /app/phi-backend
 COPY config.example.toml /app/config.example.toml
+# 自带字体随镜像分发：compose 的 phi-data 命名卷首次创建时会以镜像内
+# /app/resources 内容初始化，因此字体不会因挂载卷而丢失。这样即使宿主/容器
+# 的系统字体族名与 SVG 请求的字体不一致，也能命中 `思源黑体 CN`，避免
+# 服务端渲染图片"字没了"（详见 crates/impl-render/src/renderer/resource_fonts.rs）。
+COPY resources/fonts ./resources/fonts
 # 优雅停机（shutdown.rs 捕获 SIGTERM 维护广播 + 宽限窗口；Charter §8.1）
 EXPOSE 3939
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

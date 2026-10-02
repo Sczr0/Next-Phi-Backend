@@ -78,5 +78,9 @@ cargo run -p impl-storage --bin db_split -- ./resources/usage_stats.db ./resourc
 
 - 镜像 amd64 为主（musl 静态二进制）；arm64 需要交叉编译 variant（TODO：发布矩阵扩展）。
 - 曲绘仓库同步需要 GitHub 出网；无网环境可预置 `resources/ill/` 于挂载卷（启动自动检测跳过）。
-- 系统字体：容器已内置 Noto CJK（中文曲名渲染必需）；宿主机直跑二进制时需安装相应字体，
-  否则 B27/单曲图中文显示为 tofu（`fontdb::load_system_fonts` 扫描系统字体目录）。
+- 系统字体：容器已内置 Noto CJK，且镜像内已包含自带字体 `resources/fonts/`
+  （compose 首次创建 `phi-data` 命名卷时由镜像内容初始化）。渲染管线按
+  `resources.base_path/fonts` → 工作目录 `resources/fonts` → 可执行文件同级
+  `resources/fonts` 依次查找，**只要任一处有字体就一定能渲染文本**；若字体库
+  为空，启动检查与首次渲染会记录 error（表现为图片"字没了"而非 tofu）。
+  宿主机直跑二进制时若未随包携带 `resources/fonts`，需安装相应 CJK 系统字体。
