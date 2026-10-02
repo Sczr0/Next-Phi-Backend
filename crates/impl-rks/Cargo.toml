@@ -14,9 +14,14 @@ utoipa = "5.5"
 phi-contract = { path = "../phi-contract" }
 
 [dev-dependencies]
+divan = { version = "5.0.2", package = "codspeed-divan-compat" }
 rand = "0.8"
 serde_json = "1.0"
 tokio = { version = "1", features = ["rt", "macros"] }
+
+[[bench]]
+name = "rks_engine"
+harness = false
 
 [lints]
 workspace = true
