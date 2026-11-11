@@ -105,9 +105,7 @@ fn parse_scope(requested: Option<&str>, allowed: &[String]) -> Result<String, &'
     Ok(raw.join(" "))
 }
 
-fn bearer_of(
-    bearer: &BearerAuthState,
-) -> Result<(&str, &SessionClaims), AppError> {
+fn bearer_of(bearer: &BearerAuthState) -> Result<(&str, &SessionClaims), AppError> {
     match bearer {
         BearerAuthState::Valid(context) => Ok((context.token.as_str(), &context.claims)),
         BearerAuthState::Invalid(message) => Err(AppError::Auth(message.clone())),
