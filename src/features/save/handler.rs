@@ -119,6 +119,13 @@ async fn authenticate_for_save(
 ) -> Result<SaveAuth, AppError> {
     let t_auth_merge = Instant::now();
 
+    let headers = req.headers().clone();
+    let delegated = crate::features::delegation::handlers::authenticate_bearer(
+        &headers,
+        crate::features::delegation::handlers::SAVE_SCOPE,
+    )
+    .await?;
+
     let (mut payload, bearer_state) =
         match crate::session_auth::parse_json_with_bearer_state::<UnifiedSaveRequest>(req).await {
             Ok(v) => v,
@@ -134,7 +141,10 @@ async fn authenticate_for_save(
                 return Err(e);
             }
         };
-    if let Err(e) = crate::session_auth::merge_auth_from_bearer_if_missing(
+    if let Some(token) = delegated {
+        payload.session_token = Some(token);
+        payload.external_credentials = None;
+    } else if let Err(e) = crate::session_auth::merge_auth_from_bearer_if_missing(
         state.stats_storage.as_ref(),
         &bearer_state,
         &mut payload,

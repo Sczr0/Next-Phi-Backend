@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod delegation;
 pub mod health;
 pub mod image;
 pub mod leaderboard;

@@ -261,6 +261,32 @@ leancloud_app_key = "tG9CTm0LDD736k9HMM9lBZrbeBGRmUkjSfNLDNib"
 # 默认版本：cn 或 global
 default_version = "cn"
 
+[delegation]
+# 是否启用单 client 的简化 OAuth2 委托授权
+enabled = false
+# 委托库 SQLite 路径
+sqlite_path = "./resources/delegation.db"
+sqlite_wal = true
+# 唯一 client_id
+client_id = "re0auth"
+# client_secret（建议通过 APP_DELEGATION_CLIENT_SECRET 覆盖）
+client_secret = ""
+# 唯一注册的 redirect_uri
+redirect_uri = "https://re0auth.r0semi.net/api/me/bindings/callback"
+# lilith 同意页地址
+consent_url = "https://lilith.xtower.site/delegations/consent"
+# 允许的 scope
+scopes = ["phigros.query.save.read", "phigros.query.rks.read"]
+# access token 有效期（秒）
+access_ttl_secs = 300
+# refresh token 有效期（秒）
+refresh_ttl_secs = 2592000
+# 委托总有效期（秒）
+delegation_ttl_secs = 7776000
+# LeanCloud 凭证加密密钥（64 hex = 32 bytes，建议通过 APP_DELEGATION_CREDENTIAL_KEY 覆盖）
+credential_key = ""
+credential_key_version = 1
+
 [open_platform]
 # 是否启用开放平台能力
 enabled = false

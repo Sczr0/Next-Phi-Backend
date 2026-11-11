@@ -412,6 +412,61 @@ impl Default for OpenPlatformApiKeyConfig {
     }
 }
 
+/// 委托授权配置（单 client 的简化 OAuth2）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DelegationConfig {
+    /// 是否启用委托授权
+    pub enabled: bool,
+    /// 委托库 SQLite 路径
+    pub sqlite_path: String,
+    /// 委托库是否启用 WAL
+    pub sqlite_wal: bool,
+    /// 唯一 client_id
+    pub client_id: String,
+    /// client_secret（建议通过 APP_DELEGATION_CLIENT_SECRET 覆盖）
+    pub client_secret: String,
+    /// 唯一注册的 redirect_uri
+    pub redirect_uri: String,
+    /// lilith 同意页地址
+    pub consent_url: String,
+    /// 允许的 scope
+    pub scopes: Vec<String>,
+    /// access token 有效期（秒）
+    pub access_ttl_secs: u64,
+    /// refresh token 有效期（秒）
+    pub refresh_ttl_secs: u64,
+    /// 委托总有效期（秒）
+    pub delegation_ttl_secs: u64,
+    /// LeanCloud 凭证加密密钥（64 hex = 32 bytes）
+    pub credential_key: String,
+    /// 凭证加密密钥版本
+    pub credential_key_version: u32,
+}
+
+impl Default for DelegationConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            sqlite_path: "./resources/delegation.db".to_string(),
+            sqlite_wal: true,
+            client_id: "re0auth".to_string(),
+            client_secret: std::env::var("APP_DELEGATION_CLIENT_SECRET").unwrap_or_default(),
+            redirect_uri: "https://re0auth.r0semi.net/api/me/bindings/callback".to_string(),
+            consent_url: "https://lilith.xtower.site/delegations/consent".to_string(),
+            scopes: vec![
+                "phigros.query.save.read".to_string(),
+                "phigros.query.rks.read".to_string(),
+            ],
+            access_ttl_secs: 300,
+            refresh_ttl_secs: 2_592_000,
+            delegation_ttl_secs: 7_776_000,
+            credential_key: std::env::var("APP_DELEGATION_CREDENTIAL_KEY").unwrap_or_default(),
+            credential_key_version: 1,
+        }
+    }
+}
+
 /// 开放平台配置
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenPlatformConfig {
@@ -681,6 +736,9 @@ pub struct AppConfig {
     /// 会话令牌配置
     #[serde(default)]
     pub session: SessionConfig,
+    /// 外部分析/委托授权配置
+    #[serde(default)]
+    pub delegation: DelegationConfig,
     /// 开放平台配置
     #[serde(default)]
     pub open_platform: OpenPlatformConfig,
@@ -870,6 +928,7 @@ impl Default for AppConfig {
             taptap: TapTapMultiConfig::default(),
             stats: StatsConfig::default(),
             session: SessionConfig::default(),
+            delegation: DelegationConfig::default(),
             open_platform: OpenPlatformConfig::default(),
             branding: BrandingConfig::default(),
             watermark: WatermarkConfig::default(),

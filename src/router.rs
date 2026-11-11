@@ -92,6 +92,10 @@ fn build_api_router(
             .merge(open_platform::open_api::create_open_platform_open_api_router());
     }
 
+    if config.delegation.enabled {
+        api_router = api_router.merge(crate::features::delegation::router());
+    }
+
     api_router = api_router.layer(axum::middleware::from_fn_with_state(
         state.clone(),
         crate::features::auth::bearer::bearer_auth_middleware,

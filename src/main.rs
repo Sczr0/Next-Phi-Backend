@@ -200,6 +200,13 @@ async fn main() {
         }
     }
 
+    if config.delegation.enabled
+        && let Err(e) = phi_backend::features::delegation::init(&config.delegation).await
+    {
+        tracing::error!("委托授权存储初始化失败: {}", e);
+        fatal_exit();
+    }
+
     let bn_image_cache: Cache<String, Bytes> = {
         let img = &config.image;
         Cache::builder()

@@ -30,6 +30,8 @@ pub mod models {
 
 pub mod storage;
 
+pub mod delegation;
+
 pub mod open_platform;
 
 pub mod repo;
