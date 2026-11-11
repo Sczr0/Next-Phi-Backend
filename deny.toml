@@ -13,6 +13,15 @@ ignore = [
     # pprof 0.14.1 为当前最新，无更高版本可解除对 inferno 0.11 的钉版。
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # zip 3：仅 utoipa-swagger-ui 9 的 build-dependency，构建期解包 crate 自带的
+    # 可信 Swagger UI 资源，不处理用户上传归档；运行期 zip 已升到 9.5.1。
+    "RUSTSEC-2026-0367",
+    "RUSTSEC-2026-0368",
+    "RUSTSEC-2026-0369",
+    "RUSTSEC-2026-0429",
+    # unsafe-libyaml：serde_yaml 0.9 的解析器，仅读取运维控制的本地 nicklist；
+    # 上游标记 unmaintained，无可用替代版本。
+    "RUSTSEC-2024-0449",
 ]
 
 [licenses]
@@ -30,6 +39,7 @@ allow = [
     "0BSD",
     "Unlicense",
     "BSL-1.0",
+    "bzip2-1.0.6",      # zip 9 的 bzip2 后端（libbz2-rs-sys），BSD 风格许可
     "CC0-1.0",
     "CDLA-Permissive-2.0",
     "CDDL-1.0",          # 依赖树中实际出现（如 libwebp-sys 家族）

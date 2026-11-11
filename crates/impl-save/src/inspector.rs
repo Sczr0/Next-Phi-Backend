@@ -426,7 +426,7 @@ fn try_open_zip(
     let mut names = Vec::new();
     for idx in 0..file_count.min(64) {
         if let Ok(f) = archive.by_index(idx) {
-            names.push(f.name().to_string());
+            names.push(f.name()?.to_string());
         }
     }
 

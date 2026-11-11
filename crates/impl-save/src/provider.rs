@@ -205,8 +205,12 @@ pub async fn get_decrypted_save_from_meta(
         for idx in 0..archive_len {
             let mut f = archive.by_index(idx)?;
             let name = {
-                let raw_name = f.name();
-                raw_name.rsplit('/').next().unwrap_or(raw_name).to_owned()
+                let raw_name = f.name()?;
+                raw_name
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(raw_name.as_ref())
+                    .to_owned()
             };
             let supported = matches!(
                 name.as_str(),
