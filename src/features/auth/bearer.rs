@@ -437,7 +437,7 @@ pub fn decode_embedded_auth_allow_expired(token: &str) -> Result<UnifiedSaveRequ
     decode_embedded_auth_with_claims(token, &claims)
 }
 
-pub(crate) fn decode_embedded_auth_with_claims(
+pub fn decode_embedded_auth_with_claims(
     token: &str,
     claims: &SessionClaims,
 ) -> Result<UnifiedSaveRequest, AppError> {

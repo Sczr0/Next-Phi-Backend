@@ -5,8 +5,8 @@ use axum::extract::{Form, Path, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Redirect, Response};
 
+use crate::auth_contract::{BearerAuthState, SessionClaims, decode_embedded_auth_with_claims};
 use crate::error::AppError;
-use crate::features::auth::bearer::{BearerAuthState, decode_embedded_auth_with_claims};
 
 use super::crypto::{
     constant_time_eq, new_id, new_token, open_credential, scopes_contain, seal_credential,
@@ -107,7 +107,7 @@ fn parse_scope(requested: Option<&str>, allowed: &[String]) -> Result<String, &'
 
 fn bearer_of(
     bearer: &BearerAuthState,
-) -> Result<(&str, &crate::features::auth::bearer::SessionClaims), AppError> {
+) -> Result<(&str, &SessionClaims), AppError> {
     match bearer {
         BearerAuthState::Valid(context) => Ok((context.token.as_str(), &context.claims)),
         BearerAuthState::Invalid(message) => Err(AppError::Auth(message.clone())),

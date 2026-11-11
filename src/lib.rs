@@ -61,6 +61,8 @@ pub mod auth_contract;
 #[path = "api/auth_qrcode_api.rs"]
 pub mod auth_qrcode_api;
 pub mod auth_services;
+#[path = "contracts/delegation_contract.rs"]
+pub mod delegation_contract;
 pub mod identity_hash;
 #[path = "api/image_api.rs"]
 pub mod image_api;

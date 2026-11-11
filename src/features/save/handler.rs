@@ -120,9 +120,9 @@ async fn authenticate_for_save(
     let t_auth_merge = Instant::now();
 
     let headers = req.headers().clone();
-    let delegated = crate::features::delegation::handlers::authenticate_bearer(
+    let delegated = crate::delegation_contract::authenticate_bearer(
         &headers,
-        crate::features::delegation::handlers::SAVE_SCOPE,
+        crate::delegation_contract::SAVE_SCOPE,
     )
     .await?;
 
