@@ -1,4 +1,10 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::similar_names,
+    clippy::default_trait_access,
+    clippy::too_many_lines
+)]
 
 use std::sync::{Arc, Once};
 

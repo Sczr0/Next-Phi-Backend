@@ -4,6 +4,7 @@ use axum::Extension;
 use axum::extract::{Form, Path, Query};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Redirect, Response};
+use std::fmt::Write as _;
 
 use crate::auth_contract::{BearerAuthState, SessionClaims, decode_embedded_auth_with_claims};
 use crate::error::AppError;
@@ -41,7 +42,7 @@ fn oauth_error(
         .into_response()
 }
 
-fn internal(error: AppError) -> Response {
+fn internal(error: &AppError) -> Response {
     tracing::error!(error = %error, "delegation internal error");
     oauth_error(
         StatusCode::INTERNAL_SERVER_ERROR,
@@ -56,7 +57,7 @@ fn percent_encode(value: &str) -> String {
         if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
             out.push(char::from(byte));
         } else {
-            out.push_str(&format!("%{byte:02X}"));
+            let _ = write!(out, "%{byte:02X}");
         }
     }
     out
@@ -172,7 +173,7 @@ pub async fn authorize(Query(query): Query<AuthorizeQuery>) -> Response {
         )
         .await
     {
-        return internal(error);
+        return internal(&error);
     }
 
     let consent = with_query(&cfg.consent_url, &[("request_id", request_id.as_str())]);
@@ -255,14 +256,14 @@ pub async fn approve(
                 "request already used",
             );
         }
-        Err(error) => return internal(error),
+        Err(error) => return internal(&error),
     }
 
     let delegation_id = new_id();
     let sealed = match seal_credential(&cfg.credential_key, &delegation_id, session_token.as_str())
     {
         Ok(sealed) => sealed,
-        Err(error) => return internal(error),
+        Err(error) => return internal(&error),
     };
     if let Err(error) = storage()
         .insert_delegation(
@@ -277,7 +278,7 @@ pub async fn approve(
         )
         .await
     {
-        return internal(error);
+        return internal(&error);
     }
 
     let code = new_token("dc_");
@@ -294,7 +295,7 @@ pub async fn approve(
         )
         .await
     {
-        return internal(error);
+        return internal(&error);
     }
 
     let mut pairs = vec![("code", code.as_str())];
@@ -319,7 +320,7 @@ pub async fn deny(Path(id): Path<String>) -> Response {
         return oauth_error(StatusCode::GONE, "expired", "authorization request expired");
     }
     if let Err(error) = storage().consume_request(&id, now()).await {
-        return internal(error);
+        return internal(&error);
     }
     redirect_error(
         &request.redirect_uri,
@@ -405,7 +406,7 @@ pub async fn token(Form(form): Form<TokenForm>) -> Response {
                 Ok(None) => {
                     return oauth_error(StatusCode::BAD_REQUEST, "invalid_grant", "invalid code");
                 }
-                Err(error) => return internal(error),
+                Err(error) => return internal(&error),
             };
             let cfg = config();
             if row.client_id != cfg.client_id
@@ -428,11 +429,11 @@ pub async fn token(Form(form): Form<TokenForm>) -> Response {
                         "delegation expired",
                     );
                 }
-                Err(error) => return internal(error),
+                Err(error) => return internal(&error),
             }
             match issue_tokens(&row.delegation_id, &row.scopes, &new_id()).await {
                 Ok(response) => Json(response).into_response(),
-                Err(error) => internal(error),
+                Err(error) => internal(&error),
             }
         }
         Some("refresh_token") => {
@@ -453,11 +454,11 @@ pub async fn token(Form(form): Form<TokenForm>) -> Response {
                         "invalid refresh token",
                     );
                 }
-                Err(error) => return internal(error),
+                Err(error) => return internal(&error),
             };
             if row.consumed_at.is_some() {
                 if let Err(error) = storage().revoke_family(&row.family_id, now).await {
-                    return internal(error);
+                    return internal(&error);
                 }
                 return oauth_error(
                     StatusCode::BAD_REQUEST,
@@ -482,7 +483,7 @@ pub async fn token(Form(form): Form<TokenForm>) -> Response {
                         "refresh token reused",
                     );
                 }
-                Err(error) => return internal(error),
+                Err(error) => return internal(&error),
             }
             let delegation = match storage().delegation(&row.delegation_id).await {
                 Ok(Some(delegation))
@@ -497,11 +498,11 @@ pub async fn token(Form(form): Form<TokenForm>) -> Response {
                         "delegation expired",
                     );
                 }
-                Err(error) => return internal(error),
+                Err(error) => return internal(&error),
             };
             match issue_tokens(&delegation.id, &delegation.scopes, &row.family_id).await {
                 Ok(response) => Json(response).into_response(),
-                Err(error) => internal(error),
+                Err(error) => internal(&error),
             }
         }
         _ => oauth_error(
@@ -544,26 +545,26 @@ pub async fn revoke(Form(form): Form<RevokeForm>) -> Response {
                     .revoke_delegation(&context.delegation_id, now)
                     .await
                 {
-                    return internal(error);
+                    return internal(&error);
                 }
             }
             Ok(None) => {
                 if let Err(error) = storage().revoke_access(&hash, now).await {
-                    return internal(error);
+                    return internal(&error);
                 }
             }
-            Err(error) => return internal(error),
+            Err(error) => return internal(&error),
         }
     } else if token.starts_with("dqr_") {
         let hash = sha256_hex(token);
         match storage().find_refresh_delegation(&hash).await {
             Ok(Some(delegation_id)) => {
                 if let Err(error) = storage().revoke_delegation(&delegation_id, now).await {
-                    return internal(error);
+                    return internal(&error);
                 }
             }
             Ok(None) => {}
-            Err(error) => return internal(error),
+            Err(error) => return internal(&error),
         }
     }
     StatusCode::OK.into_response()
@@ -597,7 +598,7 @@ pub async fn me(headers: HeaderMap) -> Response {
             "invalid_token",
             "token is not active",
         ),
-        Err(error) => internal(error),
+        Err(error) => internal(&error),
     }
 }
 

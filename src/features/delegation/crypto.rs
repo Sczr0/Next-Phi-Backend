@@ -10,20 +10,24 @@ use uuid::Uuid;
 
 use crate::error::AppError;
 
+#[must_use]
 pub fn new_id() -> String {
     Uuid::new_v4().to_string()
 }
 
+#[must_use]
 pub fn new_token(prefix: &str) -> String {
     format!("{prefix}{}", Uuid::new_v4().simple())
 }
 
+#[must_use]
 pub fn sha256_hex(value: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(value.as_bytes());
     hex::encode(hasher.finalize())
 }
 
+#[must_use]
 pub fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
@@ -98,6 +102,7 @@ pub fn open_credential(
     String::from_utf8(plaintext).map_err(|_| AppError::Auth("delegation 凭证不是 UTF-8".into()))
 }
 
+#[must_use]
 pub fn verify_pkce(verifier: &str, challenge: &str) -> bool {
     if verifier.len() < 43 || verifier.len() > 128 {
         return false;
@@ -108,6 +113,7 @@ pub fn verify_pkce(verifier: &str, challenge: &str) -> bool {
     constant_time_eq(digest.as_bytes(), challenge.as_bytes())
 }
 
+#[must_use]
 pub fn scopes_contain(granted: &str, required: &str) -> bool {
     granted.split_whitespace().any(|scope| scope == required)
 }
